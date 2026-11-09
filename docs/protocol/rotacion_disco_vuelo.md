@@ -100,6 +100,8 @@ siempre entrega candidatas a P7. Los clones actuales requieren adjudicacion y ar
 
 Frase literal de la clausula: El diseno especifica: clon ligero (git worktree o clone --shared, uv con enlaces); archivo OBLIGATORIO al cerrar la ronda (veredicto + ficheros citados + manifiesto con rama, commit y push) con el veredicto persistido FUERA del clon; marcador de actividad (lock); re-ejecucion de lentes fallidas antes de retirar; el TTL de 7 dias (U-R1) aplica SOLO a clones futuros y SOLO tras archivo verificado, y no retira nada por si mismo: genera candidatas para P7 (N2); los clones actuales solo se retiran si estan adjudicados y archivados, y SIEMPRE via P7. Cada frase tiene su ancla y su mutante (m-03a y m-03b).
 
+- Mutantes: m-03a en copia borra la ancla P2.archivo=obligatorio, el conteo cae a 0 y la comprobacion FALLA; m-03b en copia cambia el valor de la ancla P2.ttl a aplica_a_todos_los_clones, el valor no coincide y FALLA.
+
 - scripts/flight/start_ticket.py: `_clone_at_tip` L63-83; `git clone --no-hardlinks` L74.
 
 ### m-08 Superficie de origen y entregable
@@ -155,8 +157,6 @@ la comprobacion contra ese registro y una prueba de resume desechable una sola v
 
 Frase literal de la clausula: P5, sesiones (TEXTO LITERAL OBLIGATORIO, N3). El diseno declara: (1) cleanupPeriodDays NO se toca, porque la junction .claude-alvarovans/projects hace que el ajuste afecte a las DOS cuentas (A1, verificado 4 de 4); (2) excluidas SIEMPRE de toda retirada: la terna visible de 3 coordinadoras, las sesiones vivas, el jsonl de la coordinadora vigente (lo lee ctx_acumulado.py) y cualquier jsonl que respalde un GO u orden del usuario no registrada; (3) EXPORT previo de los mensajes del usuario a un registro local OBLIGATORIO antes de tocar cualquier jsonl; (4) como se detecta un GO u orden no registrada: comprobando cada jsonl candidata contra el registro local de mensajes del usuario (el export del punto 3); un jsonl cuyo contenido respalde un GO u orden que no este en el registro queda excluido; (5) prueba de resume con un hilo desechable, UNA vez, antes de tocar cualquier jsonl.
 
-- scripts/rotate_kilo_logs.py L10-11: locks + excepcion vuelo activo.
-
 ### m-09 Raiz del archivo
 
 La raiz del archivo es un parametro obligatorio sin valor por defecto y permanece como decision
@@ -179,10 +179,10 @@ archivo fuera de P7. La regla de reutilizacion se refleja en estas herramientas 
 
 | Familia | USO | ARCHIVADO | ELIMINACION | Herramienta |
 |---|---|---|---|---|
-| Documentacion del vuelo | local mientras es citada | zip + manifiesto a D: y replica opcional | TTL 90 dias tras cierre sin re-cita | 158c fase 1 + hija 158c |
+| Documentacion del vuelo | local mientras es citada | zip + manifiesto a D:; replica Internxt solo si el usuario lo confirma | TTL 90 dias tras cierre sin re-cita | 158c fase 1 (pending) + hija 158c |
 | Salidas raw y grep_hits | 14 dias | compresion a 14 dias inactivos | lista P7 tras copia verificada; archivo propuesto 90 dias | por crear o ampliar rotate_kilo_logs |
-| Clones y sandboxes | ronda viva | veredicto, ficheros y manifiesto | TTL 7 dias via P7; SAFE segun herramienta | start_ticket.py + P7 + prune_git_recoverable |
-| Sesiones de Claude | 14 dias; cleanupPeriodDays NO se toca | zip o compresion local; nube solo autorizada | tras archivo y export, via P7 | por crear, hija P5 |
+| Clones y sandboxes | ronda viva | veredicto, ficheros y manifiesto | TTL 7 dias via P7; SAFE via prune_git_recoverable | start_ticket.py + P7 + prune_git_recoverable |
+| Sesiones de Claude | 14 dias; cleanupPeriodDays NO se toca | nube solo con escaneo de secretos y autorizacion por categoria | tras archivo y export, via P7 | por crear, hija P5 |
 | Logs de Kilo | 7 dias | comprimido | 30 dias | rotate_kilo_logs.py |
 | Reviews, packets, backups y notificaciones | ultimos 20, 20, 10 y 20 | n/a de conteo | resto | prune_runtime_retention.py |
 | Scratch del harness | 14 dias | n/a | despues | prune_session_scratch.py |
@@ -193,7 +193,8 @@ Frase literal de la clausula: CICLO DE VIDA por familia (SEGUNDA ADENDA 18:42). 
 - scripts/archive_arranques.py L16-17 (SE MUEVE, JAMAS SE BORRA), L50 (mueve solo ARCHIVABLE, salvo --dry-run).
 - scripts/purge_arranques_archive.py L15 (PURGADO <fecha>), L62 (TTL_DAYS = 90).
 - scripts/rotate_kilo_logs.py L48 (KILO_LOG_COMPRESS_DAYS=7), L49 (KILO_LOG_DELETE_DAYS=30).
-- scripts/prune_runtime_retention.py L36-39 (exige --dry-run o --apply; nunca borra sin --apply), L78-81 (keep 20/20/10/20).
+- scripts/rotate_kilo_logs.py L10-11: locks y excepcion de vuelo activo.
+- scripts/prune_runtime_retention.py L36-40 (exige --dry-run o --apply; nunca borra sin --apply), L78-81 (keep 20/20/10/20).
 - scripts/prune_git_recoverable.py L4-5 (SAFE vs RISKY), L19-20 (sin --confirm-risky borra SOLO SAFE).
 - scripts/prune_session_scratch.py L19 (--dry-run es el defecto), L44 (DEFAULT_DAYS=14).
 
@@ -226,7 +227,6 @@ en una lista aprobada.
 
 Frase literal de la clausula: REGISTRO diario de espacio libre (medicion viva). El diseno nombra el fichero C:/Users/fdl/flight_coordination/disk_free_log.csv (columnas ts_local, free_gb, used_gb, total_gb, by; iniciado el 2026-11-09 17:25 por CO-62) como registro de linea base; propone como DUENO de la automatizacion diaria (P26) a la coordinadora vigente del vuelo dentro de su latido diario, PENDIENTE de decision del usuario; y aclara que la linea base de 14 registros SOLO condiciona decisiones por tasa de crecimiento, NUNCA las retiradas por lista aprobada (N6/E8/O6).
 
-- scripts/check_backlog_admission.py L69, L650, L666-667 (sha de la fila sin CR/LF).
 
 ## Decisiones pendientes del usuario
 
@@ -234,5 +234,5 @@ Frase literal de la clausula: REGISTRO diario de espacio libre (medicion viva). 
 2. Aprobar o aplazar d-03 VACUUM INTO de kilo.db con la precondicion de >= 29,32 GB libres.
 3. Reabrir U-R2 para d-02, la compresion NTFS.
 4. Dueno de la automatizacion diaria de disk_free_log.csv.
-5. Forma exacta de partir la herramienta dentro de 161j o en la hija H1.
+5. Forma exacta de partir la herramienta dentro de 161j o en la hija H1: la decision de partir (161j diseno breve + H1 hija) ya esta tomada por el usuario; se lista por figurar en la seccion 12 de la ficha.
 6. Topes del archivo y caducidad propuesta para las raices nuevas.
