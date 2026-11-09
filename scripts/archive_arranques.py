@@ -58,7 +58,6 @@ Docstring-as-spec:
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import shutil
 import subprocess
@@ -66,17 +65,30 @@ import sys
 import time
 from dataclasses import dataclass, field
 from datetime import date
+from functools import partial
 from pathlib import Path
 
 
 _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from check_arranques_index import (  # noqa: E402
     ARCHIVE_DIRNAME,
     INDEX_FILENAME,
     check_index_consistency,
+)
+from scripts.flight.p7_common import (  # noqa: E402
+    MIN_AGE_DAYS,
+    MIN_AGE_SECONDS,
+    ArchiveError,
+    append_rows_atomic,
+    git_dirty_names,
+    root_files,
+    sha256_file,
 )
 
 
@@ -89,8 +101,6 @@ MOTIVO = (
 # WOT-2026-089p: un NO-CITADO con menos de MIN_AGE_DAYS de antiguedad se trata como
 # trabajo en curso, no como historico. 7 dias cubre con margen una sesion larga que se
 # retome tras el fin de semana sin haber cerrado todavia.
-MIN_AGE_DAYS = 7
-MIN_AGE_SECONDS = MIN_AGE_DAYS * 86400
 _BACKLOG_SURFACES = (
     Path(".agent") / "collaboration" / "backlog.md",
     Path(".agent") / "collaboration" / "_archive" / "backlog_done.md",
@@ -106,10 +116,6 @@ _INDEX_HEADER = (
     "| Archivo | Fecha | SHA256 | Motivo |\n"
     "|---|---|---|---|\n"
 )
-
-
-class ArchiveError(RuntimeError):
-    """Fallo de medicion o de mudanza; nunca se degrada a verde."""
 
 
 @dataclass
@@ -143,29 +149,6 @@ class ArchiveReport:
             "dry_run": self.dry_run,
             "index_path": str(self.index_path) if self.index_path else None,
         }
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def root_files(arranques_dir: Path) -> list[Path]:
-    """Ficheros de la RAIZ de `arranques/`, excluidos README, INDEX y `_archive/`.
-
-    `INDEX_FILENAME` se excluye por WOT-2026-067n: un `INDEX.md` en la RAIZ se
-    clasificaria como archivable y la mudanza lo dejaria caer ENCIMA del indice
-    de `_archive/` (o chocaria con el). No es un caso vivo, pero cuesta un token.
-    """
-    if not arranques_dir.is_dir():
-        return []
-    skip = {README_NAME, INDEX_FILENAME}
-    return sorted(
-        p for p in arranques_dir.iterdir() if p.is_file() and p.name not in skip
-    )
 
 
 def _git_log_surface(project_root: Path) -> str:
@@ -218,50 +201,7 @@ def load_citation_blob(project_root: Path) -> str:
     return "\n".join(parts)
 
 
-def _git_dirty_names(project_root: Path) -> set[str]:
-    """Basenames con cambios sin commitear (untracked o modified) en `project_root`.
-
-    WOT-2026-089p: fail-closed igual que `_git_log_surface` -- un censo de "sucio"
-    incompleto moveria trabajo en curso, que es el riesgo que esta guarda existe para
-    cerrar. `git status --porcelain` da rutas relativas al repo; solo nos importa el
-    basename porque `root_files` ya acota a una unica carpeta.
-
-    `-uall` es OBLIGATORIO: sin el, un directorio untracked ENTERO (ej. la primera
-    vez que `orchestrator_pipeline/` aparece sin nada previamente tracked dentro) se
-    colapsa en UNA linea `?? orchestrator_pipeline/` -- el basename resultante
-    ("orchestrator_pipeline") nunca coincide con el de ningun arranque, y la guarda
-    quedaria ciega ante EXACTAMENTE el caso que debe cazar (medido con un test que
-    fallaba en falso-limpio antes de este flag).
-    """
-    git = shutil.which("git")
-    if not git:
-        raise ArchiveError(
-            "git no esta en PATH: no se puede leer el estado sucio; se aborta para "
-            "no mover trabajo en curso."
-        )
-    proc = subprocess.run(  # noqa: S603
-        [git, "-C", str(project_root), "status", "--porcelain", "-uall"],
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=60,
-    )
-    if proc.returncode != 0:
-        raise ArchiveError(
-            f"git status fallo en {project_root} (rc={proc.returncode}): "
-            f"{proc.stderr.strip()[:200]}. Se aborta: no se puede confirmar que un "
-            "NO-CITADO este limpio."
-        )
-    names: set[str] = set()
-    for line in proc.stdout.splitlines():
-        # Formato porcelain: "XY ruta" o "XY ruta -> ruta_nueva" (renames). Tomamos
-        # el ultimo componente de cada ruta que aparezca en la linea.
-        rest = line[3:] if len(line) > 3 else line
-        for part in rest.split(" -> "):
-            part = part.strip().strip('"')
-            if part:
-                names.add(Path(part).name)
-    return names
+_git_dirty_names = git_dirty_names
 
 
 def classify(
@@ -300,13 +240,7 @@ def classify(
     return cited, skipped, archivables
 
 
-def append_index_rows(index_path: Path, rows: tuple[str, ...]) -> None:
-    """Anade filas al INDEX; crea cabecera si el fichero no existe todavia."""
-    prefix = "" if index_path.exists() else _INDEX_HEADER
-    existing = index_path.read_text(encoding="utf-8") if index_path.exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    index_path.write_text(prefix + existing + "".join(rows), encoding="utf-8")
+append_index_rows = partial(append_rows_atomic, header=_INDEX_HEADER)
 
 
 def archive(
