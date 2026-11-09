@@ -6,6 +6,8 @@ Este documento fija un diseno comprobable para conservar, archivar y rotar super
 No ejecuta operaciones ni autoriza borrados: describe contratos, candidatas, evidencias y limites.
 La interface primaria es el bloque de 56 anclas que sigue; cada linea debe conservarse literalmente.
 
+La documentacion antigua del vuelo y sus zips son la hija FASE 2 de WOT-2026-158c y quedan fuera de este diseno.
+
 ## ANCLAS (interface comprobable)
 
 P7.lista_aprobada=hash_lista_y_hash_por_entrada
@@ -187,6 +189,8 @@ archivo fuera de P7. La regla de reutilizacion se refleja en estas herramientas 
 | Reviews, packets, backups y notificaciones | ultimos 20, 20, 10 y 20 | n/a de conteo | resto | prune_runtime_retention.py |
 | Scratch del harness | 14 dias | n/a | despues | prune_session_scratch.py |
 | Bases vivas | siempre | n/a | no poda manual; VACUUM INTO pendiente | fuera de alcance |
+
+- prune_git_recoverable.py es un paso MATERIAL dentro del contrato P7: solo tras archivo y hash verificados y con lista aprobada por el usuario con hash; no es una via de eliminacion paralela a P7.
 
 Frase literal de la clausula: CICLO DE VIDA por familia (SEGUNDA ADENDA 18:42). El diseno declara la tabla de familias con las tres fases USO -> ARCHIVADO -> ELIMINACION y la herramienta de cada una (seccion 10 de esta ficha): una familia SIN las tres fases y SIN herramienta que las ejecute NO se archiva a ningun sitio; cada transicion la ejecuta un script con dry-run por defecto, lista con hash y rc por modo (patron de la casa) y deja fila de indice; nada sale del archivo sin pasar por el contrato P7; se REUTILIZA lo que existe (archive_arranques.py L16-17, purge_arranques_archive.py L62, rotate_kilo_logs.py L48-49, prune_runtime_retention.py L78-81, prune_git_recoverable.py L4-5, prune_session_scratch.py L44) y solo se escribe codigo nuevo para familias sin sistema.
 
