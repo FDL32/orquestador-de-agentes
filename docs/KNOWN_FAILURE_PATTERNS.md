@@ -739,3 +739,124 @@ backend que pasa el preflight aguantara el bundle real.
 
 - (sesion ad-hoc 2026-09-28, sin ticket abierto aun; candidato a ficha nueva
   para refinar el preflight con fragmento de bundle real)
+
+---
+
+## FP-015: "(no files to check) Skipped" en rebase/amend/commit vacio no es un skip del commit normal
+
+**Estado de evidencia:** VERIFICADO para el sintoma, A1/A2/A3 y el stage que
+imprime (trazado in situ), medido 2026-11-09 en un clon limpio al commit
+0b1c058d; WOT-2026-161d. La config de hooks es la misma que la del
+incidente: `git diff 587e7c94 0b1c058d -- .pre-commit-config.yaml` = vacio, y
+`git diff 587e7c94 6c451be1 -- .pre-commit-config.yaml` solo anade el comentario
+de 6 lineas (ningun hook cambia). Todas las mediciones de esta entrada usan ese
+clon al commit 0b1c058d.
+
+### Sintoma observable
+
+- check-ast y ruff-check imprimen `check python ast...(no files to check)
+  Skipped` y `ruff check...(no files to check) Skipped` aunque el commit
+  contenga un `.py`.
+- En `git rebase` esas lineas aparecen SIN ningun hook del stage pre-commit.
+- En `git commit --amend --no-edit` con indice limpio y en `git commit
+  --allow-empty` aparecen en los tres stages del commit (pre-commit, commit-msg,
+  post-commit), con todos los hooks que reciben ficheros en Skipped.
+- LIMITE: un commit que solo stagea `tests/sandbox/*.py` imprime Skipped en
+  check-ast por el exclude preexistente `^tests/sandbox/` (H2); no es el sintoma
+  del incidente.
+
+### Contrato / realidad verificada
+
+- El commit normal con un `.py` staged SI verifica: control positivo con
+  `check python ast...Passed` y `ruff check...Passed`; con un defecto real
+  (`import os` sin uso) `ruff check...Failed`, imprime la ruta
+  (`--> scripts\check_reference_keys.py:1:1`, I001/F401) y el commit aborta con
+  rc 1.
+- `git rebase` NO ejecuta el stage pre-commit: git solo invoca el hook
+  post-commit por cada commit replayado (medido: la salida del rebase no lleva
+  ningun hook del stage pre-commit).
+- El mensaje lo imprime pre-commit upstream, no el motor: pre-commit 4.5.1,
+  `pre_commit/commands/run.py`, `NO_FILES = '(no files to check)'`, cuando un
+  hook recibe cero ficheros.
+- Consecuencia real: un `.py` replayado por rebase no pasa por check-ast ni
+  ruff-check en el momento del commit. Medido: commit con `import os` creado
+  con `--no-verify`, rebasado, aterriza; `uv run --frozen ruff check --no-fix`
+  posterior sobre ese fichero devuelve rc 1.
+
+### Causa raiz (medida, con traza in situ)
+
+- MEDIDO (traza en el clon, 2026-11-09): con wrappers temporales en
+  `.git/hooks/pre-commit` y `.git/hooks/post-commit` que registran su
+  invocacion, un `git rebase` que replaya un commit con `.py` registro
+  UNICAMENTE `hook=post-commit`; `hook=pre-commit` no aparece ni una vez. Git
+  invoca post-commit durante el rebase y NO invoca pre-commit.
+- MEDIDO: `pre-commit run --hook-stage post-commit` con el indice limpio
+  reproduce EXACTAMENTE las lineas del rebase: check-yaml, check-json,
+  check-toml, check-merge-conflict, check python ast y ruff check en
+  "(no files to check) Skipped", y check-cuspide-growth-audit Passed.
+- Consecuencia: los hooks sin `stages:` heredan todas las etapas y corren en el
+  stage post-commit con cero ficheros. No es la verificacion del commit la que
+  se salta: es el stage pre-commit que git no invoca en rebase. `--no-verify`
+  no imprime nada; no confundirlo con este sintoma.
+
+### Cobertura de pre-push (CONDICIONAL, medida)
+
+check-ast y ruff-check no declaran `stages:`, asi que tambien corren en el stage
+pre-push. Pero pre-push pasa las RUTAS del rango y los hooks leen el WORKING
+TREE, no los blobs de los commits empujados:
+
+- A1 (cubre): arbol de trabajo en el tip empujado, con el `.py` rebasado en
+  disco -> `ruff check...Failed` con la ruta y el push se rechaza (rc 1).
+- A2 (control positivo): el mismo push sin defecto -> `Passed` + `Passed`,
+  push rc 0; los hooks VEN el fichero (Passed, no Skipped).
+- A3 (NO cubre): arbol limpio empujando una ref cuyo commit SI lleva el `.py`
+  rebasado -> `Passed` + `Passed`, push rc 0; tras el push, el fichero del
+  remoto contiene `import os`. El defecto se publica sin verificar.
+  PRECONDICION de A3: el commit malo modifica un `.py` que YA existe en el
+  arbol limpio; si anadiese un `.py` nuevo, la ruta no existiria en el working
+  tree y el resultado aqui documentado no se reproduce.
+
+`scripts/prepush_check.py` no tapa esto: es un gate de CIERRE que corre
+`ruff check .` y `ruff format --check .` sobre TODO el arbol (no sobre el rango
+empujado) y NO esta cableado a pre-push a proposito (docstring L33-61); un push
+crudo lo esquiva por diseno.
+
+### Hecho medido aparte
+
+En el common-dir del motor (`orquestador_de_agentes/.git`) estan instalados
+`pre-commit`, `commit-msg`, `post-commit` y `pre-push`, y NO existe
+`pre-push.legacy` (mitad nativa de check-push-authority; se instala con
+`python scripts/check_push_authority.py --install-native-hook`).
+
+### Sonda reproducible
+
+En un clon limpio fuera del repo (bare local aparte):
+
+1. `git clone --branch flight/vuelo-20261026b <motor> <tmp>/im161d` (medido al
+   commit 0b1c058d) y `cd <tmp>/im161d && pre-commit install`: instala los 4
+   tipos porque la linea 3 del YAML raiz declara
+   `default_install_hook_types: [pre-commit, pre-push, commit-msg, post-commit]`
+   (sin esa clave, `pre-commit install` solo cablearia pre-commit).
+2. Control positivo: anadir un comentario a `scripts/check_reference_keys.py`,
+   `git add`, `git commit` -> check-ast y ruff-check `Passed`. Variante con
+   `import os` sin uso -> `ruff check...Failed` con la ruta, commit rc 1.
+3. Rebase: en otra rama cambiar otro `.py`, `git rebase <rama>` -> la salida
+   imprime `check python ast...(no files to check) Skipped` y
+   `ruff check...(no files to check) Skipped` sin ningun hook de pre-commit.
+4. A1: commit malo (`import os`, `git commit --no-verify`) rebasado, arbol en
+   ese tip, `git push <bare> rama:refs/heads/x` -> `ruff check...Failed`, rc 1.
+5. A3: `git checkout` de una rama limpia y
+   `git push <bare> rama-mala:refs/heads/y` -> `Passed` + `Passed`, rc 0;
+   clonar el bare y ver `import os` en el fichero.
+
+### Criterio de salida
+
+Ficha derivada (la redacta TR-25): "pre-push verifica el working tree, no los
+blobs del rango". Esta entrada documenta el sintoma y la causa; NO cierra ese
+hueco ni crea la barrera.
+
+### Tickets relacionados
+
+- `WOT-2026-161d` (diagnostico; cierra como NO-DEFECTO del enunciado)
+- Ficha derivada pendiente (TR-25): pre-push verifica el working tree, no los
+  blobs del rango.

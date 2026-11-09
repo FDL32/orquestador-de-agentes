@@ -16,6 +16,11 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
       - id: check-executables-have-shebangs
+      # WOT-2026-161d: check-ast y ruff-check deben correr en pre-commit Y
+      # pre-push (lo exige tests/unit/test_precommit_py_staged.py); hoy lo hacen
+      # por no declarar `stages:`. `git rebase` no ejecuta el stage pre-commit y
+      # el pre-push cubre un .py replayado con cobertura CONDICIONAL al arbol de
+      # trabajo (FP-015). No anadir stages que los saquen de una de las dos.
       - id: check-ast
         exclude: ^tests/sandbox/
       # Hooks mutadores: SOLO pre-commit, excluyen artefactos generados
