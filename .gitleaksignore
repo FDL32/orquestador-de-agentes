@@ -44,3 +44,9 @@ e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.j
 e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:43
 e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:44
 e5ceccde59264fbd48a3e8ba973cfe4fc00eabee:tests/data/entropy_corpus_wot2026041n.jsonl:generic-api-key:9
+# WOT-2026-160n..t / CO-58 2026-11-09: cadenas sinteticas de los tests de redaccion de tests/unit/test_comms_alert.py ('SYNTH12345678', 'abcdEFGH1234', 'Bearer <20ch>'); NO son credenciales. Huella completa (con commit) porque el CI escanea el historial. Medido con gitleaks 8.30.1 detect --redact --log-opts=origin/flight/vuelo-20261026b..HEAD (5 hits, informe C:/Temp/co57/gitleaks1.json).
+567eb0007d10c30a654e503c6d8764ab7f77a915:tests/unit/test_comms_alert.py:generic-api-key:3305
+d74fa2e9cfa3302c6a4353a8739664be10bbaa55:tests/unit/test_comms_alert.py:generic-api-key:3192
+2590d9a9b653576050e3553f65531abbe48905f0:tests/unit/test_comms_alert.py:generic-api-key:3213
+3ba0541997c64034995cb710781b49468cade411:tests/unit/test_comms_alert.py:generic-api-key:3173
+3ba0541997c64034995cb710781b49468cade411:tests/unit/test_comms_alert.py:generic-api-key:3174
