@@ -16,7 +16,7 @@ After: imprime un plan JSON o aplica una mutacion durable frente a un crash del
     0 = exito (incluido dry-run valido); 2 = entrada invalida o esquema roto;
     3 = gate operativo compartido por todo subcomando --apply;
     4 = conflicto de identidad; 5 = lock no disponible tras reintentos;
-    6 = mutacion aplicada pero fallo la liberacion del lock.
+    6 = mutacion aplicada pero fallo un paso posterior al commit (cierre del ledger o liberacion del lock).
 
 El snapshot de reconcile trae ``cuenta`` ya resuelta por quien lo genera (una
 sesion con acceso MCP); registry_ops no hace esa resolucion, solo consume el
@@ -102,8 +102,28 @@ class LockReleaseError(RegistryError):
     """La mutacion se aplico pero fallo la liberacion del lock."""
 
     def __init__(self, path, reason):
+        detail = f"{type(reason).__name__}: {reason}".rstrip()
         super().__init__(
-            f"la mutacion SE APLICO y el registry quedo escrito, pero fallo la liberacion del lock: {path} ({reason})",
+            f"la mutacion SE APLICO y el registry quedo escrito, pero fallo la liberacion del lock: {path} ({detail})",
+            RC_LOCK_RELEASE,
+        )
+
+
+class CommitFinalizeError(RegistryError):
+    """La mutacion se aplico pero fallo un paso posterior al commit.
+
+    Before: el registry ya fue reemplazado y ``lock.committed`` es ``True``.
+    During: falla un paso posterior al commit (p.ej. el cierre del ledger); el
+        mensaje nombra el paso y la causa para no perder diagnosticabilidad.
+    After: retorna rc 6 con el mensaje que explicita que la mutacion SI se
+        aplico y el registry quedo escrito.
+    """
+
+    def __init__(self, step, path, reason):
+        detail = f"{type(reason).__name__}: {reason}".rstrip()
+        super().__init__(
+            f"la mutacion SE APLICO y el registry quedo escrito, pero fallo el "
+            f"{step}: {path} ({detail})",
             RC_LOCK_RELEASE,
         )
 
@@ -188,7 +208,7 @@ class _RegistryLock:
         try:
             if self.held:
                 _lock_release(self.handle)
-        except OSError as exc:
+        except Exception as exc:
             release_error = exc
         finally:
             if self.handle is not None:
@@ -390,7 +410,10 @@ def _apply_change(path, ledger, roster, by, reason, change, detail, mutate):
         Si falla _write_registry despues del append y la rotacion, queda la fila
         y la rotacion sin escritura final correspondiente (sobre-auditoria doble,
         direccion segura, preferible a escribir sin rastro).
-        Los errores de lock retornan rc 5 al llamador.
+        Tras ``lock.committed`` cualquier fallo (cierre del ledger o liberacion
+        del lock) retorna rc 6 con mensaje que nombra el paso y la causa, porque
+        la mutacion SI se aplico. Los fallos anteriores al commit conservan su
+        codigo propio. Los errores de adquisicion del lock retornan rc 5.
     """
     _check_roster_gate(roster)
     lock_path = path.with_name(path.name + ".lock")
@@ -407,7 +430,12 @@ def _apply_change(path, ledger, roster, by, reason, change, detail, mutate):
             _write_registry(path, data)
             lock.committed = True
         finally:
-            ledger_handle.close()
+            try:
+                ledger_handle.close()
+            except Exception as exc:
+                if lock.committed:
+                    raise CommitFinalizeError("cierre del ledger", ledger, exc) from exc
+                raise
 
 
 def _session_for_alta(args, data):
@@ -669,11 +697,11 @@ def _reconcile_plan(data, snapshot):
                 return item.get("status")
             return item.get(T3_OVERLAY_FIELDS[field])
 
-        changes = {
-            field: [current_value(field), entry[field]]
-            for field in RECONCILE_FIELDS
-            if current_value(field) != entry[field]
-        }
+        changes = {}
+        for field in RECONCILE_FIELDS:
+            actual = current_value(field)
+            if actual != entry[field]:
+                changes[field] = [actual, entry[field]]
         updates.append(
             {
                 "code": item["code"],
@@ -817,13 +845,14 @@ def _check_path_collisions(args):
 
     Before: ``args`` contiene las rutas ya resueltas por ``main`` y el
         subcomando seleccionado.
-    During: compara rutas normalizadas y, cuando ambas existen, confirma la
+    During: incluye ``--roster`` siempre que se aporte (con o sin ``--apply``),
+        compara rutas normalizadas y, cuando ambas existen, confirma la
         identidad física con ``samefile``.
     After: retorna ``None`` si no hay colisiones o lanza ``RegistryError``
         con ``RC_INVALID`` nombrando ambos flags y sus rutas.
     """
     paths = [("--registry", args.registry), ("--ledger", args.ledger)]
-    if args.apply:
+    if args.roster is not None:
         paths.append(("--roster", args.roster))
     if args.command == "reconcile":
         paths.append(("--snapshot", args.snapshot))
@@ -862,7 +891,8 @@ def main(argv=None):
         los errores operativos en stderr. Args malformados para argparse terminan
         en SystemExit(2) emitido por argparse mismo, antes de este contrato; no
         es uno de los seis codigos de arriba. El codigo 6 indica que la mutacion
-        se aplico y el registry quedo escrito, pero fallo la liberacion del lock.
+        se aplico y el registry quedo escrito, pero fallo un paso posterior al
+        commit (cierre del ledger o liberacion del lock), nombrado en stderr.
     """
     args = _parser().parse_args(argv)
     if args.apply and not args.roster:

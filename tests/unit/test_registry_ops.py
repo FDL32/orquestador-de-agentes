@@ -26,6 +26,10 @@ def test_registry_ops_docstring_describes_durability_limits():
     assert "registry via temporal con fsync del fichero antes del replace" in docstring
     assert "ledger con flush pero sin fsync" in docstring
     assert "Ningun fsync cubre el directorio contenedor" in docstring
+    assert (
+        "mutacion aplicada pero fallo un paso posterior al commit "
+        "(cierre del ledger o liberacion del lock)" in docstring
+    )
 
 
 def run_cli(
@@ -397,15 +401,34 @@ def slow_apply(*args, **kwargs):
         if witness_path:
             Path(witness_path).write_text("ready", encoding="utf-8")
         real_mutate(data)
-        second_started = os.environ.get("REGISTRY_OPS_TEST_SECOND_STARTED")
-        if second_started:
-            deadline = time.monotonic() + 10
-            while not Path(second_started).exists() and time.monotonic() < deadline:
-                time.sleep(0.05)
-            if not Path(second_started).exists():
+        attempt_path = os.environ.get("REGISTRY_OPS_TEST_SECOND_ATTEMPTED")
+        if attempt_path:
+            timeout = float(
+                os.environ.get("REGISTRY_OPS_TEST_ATTEMPT_TIMEOUT", "60")
+            )
+            deadline = time.monotonic() + timeout
+            while not Path(attempt_path).exists() and time.monotonic() < deadline:
+                time.sleep(0.02)
+            if not Path(attempt_path).exists():
                 raise RuntimeError(
-                    "el segundo escritor nunca intento el lock "
-                    "(_lock_try) en 10s"
+                    "el segundo escritor nunca intento el lock (_lock_try) "
+                    f"en {timeout}s"
+                )
+        release_path = os.environ.get("REGISTRY_OPS_TEST_RELEASE")
+        if release_path:
+            release_timeout = float(
+                os.environ.get("REGISTRY_OPS_TEST_RELEASE_TIMEOUT", "60")
+            )
+            release_deadline = time.monotonic() + release_timeout
+            while (
+                not Path(release_path).exists()
+                and time.monotonic() < release_deadline
+            ):
+                time.sleep(0.02)
+            if not Path(release_path).exists():
+                raise RuntimeError(
+                    "el test no libero el escritor lento (_RELEASE) "
+                    f"en {release_timeout}s"
                 )
         time.sleep(0.05)
     return original_apply(*args[:-1], delayed, **kwargs)
@@ -413,16 +436,91 @@ mod._apply_change = slow_apply
 """,
         "signal_lock_attempt": """
 import os
-signal_path = os.environ.get("REGISTRY_OPS_TEST_SECOND_STARTED")
+attempt_path = os.environ.get("REGISTRY_OPS_TEST_SECOND_ATTEMPTED")
+acquired_path = os.environ.get("REGISTRY_OPS_TEST_SECOND_ACQUIRED")
+acquire_delay = float(os.environ.get("REGISTRY_OPS_TEST_ACQUIRE_DELAY", "0") or "0")
 real_lock_try = mod._lock_try
-signaled = False
+attempts = {"n": 0}
 def spy_lock_try(handle):
-    global signaled
-    if signal_path and not signaled:
-        Path(signal_path).write_text("attempted", encoding="utf-8")
-        signaled = True
-    return real_lock_try(handle)
+    attempts["n"] += 1
+    if attempts["n"] == 1 and attempt_path:
+        Path(attempt_path).write_text("attempted", encoding="utf-8")
+    if acquire_delay and attempts["n"] > 1:
+        time.sleep(acquire_delay)
+    real_lock_try(handle)
+    if acquired_path:
+        Path(acquired_path).write_text("acquired", encoding="utf-8")
 mod._lock_try = spy_lock_try
+""",
+        "ledger_close_fail": """
+real_open_ledger = mod._open_ledger
+class _CloseFailLedger:
+    def __init__(self, real):
+        self._real = real
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+    def close(self):
+        self._real.close()
+        raise OSError("simulado: fallo al cerrar el ledger tras el commit")
+mod._open_ledger = lambda path: _CloseFailLedger(real_open_ledger(path))
+""",
+        "ledger_close_raise": """
+import os
+real_open_ledger = mod._open_ledger
+exc_name = os.environ.get("REGISTRY_OPS_TEST_CLOSE_EXC", "RuntimeError")
+message = os.environ.get(
+    "REGISTRY_OPS_TEST_CLOSE_MSG", "simulado: cierre del ledger tras el commit"
+)
+exc_type = {
+    "ValueError": ValueError,
+    "TypeError": TypeError,
+    "RuntimeError": RuntimeError,
+}[exc_name]
+class _RaiseFailLedger:
+    def __init__(self, real):
+        self._real = real
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+    def close(self):
+        self._real.close()
+        if message:
+            raise exc_type(message)
+        raise exc_type()
+mod._open_ledger = lambda path: _RaiseFailLedger(real_open_ledger(path))
+""",
+        "write_and_ledger_close_fail": """
+real_open_ledger = mod._open_ledger
+def fail_write(*args, **kwargs):
+    raise OSError("simulado: fallo de escritura del registry")
+mod._write_registry = fail_write
+class _CloseFailLedger:
+    def __init__(self, real):
+        self._real = real
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+    def close(self):
+        self._real.close()
+        raise OSError("simulado: fallo al cerrar el ledger pre-commit")
+mod._open_ledger = lambda path: _CloseFailLedger(real_open_ledger(path))
+""",
+        "count_current_value": """
+import os
+count_path = os.environ.get("REGISTRY_OPS_TEST_CURRENT_VALUE_COUNT")
+counter = {"n": 0}
+def _trace_call(frame, event, arg):
+    if event == "call" and frame.f_code.co_name == "current_value":
+        counter["n"] += 1
+    return None
+real_main = mod.main
+def counted_main(argv):
+    sys.settrace(_trace_call)
+    try:
+        return real_main(argv)
+    finally:
+        sys.settrace(None)
+        if count_path:
+            Path(count_path).write_text(str(counter["n"]), encoding="utf-8")
+mod.main = counted_main
 """,
         "ledger_fail": 'mod._append_ledger_handle = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("ledger failure"))',
         "registry_fail": 'mod._write_registry = lambda *args, **kwargs: (_ for _ in ()).throw(OSError("registry failure"))',
@@ -437,10 +535,25 @@ Path.open = spy_open
 """,
         "lock_release_fail": """
 import msvcrt
+import os
+exc_name = os.environ.get("REGISTRY_OPS_TEST_RELEASE_EXC", "OSError")
+message = os.environ.get(
+    "REGISTRY_OPS_TEST_RELEASE_MSG", "simulado: fallo al liberar el lock"
+)
+exc_type = {
+    "OSError": OSError,
+    "ValueError": ValueError,
+    "TypeError": TypeError,
+    "RuntimeError": RuntimeError,
+}[exc_name]
 real_locking = msvcrt.locking
 def spy_locking(fd, mode, nbytes):
     if mode == msvcrt.LK_UNLCK:
-        raise OSError(0, "simulado: fallo al liberar el lock")
+        if not message:
+            raise exc_type()
+        if exc_name == "OSError":
+            raise exc_type(0, message)
+        raise exc_type(message)
     return real_locking(fd, mode, nbytes)
 msvcrt.locking = spy_locking
 """,
@@ -886,7 +999,8 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
         slow = write_driver(work, "slow")
         normal = write_driver(work, "signal_lock_attempt")
         witness = work / "slow.ready"
-        second_started = work / "second.started"
+        attempted = work / "second.attempted"
+        acquired = work / "second.acquired"
         common = [
             "asiento",
             "--status",
@@ -901,7 +1015,7 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
         ]
         slow_env = os.environ.copy()
         slow_env["REGISTRY_OPS_TEST_WITNESS"] = str(witness)
-        slow_env["REGISTRY_OPS_TEST_SECOND_STARTED"] = str(second_started)
+        slow_env["REGISTRY_OPS_TEST_SECOND_ATTEMPTED"] = str(attempted)
         slow_process = subprocess.Popen(
             [
                 sys.executable,
@@ -947,7 +1061,8 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
             text=True,
             env={
                 **os.environ,
-                "REGISTRY_OPS_TEST_SECOND_STARTED": str(second_started),
+                "REGISTRY_OPS_TEST_SECOND_ATTEMPTED": str(attempted),
+                "REGISTRY_OPS_TEST_SECOND_ACQUIRED": str(acquired),
             },
         )
         try:
@@ -961,6 +1076,8 @@ def test_dod_c_two_real_registry_ops_writers_keep_both_updates(tmp_path):
             pytest.fail(f"escritores concurrentes excedieron 30s: {exc}")
         assert slow_process.returncode == 0, slow_result
         assert normal_process.returncode == 0, normal_result
+        assert attempted.exists()
+        assert acquired.exists()
         final = json.loads(registry.read_text(encoding="utf-8"))
         assert {item["status"] for item in final["sessions"]} == {"SETTLED"}
         rows = [
@@ -2650,3 +2767,598 @@ def test_real_rotator_roster_shape_blocks_pending_ack(tmp_path):
         roster=roster,
     )
     assert result.returncode == 3
+
+
+# --- WOT-2026-160y: residual registry_ops (y-01..y-06) ---
+#
+# y-01: todo fallo posterior al commit devuelve rc 6 (no rc 2).
+# y-02: ningun paso posterior devuelve rc 2; el fallo pre-commit conserva su rc.
+# y-03: el negativo compara registry, roster, ledger y .bak* (ausencia != vacio).
+# y-04: --roster colisiona tambien sin --apply (y no crashea si no se da).
+# y-05: current_value se llama UNA vez por campo (contador real).
+# y-06: el handshake senala adquisicion REAL y no da falso rojo en maquina lenta.
+
+_POST_COMMIT_STEPS = ("ledger_close", "lock_release")
+_COMMANDS = ("alta", "asiento", "nota", "reconcile")
+_BAK_SENTINEL = object()
+
+
+def _write_reconcile_fixtures(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    roster = tmp_path / "roster.json"
+    snapshot = tmp_path / "snapshot.json"
+    write_registry(registry, [session()])
+    write_roster(roster)
+    ledger.write_bytes(b"")
+    snapshot.write_text(json.dumps([snapshot_entry()]) + "\n", encoding="utf-8")
+    return registry, ledger, roster, snapshot
+
+
+def _post_commit_command(command, snapshot):
+    common = ["--by", "post-commit", "--reason", "post-commit", "--apply"]
+    if command == "alta":
+        return [
+            "alta",
+            "--code",
+            "IM-2",
+            "--role",
+            "builder",
+            "--slot",
+            "slot-2",
+            "--thread-id",
+            "thread-2",
+            "--started",
+            "now",
+            "--status",
+            "ACTIVE",
+            *common,
+        ]
+    if command == "asiento":
+        return ["asiento", "--code", "IM-1", "--status", "SETTLED", *common]
+    if command == "nota":
+        return ["nota", "--code", "IM-1", "--nota", "post-commit", *common]
+    return ["reconcile", "--snapshot", str(snapshot), *common]
+
+
+def _run_driver(driver, args, env=None):
+    return subprocess.run(
+        [sys.executable, str(driver), *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+
+def _snapshot_surfaces(registry, roster, ledger):
+    parent = registry.parent
+
+    def read(path):
+        return path.read_bytes() if path.exists() else None
+
+    baks = {}
+    for index in (1, 2, 3):
+        name = f"{registry.name}.bak{index}"
+        candidate = parent / name
+        baks[name] = candidate.read_bytes() if candidate.exists() else _BAK_SENTINEL
+    return {
+        "registry": read(registry),
+        "roster": read(roster),
+        "ledger": read(ledger),
+        "bak": baks,
+    }
+
+
+def _surface_diff(before, after):
+    return {key for key in before if before[key] != after[key]}
+
+
+def _copy_surfaces(surfaces):
+    return {
+        key: (dict(value) if isinstance(value, dict) else value)
+        for key, value in surfaces.items()
+    }
+
+
+@pytest.mark.parametrize("step", _POST_COMMIT_STEPS)
+@pytest.mark.parametrize("command", _COMMANDS)
+def test_y01_y02_post_commit_failure_returns_rc6_never_rc2(tmp_path, step, command):
+    registry, ledger, roster, snapshot = _write_reconcile_fixtures(tmp_path)
+    before = registry.read_bytes()
+    mode = "ledger_close_fail" if step == "ledger_close" else "lock_release_fail"
+    driver = write_driver(tmp_path, mode)
+    result = _run_driver(
+        driver,
+        [
+            *_post_commit_command(command, snapshot),
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+        ],
+    )
+    assert result.returncode == 6, result.stderr
+    assert result.returncode != 2
+    assert "SE APLICO" in result.stderr
+    assert "registry_ops: I/O:" not in result.stderr
+    if step == "ledger_close":
+        assert "cierre del ledger" in result.stderr
+        assert "simulado: fallo al cerrar el ledger tras el commit" in result.stderr
+    else:
+        assert "fallo la liberacion del lock" in result.stderr
+    # la mutacion SI se aplico: registry cambiado, fila write-ahead y bak1
+    assert registry.read_bytes() != before
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+    assert registry.with_name("registry.json.bak1").read_bytes() == before
+
+
+def test_y02_control_precommit_failure_keeps_rc2(tmp_path):
+    registry, ledger, roster, _snapshot = _write_reconcile_fixtures(tmp_path)
+    before = registry.read_bytes()
+    driver = write_driver(tmp_path, "registry_fail")
+    result = _run_driver(
+        driver,
+        [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "pre-commit",
+            "--reason",
+            "pre-commit",
+            "--apply",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+        ],
+    )
+    assert result.returncode == 2
+    assert "registry_ops: I/O:" in result.stderr
+    assert registry.read_bytes() == before
+
+
+@pytest.mark.parametrize("exc_name", ["ValueError", "TypeError", "RuntimeError"])
+def test_m1_post_commit_ledger_close_non_oserror_returns_rc6(tmp_path, exc_name):
+    registry, ledger, roster, _snapshot = _write_reconcile_fixtures(tmp_path)
+    before = registry.read_bytes()
+    driver = write_driver(tmp_path, "ledger_close_raise")
+    env = {**os.environ, "REGISTRY_OPS_TEST_CLOSE_EXC": exc_name}
+    result = _run_driver(
+        driver,
+        [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "m1",
+            "--reason",
+            "m1",
+            "--apply",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+        ],
+        env=env,
+    )
+    assert result.returncode == 6, result.stderr
+    assert result.returncode not in {1, 2}
+    assert "SE APLICO" in result.stderr
+    assert "cierre del ledger" in result.stderr
+    assert "simulado: cierre del ledger tras el commit" in result.stderr
+    assert registry.read_bytes() != before
+    assert len(ledger.read_text(encoding="utf-8").splitlines()) == 1
+    assert registry.with_name("registry.json.bak1").read_bytes() == before
+
+
+@pytest.mark.parametrize("exc_name", ["ValueError", "TypeError", "RuntimeError"])
+def test_m3_post_commit_lock_release_non_oserror_returns_rc6(tmp_path, exc_name):
+    registry, ledger, roster, _snapshot = _write_reconcile_fixtures(tmp_path)
+    before = registry.read_bytes()
+    driver = write_driver(tmp_path, "lock_release_fail")
+    env = {**os.environ, "REGISTRY_OPS_TEST_RELEASE_EXC": exc_name}
+    result = _run_driver(
+        driver,
+        [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "m3",
+            "--reason",
+            "m3",
+            "--apply",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+        ],
+        env=env,
+    )
+    assert result.returncode == 6, result.stderr
+    assert result.returncode not in {1, 2}
+    assert "SE APLICO" in result.stderr
+    assert "fallo la liberacion del lock" in result.stderr
+    assert "simulado: fallo al liberar el lock" in result.stderr
+    assert registry.read_bytes() != before
+
+
+def test_m1_guard_precommit_double_failure_keeps_original_rc2(tmp_path):
+    registry, ledger, roster, _snapshot = _write_reconcile_fixtures(tmp_path)
+    before = registry.read_bytes()
+    driver = write_driver(tmp_path, "write_and_ledger_close_fail")
+    result = _run_driver(
+        driver,
+        [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "guard",
+            "--reason",
+            "guard",
+            "--apply",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+        ],
+    )
+    assert result.returncode == 2, result.stderr
+    assert "SE APLICO" not in result.stderr
+    assert registry.read_bytes() == before
+
+
+def test_m2_lock_release_error_names_type_when_message_empty(tmp_path):
+    registry, ledger, roster, _snapshot = _write_reconcile_fixtures(tmp_path)
+    driver = write_driver(tmp_path, "lock_release_fail")
+    env = {
+        **os.environ,
+        "REGISTRY_OPS_TEST_RELEASE_EXC": "ValueError",
+        "REGISTRY_OPS_TEST_RELEASE_MSG": "",
+    }
+    result = _run_driver(
+        driver,
+        [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "m2",
+            "--reason",
+            "m2",
+            "--apply",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+        ],
+        env=env,
+    )
+    assert result.returncode == 6, result.stderr
+    assert "(ValueError:" in result.stderr
+    assert "()" not in result.stderr
+
+
+def test_m2_commit_finalize_error_names_type_when_message_empty(tmp_path):
+    registry, ledger, roster, _snapshot = _write_reconcile_fixtures(tmp_path)
+    driver = write_driver(tmp_path, "ledger_close_raise")
+    env = {
+        **os.environ,
+        "REGISTRY_OPS_TEST_CLOSE_EXC": "ValueError",
+        "REGISTRY_OPS_TEST_CLOSE_MSG": "",
+    }
+    result = _run_driver(
+        driver,
+        [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "m2",
+            "--reason",
+            "m2",
+            "--apply",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+        ],
+        env=env,
+    )
+    assert result.returncode == 6, result.stderr
+    assert "(ValueError:" in result.stderr
+    assert "()" not in result.stderr
+
+
+def test_y03_negative_compares_four_surfaces_and_detects_each(tmp_path):
+    registry, ledger, roster, _snapshot = _write_reconcile_fixtures(tmp_path)
+    ledger.write_bytes(b"ledger-before\n")
+    before = _snapshot_surfaces(registry, roster, ledger)
+    assert sorted(before) == ["bak", "ledger", "registry", "roster"]
+    assert len(before["bak"]) == 3
+    driver = write_driver(tmp_path, "registry_fail")
+    result = _run_driver(
+        driver,
+        [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "SETTLED",
+            "--by",
+            "y03",
+            "--reason",
+            "y03",
+            "--apply",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+        ],
+    )
+    assert result.returncode == 2
+    after = _snapshot_surfaces(registry, roster, ledger)
+    # estado exacto por superficie tras la escritura fallida
+    assert after["registry"] == before["registry"]
+    assert after["roster"] == before["roster"]
+    assert after["ledger"] != before["ledger"]
+    assert after["bak"] != before["bak"]
+    assert _surface_diff(before, after) == {"ledger", "bak"}
+    assert after["bak"]["registry.json.bak1"] == before["registry"]
+    assert after["bak"]["registry.json.bak2"] is _BAK_SENTINEL
+    assert after["bak"]["registry.json.bak3"] is _BAK_SENTINEL
+    rows = after["ledger"].decode("utf-8").splitlines()
+    assert after["ledger"].startswith(b"ledger-before\n")
+    assert len(rows) == 2
+    assert json.loads(rows[-1])["reason"] == "y03"
+    # control positivo: una diferencia inyectada en CADA superficie se detecta
+    for surface in ("registry", "roster", "ledger"):
+        tampered = _copy_surfaces(before)
+        tampered[surface] = b"injected\n"
+        assert surface in _surface_diff(before, tampered), surface
+    for bak_name in (
+        "registry.json.bak1",
+        "registry.json.bak2",
+        "registry.json.bak3",
+    ):
+        tampered = _copy_surfaces(before)
+        tampered["bak"][bak_name] = b"injected\n"
+        assert "bak" in _surface_diff(before, tampered), bak_name
+    # ausencia de un .bak es distinta de un .bak vacio (None != b"")
+    assert before["bak"]["registry.json.bak2"] is _BAK_SENTINEL
+    assert before["bak"]["registry.json.bak2"] != b""
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_y04_roster_collision_detected_with_and_without_apply(tmp_path, apply):
+    registry = tmp_path / "registry.json"
+    write_registry(registry, [session()])
+    before = registry.read_bytes()
+    extra = ["--apply"] if apply else []
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        "SETTLED",
+        "--by",
+        "y04",
+        "--reason",
+        "y04",
+        *extra,
+        roster=registry,
+        auto_roster=False,
+    )
+    assert result.returncode == 2
+    assert "--registry=" in result.stderr and "--roster=" in result.stderr
+    assert registry.read_bytes() == before
+
+
+def test_y04_roster_absent_does_not_crash(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry, [session()])
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        "SETTLED",
+        "--by",
+        "y04",
+        "--reason",
+        "y04",
+    )
+    assert result.returncode == 0
+
+
+def test_y05_current_value_called_once_per_field(tmp_path):
+    registry, ledger, roster, snapshot = _write_reconcile_fixtures(tmp_path)
+    count_path = tmp_path / "current_value_calls.txt"
+    driver = write_driver(tmp_path, "count_current_value")
+    env = {
+        **os.environ,
+        "REGISTRY_OPS_TEST_CURRENT_VALUE_COUNT": str(count_path),
+    }
+    result = _run_driver(
+        driver,
+        [
+            "reconcile",
+            "--snapshot",
+            str(snapshot),
+            "--by",
+            "y05",
+            "--reason",
+            "y05",
+            "--apply",
+            "--registry",
+            str(registry),
+            "--ledger",
+            str(ledger),
+            "--roster",
+            str(roster),
+        ],
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert int(count_path.read_text(encoding="utf-8")) == len(RECONCILE_FIELDS)
+    row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert "status_discrepancias=1" in row["detail"]
+
+
+def test_y06_handshake_signals_real_acquisition_slow_acquisition_no_false_red(
+    tmp_path,
+):
+    work = tmp_path / "slow_acquisition"
+    work.mkdir()
+    registry = work / "registry.json"
+    ledger = work / "ledger.jsonl"
+    roster = work / "roster.json"
+    first = session("IM-1")
+    second = session("IM-2")
+    second["threadId"] = "thread-2"
+    write_registry(registry, [first, second])
+    write_roster(roster)
+    slow = write_driver(work, "slow")
+    normal = write_driver(work, "signal_lock_attempt")
+    witness = work / "slow.ready"
+    attempted = work / "second.attempted"
+    acquired = work / "second.acquired"
+    release = work / "slow.release"
+    common = [
+        "asiento",
+        "--status",
+        "SETTLED",
+        "--registry",
+        str(registry),
+        "--ledger",
+        str(ledger),
+        "--roster",
+        str(roster),
+        "--apply",
+    ]
+    slow_env = {
+        **os.environ,
+        "REGISTRY_OPS_TEST_WITNESS": str(witness),
+        "REGISTRY_OPS_TEST_SECOND_ATTEMPTED": str(attempted),
+        "REGISTRY_OPS_TEST_ATTEMPT_TIMEOUT": "60",
+        "REGISTRY_OPS_TEST_RELEASE": str(release),
+        "REGISTRY_OPS_TEST_RELEASE_TIMEOUT": "60",
+    }
+    slow_process = subprocess.Popen(
+        [
+            sys.executable,
+            str(slow),
+            common[0],
+            "--code",
+            "IM-1",
+            *common[1:],
+            "--by",
+            "slow",
+            "--reason",
+            "slow",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=slow_env,
+    )
+    deadline = time.monotonic() + 60
+    while not witness.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    if not witness.exists():
+        slow_process.terminate()
+        slow_result = slow_process.communicate()
+        pytest.fail(
+            f"slow writer did not create witness within 60 seconds: {slow_result}"
+        )
+    normal_env = {
+        **os.environ,
+        "REGISTRY_OPS_TEST_SECOND_ATTEMPTED": str(attempted),
+        "REGISTRY_OPS_TEST_SECOND_ACQUIRED": str(acquired),
+        "REGISTRY_OPS_TEST_ACQUIRE_DELAY": "0.5",
+    }
+    normal_process = subprocess.Popen(
+        [
+            sys.executable,
+            str(normal),
+            common[0],
+            "--code",
+            "IM-2",
+            *common[1:],
+            "--by",
+            "normal",
+            "--reason",
+            "normal",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=normal_env,
+    )
+    deadline = time.monotonic() + 60
+    while not attempted.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    if not attempted.exists():
+        slow_process.terminate()
+        normal_process.terminate()
+        slow_process.communicate()
+        normal_process.communicate()
+        pytest.fail("el normal no intento el lock en 60s")
+    # el lento mantiene el lock: el normal intento pero NO puede haber adquirido
+    assert not acquired.exists()
+    release.write_text("go", encoding="utf-8")
+    deadline = time.monotonic() + 60
+    while not acquired.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    try:
+        slow_result = slow_process.communicate(timeout=60)
+        normal_result = normal_process.communicate(timeout=60)
+    except subprocess.TimeoutExpired as exc:
+        slow_process.terminate()
+        normal_process.terminate()
+        slow_process.communicate()
+        normal_process.communicate()
+        pytest.fail(f"handshake excedio 60s: {exc}")
+    assert slow_process.returncode == 0, slow_result
+    assert normal_process.returncode == 0, normal_result
+    assert attempted.exists()
+    assert acquired.exists()
+    final = json.loads(registry.read_text(encoding="utf-8"))
+    assert {item["status"] for item in final["sessions"]} == {"SETTLED"}
+    rows = [
+        json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()
+    ]
+    assert len(rows) == 2
