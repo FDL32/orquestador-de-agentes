@@ -182,7 +182,7 @@ archivo fuera de P7. La regla de reutilizacion se refleja en estas herramientas 
 | Documentacion del vuelo | local mientras es citada | zip + manifiesto a D:; replica Internxt solo si el usuario lo confirma | TTL 90 dias tras cierre sin re-cita | 158c fase 1 (pending) + hija 158c |
 | Salidas raw y grep_hits | 14 dias | compresion a 14 dias inactivos | lista P7 tras copia verificada; archivo propuesto 90 dias | por crear o ampliar rotate_kilo_logs |
 | Clones y sandboxes | ronda viva | veredicto, ficheros y manifiesto | TTL 7 dias via P7; SAFE via prune_git_recoverable | start_ticket.py + P7 + prune_git_recoverable |
-| Sesiones de Claude | 14 dias; cleanupPeriodDays NO se toca | nube solo con escaneo de secretos y autorizacion por categoria | tras archivo y export, via P7 | por crear, hija P5 |
+| Sesiones de Claude | 14 dias; cleanupPeriodDays NO se toca | zip o compresion local; nube solo con escaneo de secretos y autorizacion por categoria | tras archivo y export, via P7 | por crear, hija P5 |
 | Logs de Kilo | 7 dias | comprimido | 30 dias | rotate_kilo_logs.py |
 | Reviews, packets, backups y notificaciones | ultimos 20, 20, 10 y 20 | n/a de conteo | resto | prune_runtime_retention.py |
 | Scratch del harness | 14 dias | n/a | despues | prune_session_scratch.py |
