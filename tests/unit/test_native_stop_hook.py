@@ -15,7 +15,7 @@ import os
 import pathlib
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -614,7 +614,15 @@ def _arm_espera(root, mode="observe", payload=None):
     target = root / hook.ESPERA_SENTINEL_RELPATH
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
-        json.dumps({"mode": mode, "activated_at": "now"}), encoding="utf-8"
+        json.dumps(
+            {
+                "mode": mode,
+                # WOT-2026-160z: fecha ISO UTC REAL; "now" seria ilegible para
+                # sentinel_expiry y el centinela quedaria INACTIVO.
+                "activated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ),
+        encoding="utf-8",
     )
 
 
@@ -989,3 +997,84 @@ class TestEsperaChecklistBranch:
     )
     def test_fence_respeta_longitud_del_delimitador(self, message, expected_classifies):
         assert hook.espera_classifies(message) is expected_classifies
+
+
+class TestEsperaCaducidadYTope:
+    """WOT-2026-160z: caducidad del centinela de espera y tope de telemetria."""
+
+    def test_centinela_caducado_no_registra_ni_bloquea(self, tmp_path):
+        """z-01: activated_at mas viejo que el ttl -> INACTIVO.
+
+        Se arma en `block` a proposito: si la caducidad no se evaluase, el
+        mensaje de espera bloquearia y ademas registraria telemetria.
+        """
+        root = make_root(tmp_path)
+        target = root / hook.ESPERA_SENTINEL_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        target.write_text(
+            json.dumps({"mode": "block", "activated_at": old}), encoding="utf-8"
+        )
+        _, result, stderr = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result == {"continue": True}
+        assert "INACTIVO" in stderr
+        assert not (root / hook.ESPERA_OBSERVATIONS_RELPATH).exists()
+
+    def test_centinela_dentro_de_ttl_sigue_activo(self, tmp_path):
+        """CONTROL POSITIVO de z-01: un centinela fresco si registra."""
+        root = make_root(tmp_path)
+        _arm_espera(root)
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result == {"continue": True}
+        rows = (root / hook.ESPERA_OBSERVATIONS_RELPATH).read_text().splitlines()
+        assert len(rows) == 1
+
+    def test_centinela_vacio_no_registra_ni_bloquea(self, tmp_path):
+        """z-02 lado gancho: `{}` es INACTIVO tambien para la rama espera."""
+        root = make_root(tmp_path)
+        target = root / hook.ESPERA_SENTINEL_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}", encoding="utf-8")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result == {"continue": True}
+        assert not (root / hook.ESPERA_OBSERVATIONS_RELPATH).exists()
+
+    def test_tope_no_recorta_al_llegar_justo_al_maximo(self, tmp_path):
+        """z-06: con MAX-1 filas, una parada deja MAX; NO se reescribe."""
+        root = make_root(tmp_path)
+        _arm_espera(root)
+        target = root / hook.ESPERA_OBSERVATIONS_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        seeded = [
+            json.dumps({"n": n}) for n in range(1, hook.ESPERA_OBSERVATIONS_MAX_ROWS)
+        ]
+        target.write_text("\n".join(seeded) + "\n", encoding="utf-8")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result == {"continue": True}
+        rows = [json.loads(line) for line in target.read_text().splitlines()]
+        assert len(rows) == hook.ESPERA_OBSERVATIONS_MAX_ROWS
+        assert rows[0] == {"n": 1}
+
+    def test_tope_telemetria_conserva_las_ultimas(self, tmp_path):
+        """z-06: al SUPERAR el tope se conservan las ultimas KEEP filas."""
+        root = make_root(tmp_path)
+        _arm_espera(root)
+        target = root / hook.ESPERA_OBSERVATIONS_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        seeded = [
+            json.dumps({"n": n})
+            for n in range(1, hook.ESPERA_OBSERVATIONS_MAX_ROWS + 1)
+        ]
+        target.write_text("\n".join(seeded) + "\n", encoding="utf-8")
+        _, result, _ = run_hook(json.dumps(_espera_payload(root)), root)
+        assert result == {"continue": True}
+        rows = [json.loads(line) for line in target.read_text().splitlines()]
+        assert len(rows) <= hook.ESPERA_OBSERVATIONS_KEEP_ROWS
+        assert len(rows) == hook.ESPERA_OBSERVATIONS_KEEP_ROWS
+        # La cola son las ULTIMAS: ultima semilla + el registro nuevo.
+        assert rows[-2] == {"n": hook.ESPERA_OBSERVATIONS_MAX_ROWS}
+        assert rows[-1]["session_id"] == "s-espera"
+        dropped = (
+            hook.ESPERA_OBSERVATIONS_MAX_ROWS + 1 - hook.ESPERA_OBSERVATIONS_KEEP_ROWS
+        )
+        assert rows[0] == {"n": dropped + 1}

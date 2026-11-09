@@ -74,6 +74,7 @@ campo no documentado en code.claude.com/docs/en/hooks.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -105,6 +106,11 @@ SENTINEL_RELPATH = Path(".agent") / "runtime" / "verification_mode.json"
 # WOT-2026-160p: segunda rama, deliberadamente independiente de WOT-2026-044t.
 ESPERA_SENTINEL_RELPATH = Path(".agent") / "runtime" / "espera_checklist_mode.json"
 ESPERA_OBSERVATIONS_RELPATH = Path(".agent") / "runtime" / "espera_observations.json"
+#: WOT-2026-160z: tope de la telemetria observe con histeresis. NO se reescribe
+#: al llegar justo al tope (eso reescribiria en cada parada a partir de ahi);
+#: solo se recorta cuando se SUPERA, conservando las ultimas KEEP filas.
+ESPERA_OBSERVATIONS_MAX_ROWS = 500
+ESPERA_OBSERVATIONS_KEEP_ROWS = 400
 _A_ESTRECHO_RE = re.compile(
     r"(sigo esperando|continuo esperando|continúo esperando|sigo a la espera|"
     r"me quedo esperando|quedo esperando)",
@@ -493,10 +499,45 @@ def read_espera_sentinel(root: Path) -> dict | None:
     return data if isinstance(data, dict) else {}
 
 
+def _rotate_espera_observations(target: Path) -> None:
+    """Before: JSONL ya escrito; During: recorta SOLO si supera el tope; After:
+    conserva las ultimas KEEP filas mediante temporal + `os.replace`.
+
+    WOT-2026-160z: histeresis deliberada. Si se recortase al llegar JUSTO al
+    tope, toda parada posterior reescribiria el fichero; aqui solo se paga esa
+    reescritura cuando el fichero ya lo supero, y el recorte deja margen.
+
+    Fail-open total: cualquier fallo de lectura o escritura deja el fichero como
+    estaba. Es telemetria, nunca el veredicto del gancho. No parsea las lineas
+    (conserva las ultimas tal cual), asi que una linea ilegible no puede hacer
+    fallar la rotacion.
+
+    Riesgo declarado: varias sesiones pueden anexar a la vez; un recorte
+    concurrente puede perder filas recien anexadas por otra sesion (perdida de
+    telemetria, NO del veredicto).
+    """
+    try:
+        raw = target.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return
+    lines = [line for line in raw.splitlines() if line.strip()]
+    if len(lines) <= ESPERA_OBSERVATIONS_MAX_ROWS:
+        return
+    kept = lines[-ESPERA_OBSERVATIONS_KEEP_ROWS:]
+    tmp = target.with_name(f"{target.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text("\n".join(kept) + "\n", encoding="utf-8")
+        os.replace(tmp, target)
+    except OSError:
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+
+
 def _record_espera_observation(
     root: Path, payload: dict, trigger_a: bool, ya_clasificado: bool, message: str
 ) -> None:
-    """Before: datos no sensibles; During: anade JSONL; After: falla abierto si no escribe."""
+    """Before: datos no sensibles; During: anade JSONL y aplica el tope; After:
+    falla abierto si no escribe (el veredicto nunca depende de la telemetria)."""
     try:
         record = {
             "ts": datetime.now(timezone.utc).isoformat(),
@@ -511,14 +552,27 @@ def _record_espera_observation(
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        _rotate_espera_observations(target)
     except (OSError, TypeError, ValueError):
         return
 
 
 def _decide_espera(root: Path, payload: dict) -> dict:
-    """Before: payload y centinela nuevo; During: observa o bloquea; After: devuelve veredicto."""
+    """Before: payload y centinela nuevo; During: observa o bloquea; After: devuelve veredicto.
+
+    WOT-2026-160z: el centinela de espera se evalua con la MISMA caducidad que
+    el de 044t (`sentinel_expiry`, etiquetas EXPIRADO / SIN-FECHA-LEGIBLE). Un
+    centinela caducado, vacio o con fecha ilegible queda INACTIVO: no registra
+    ni bloquea. Reusar la funcion evita una segunda vara de caducidad.
+    """
     sentinel = read_espera_sentinel(root)
     if sentinel is None or sentinel.get("mode") not in ("observe", "block"):
+        return {"continue": True}
+    expiry = sentinel_expiry(sentinel)
+    if expiry:
+        sys.stderr.write(
+            f"native_stop_hook: centinela de espera {expiry}; tratado como INACTIVO.\n"
+        )
         return {"continue": True}
     if not _espera_guard_allows(payload):
         return {"continue": True}
