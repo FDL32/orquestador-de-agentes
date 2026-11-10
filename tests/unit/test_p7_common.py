@@ -50,6 +50,19 @@ def test_guardas_locks(tmp_path: Path) -> None:
     assert not lock.exists()
 
 
+def test_pid_alive_nt_sin_tasklist_es_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(p7_common.os, "name", "nt")
+    monkeypatch.setattr(p7_common.shutil, "which", lambda _name: None)
+
+    def unexpected_kill(*_args: object) -> None:
+        raise AssertionError("os.kill no debe usarse en Windows sin tasklist")
+
+    monkeypatch.setattr(p7_common.os, "kill", unexpected_kill)
+    assert p7_common._pid_alive(424242) is True
+
+
 def test_reparse_point_real_no_se_sigue(tmp_path: Path) -> None:
     if os.name != "nt":
         pytest.skip("junction requiere Windows")
@@ -168,6 +181,28 @@ def test_ttl_only_generates_candidates(tmp_path: Path) -> None:
     )
     assert candidates == [{"rel": "candidate.txt", "mtime": 0}]
     assert path.read_bytes() == before
+
+
+def test_classify_candidates_respects_threshold_and_exact_boundaries() -> None:
+    now = 1_000_000.0
+    threshold = 7 * 86400
+    entries = [
+        {"rel": "recent", "mtime": now - (threshold - 1)},
+        {"rel": "exact", "mtime": now - threshold},
+        {"rel": "old", "mtime": now - (threshold + 1)},
+    ]
+    assert p7_common.classify_candidates(
+        entries, now=now, ttl_dias=7, min_age_segundos=0
+    ) == [entries[1], entries[2]]
+
+    longer_threshold = 200_000
+    longer_entries = [
+        {"rel": "below-min", "mtime": now - (longer_threshold - 1)},
+        {"rel": "at-min", "mtime": now - longer_threshold},
+    ]
+    assert p7_common.classify_candidates(
+        longer_entries, now=now, ttl_dias=1, min_age_segundos=longer_threshold
+    ) == [longer_entries[1]]
 
 
 def test_archive_script_imports_from_neutral_cwd(tmp_path: Path) -> None:

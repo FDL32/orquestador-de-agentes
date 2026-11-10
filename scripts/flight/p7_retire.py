@@ -13,7 +13,9 @@ import hashlib
 import json
 import os
 import sys
+import tempfile
 import zipfile
+from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -71,7 +73,14 @@ def _paths(entries: list[dict[str, object]], origin: Path) -> list[Path]:
     result = []
     for entry in entries:
         rel = _entry_name(entry)
-        if not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
+        relative = Path(rel)
+        if (
+            not rel
+            or relative.is_absolute()
+            or relative.drive
+            or relative.anchor
+            or ".." in relative.parts
+        ):
             raise p7_common.ArchiveError(f"ruta aprobada invalida: {rel}")
         p7_common.assert_no_link_ancestors(origin, rel)
         result.append(origin / rel)
@@ -95,9 +104,18 @@ def _append_record(index: Path, record: dict[str, object]) -> None:
 
 def _zip_paths(zip_path: Path, paths: list[Path], origin: Path) -> None:
     zip_path.parent.mkdir(parents=True, exist_ok=True)
+    actual_names = {
+        os.path.normcase(path.relative_to(origin).as_posix()): path.relative_to(
+            origin
+        ).as_posix()
+        for path in p7_common.walk_files_no_links(origin)
+    }
     with zipfile.ZipFile(zip_path, "x", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in paths:
-            archive.write(path, path.relative_to(origin).as_posix())
+            requested = path.relative_to(origin).as_posix()
+            archive.write(
+                path, actual_names.get(os.path.normcase(requested), requested)
+            )
 
 
 def _markdown_index(path: Path, rows: list[dict[str, object]]) -> None:
@@ -151,7 +169,7 @@ def _validate_manifest_shape(manifest: list[dict[str, object]]) -> None:
         raise p7_common.ArchiveError("manifiesto con claves inesperadas")
 
 
-def _apply_archive(
+def _apply_archive(  # noqa: C901
     args: argparse.Namespace,
     entries: list[dict[str, object]],
     origin: Path,
@@ -167,43 +185,78 @@ def _apply_archive(
     family_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     zip_path = family_dir / f"{args.family}-{stamp}.zip"
-    _zip_paths(zip_path, paths, origin)
-    if zip_path.stat().st_size <= 0:
-        raise p7_common.ArchiveError("zip vacio")
-    with zipfile.ZipFile(zip_path) as archive:
-        if archive.testzip() is not None:
-            raise p7_common.ArchiveError("zip corrupto")
-    manifest = p7_common.manifest_of_tree(origin)
-    manifest = [
-        row for row in manifest if row["rel"] in {_entry_name(e) for e in entries}
-    ]
-    _validate_manifest_shape(manifest)
-    with zipfile.ZipFile(zip_path) as archive:
-        for row in manifest:
-            with archive.open(row["rel"]) as member:
-                digest = hashlib.sha256(member.read()).hexdigest()
-            if digest != row["sha256"]:
-                raise p7_common.ArchiveError(f"hash del zip discrepante: {row['rel']}")
     manifest_path = family_dir / f"{zip_path.stem}.manifest.json"
-    manifest_path.write_text(
-        json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+    if zip_path.exists() or manifest_path.exists():
+        raise p7_common.ArchiveError("ya existe evidencia para la marca temporal")
+    temp_zip_fd, temp_zip_name = tempfile.mkstemp(
+        prefix=f".{zip_path.name}.", suffix=".tmp", dir=str(family_dir)
     )
-    record = {
-        "status": "ARCHIVADO",
-        "family": args.family,
-        "origin": str(origin),
-        "zip": str(zip_path),
-        "manifest": str(manifest_path),
-        "zip_sha256": p7_common.sha256_file(zip_path),
-        "list_sha256": args.list_sha256,
-        "entries": entries,
-    }
-    rows = p7_common.load_jsonl_index(index)
-    rows.append(record)
-    p7_common.write_jsonl_index_atomic(index, rows)
-    _check_index(args.archive_root, args.family, index)
-    _markdown_index(md, rows)
-    return 0
+    os.close(temp_zip_fd)
+    os.unlink(temp_zip_name)
+    temp_zip = Path(temp_zip_name)
+    temp_manifest_fd, temp_manifest_name = tempfile.mkstemp(
+        prefix=f".{manifest_path.name}.", suffix=".tmp", dir=str(family_dir)
+    )
+    os.close(temp_manifest_fd)
+    os.unlink(temp_manifest_name)
+    temp_manifest = Path(temp_manifest_name)
+    original_rows = p7_common.load_jsonl_index(index)
+    index_existed = index.exists()
+    try:
+        _zip_paths(temp_zip, paths, origin)
+        if temp_zip.stat().st_size <= 0:
+            raise p7_common.ArchiveError("zip vacio")
+        with zipfile.ZipFile(temp_zip) as archive:
+            if archive.testzip() is not None:
+                raise p7_common.ArchiveError("zip corrupto")
+        manifest = p7_common.manifest_of_tree(origin)
+        approved_names = {os.path.normcase(_entry_name(entry)) for entry in entries}
+        manifest = [
+            row
+            for row in manifest
+            if os.path.normcase(str(row["rel"])) in approved_names
+        ]
+        if len(manifest) != len(entries):
+            raise p7_common.ArchiveError("manifiesto sin todas las entradas aprobadas")
+        _validate_manifest_shape(manifest)
+        with zipfile.ZipFile(temp_zip) as archive:
+            for row in manifest:
+                with archive.open(row["rel"]) as member:
+                    digest = hashlib.sha256(member.read()).hexdigest()
+                if digest != row["sha256"]:
+                    raise p7_common.ArchiveError(
+                        f"hash del zip discrepante: {row['rel']}"
+                    )
+        temp_manifest.write_text(
+            json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        record = {
+            "status": "ARCHIVADO",
+            "family": args.family,
+            "origin": str(origin),
+            "zip": str(zip_path),
+            "manifest": str(manifest_path),
+            "zip_sha256": p7_common.sha256_file(temp_zip),
+            "list_sha256": args.list_sha256,
+            "entries": entries,
+        }
+        rows = [*original_rows, record]
+        p7_common.write_jsonl_index_atomic(index, rows)
+        os.replace(temp_zip, zip_path)
+        os.replace(temp_manifest, manifest_path)
+        _check_index(args.archive_root, args.family, index)
+        _markdown_index(md, rows)
+        return 0
+    except Exception:
+        for candidate in (temp_zip, temp_manifest, zip_path, manifest_path):
+            with suppress(FileNotFoundError):
+                candidate.unlink()
+        if index_existed:
+            p7_common.write_jsonl_index_atomic(index, original_rows)
+        else:
+            with suppress(FileNotFoundError):
+                index.unlink()
+        raise
 
 
 def _apply_retire(
@@ -246,9 +299,11 @@ def _apply_retire(
     p7_common.verify_manifest_entries(origin, manifest)
     p7_common.verify_list_entries(entries, origin)
     tracked = p7_common.git_tracked_files(origin)
+    tracked_keys = {os.path.normcase(name) for name in tracked}
     removed = []
     for path, _entry in zip(_paths(entries, origin), entries, strict=True):
-        if path.relative_to(origin).as_posix() in tracked:
+        key = os.path.normcase(path.relative_to(origin).as_posix())
+        if key in tracked_keys:
             removed.append({"path": str(path), "status": "SALTADA_VERSIONADA"})
             continue
         path.unlink()
@@ -304,6 +359,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
             "ERROR: archive-root y origin deben ser arboles disjuntos",
             file=sys.stderr,
         )
+        return 2
+    if p7_common.is_reparse_or_link(args.origin):
+        print("ERROR: origin no puede ser un enlace o reparse point", file=sys.stderr)
         return 2
     if not _mounted(args.archive_root):
         return 4

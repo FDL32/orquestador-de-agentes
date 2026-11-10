@@ -329,6 +329,7 @@ def _pid_alive(pid: int) -> bool:
             except (OSError, subprocess.SubprocessError):
                 return True
             return probe.returncode == 0 and str(pid) in (probe.stdout or "")
+        return True
     try:
         os.kill(pid, 0)
     except PermissionError:
@@ -450,7 +451,12 @@ def assert_no_link_ancestors(base: Path, rel: str) -> None:
     After: return only when no ancestor is a symlink or reparse point.
     """
     relative = Path(rel)
-    if relative.is_absolute() or ".." in relative.parts:
+    if (
+        relative.is_absolute()
+        or relative.drive
+        or relative.anchor
+        or ".." in relative.parts
+    ):
         raise ArchiveError(f"ruta aprobada invalida: {rel}")
     current = Path(base)
     for part in relative.parts[:-1]:

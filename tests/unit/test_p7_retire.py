@@ -260,6 +260,169 @@ def test_no_toca_versionados(tmp_path: Path) -> None:
     assert rows[-1]["removed"][0]["status"] == "SALTADA_VERSIONADA"
 
 
+def test_no_toca_versionados_ignora_mayusculas_en_rutas(tmp_path: Path) -> None:
+    probe = tmp_path / "A_probe"
+    probe.write_text("probe", encoding="utf-8")
+    if not (tmp_path / "a_probe").exists():
+        probe.unlink()
+        pytest.skip("filesystem sensible a mayusculas")
+    probe.unlink()
+    origin, archive, entry, digest, approved = _fixture(tmp_path, commit=True)
+    entry["rel"] = "OLD.MD"
+    approved.write_text(json.dumps(entry, sort_keys=True) + "\n", encoding="utf-8")
+    digest = hashlib.sha256(approved.read_bytes()).hexdigest()
+    archive.mkdir()
+
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) == 0
+    )
+    manifest_path = next(archive.rglob("*.manifest.json"))
+    assert len(json.loads(manifest_path.read_text(encoding="utf-8"))) == 1
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-retire")) == 0
+    )
+    assert (origin / "old.md").exists()
+    rows = p7_common.load_jsonl_index(archive / "index.jsonl")
+    assert rows[-1]["removed"][0]["status"] == "SALTADA_VERSIONADA"
+
+
+def test_apply_archive_no_deja_zip_huerfano_si_falla_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin, archive, _, digest, approved = _fixture(tmp_path)
+    archive.mkdir()
+
+    def fail_manifest(_origin: Path) -> list[dict[str, object]]:
+        raise p7_common.ArchiveError("fallo inyectado")
+
+    monkeypatch.setattr(p7_common, "manifest_of_tree", fail_manifest)
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) != 0
+    )
+    family = archive / "arranques"
+    assert list(family.glob("*.zip")) == []
+    assert list(family.glob("*.manifest.json")) == []
+    assert list(family.glob(".*")) == []
+    assert p7_common.load_jsonl_index(archive / "index.jsonl") == []
+
+    monkeypatch.undo()
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) == 0
+    )
+    assert len(list(family.glob("*.zip"))) == 1
+    assert len(p7_common.load_jsonl_index(archive / "index.jsonl")) == 1
+    assert p7_retire.main(_args(origin, archive, digest, approved)) == 0
+
+
+def test_apply_retire_rechaza_manifesto_heterogeneo_tamperado(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    origin, archive, _, digest, approved = _fixture(tmp_path)
+    archive.mkdir()
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) == 0
+    )
+    manifest_path = next(archive.rglob("*.manifest.json"))
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    tampered = dict(manifest[0])
+    tampered["extra"] = 1
+    manifest.append(tampered)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-retire")) == 1
+    )
+    assert origin.joinpath("old.md").exists()
+    assert "manifiesto" in capsys.readouterr().err
+
+
+def test_apply_archive_rechaza_manifesto_heterogeneo_y_revierte(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin, archive, entry, digest, approved = _fixture(tmp_path)
+    archive.mkdir()
+
+    class MissingSha256(dict[str, object]):
+        def __getitem__(self, key: str) -> object:
+            if key == "sha256":
+                return entry["sha256"]
+            return super().__getitem__(key)
+
+    heterogeneous = MissingSha256(
+        {
+            "rel": entry["rel"],
+            "size": entry["size"],
+            "mtime": entry["mtime"],
+        }
+    )
+    monkeypatch.setattr(
+        p7_common,
+        "manifest_of_tree",
+        lambda _origin: [dict(entry), heterogeneous],
+    )
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) != 0
+    )
+    family = archive / "arranques"
+    assert list(family.glob("*.zip")) == []
+    assert list(family.glob("*.manifest.json")) == []
+    assert p7_common.load_jsonl_index(archive / "index.jsonl") == []
+
+
+def test_origin_reparse_point_rechazado_antes_de_escribir(tmp_path: Path) -> None:
+    if os.name != "nt":
+        pytest.skip("junction requiere Windows")
+    _origin, archive, _, digest, approved = _fixture(tmp_path)
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "old.md").write_text("old bytes", encoding="utf-8")
+    junction = tmp_path / "origin-junction"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.fail(result.stderr or result.stdout)
+    try:
+        archive.mkdir()
+        assert (
+            p7_retire.main(
+                _args(junction, archive, digest, approved, "--apply-archive")
+            )
+            == 2
+        )
+        assert not (archive / ".p7.lock").exists()
+        assert not (archive / "index.jsonl").exists()
+        assert list(archive.rglob("*.zip")) == []
+        assert (target / "old.md").exists()
+    finally:
+        subprocess.run(
+            ["cmd", "/c", "rmdir", str(junction)],
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+
+@pytest.mark.parametrize("rel", ["C:evil.txt", "\\\\evil.txt"])
+def test_rutas_enraizadas_o_de_unidad_rechazadas(tmp_path: Path, rel: str) -> None:
+    origin, archive, entry, _digest, approved = _fixture(tmp_path)
+    entry["rel"] = rel
+    approved.write_text(json.dumps(entry, sort_keys=True) + "\n", encoding="utf-8")
+    digest = hashlib.sha256(approved.read_bytes()).hexdigest()
+    archive.mkdir()
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) != 0
+    )
+    assert not (archive / ".p7.lock").exists()
+    assert not list(archive.rglob("*.zip"))
+    assert (origin / "old.md").exists()
+
+
 def test_cuadre_bidireccional(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
