@@ -28,10 +28,11 @@ Docstring-as-spec:
       que `ttl_days`, verifica re-citacion; si NO esta re-citado y el fichero
       sigue en disco, lo propone con ruta relativa y hash actual. P7 aplica la
       retirada; este modulo no borra ni reescribe filas.
-      After: devuelve un reporte con el denominador (filas candidatas por edad), las
+  After: devuelve un reporte con el denominador (filas candidatas por edad), las
       re-citadas (protegidas), las propuestas y las ya purgadas antes (idempotente:
-      una fila ya marcada PURGADO no se vuelve a tocar). Exit 0 siempre que la
-      medicion se complete (purgar 0 ficheros es un resultado valido, no un fallo).
+      una fila ya marcada PURGADO no se vuelve a tocar). No purga ni reescribe el
+      INDEX. Exit 0 siempre que la medicion se complete (0 candidatos es un
+      resultado valido, no un fallo).
 """
 
 from __future__ import annotations

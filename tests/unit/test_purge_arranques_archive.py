@@ -366,7 +366,7 @@ def test_missing_index_is_a_noop(tmp_path):
     assert report.purged == []
 
 
-def test_purge_proposal_round_trip_and_bad_digest(tmp_path):
+def test_purge_proposal_round_trip_and_bad_digest(tmp_path, capsys):
     """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
     old = _old_date(200)
     _make_archive_project(
@@ -402,7 +402,8 @@ def test_purge_proposal_round_trip_and_bad_digest(tmp_path):
         "--dry-run",
     ]
     assert p7.main(args) == 0
-    assert p7.main([*args[:-1], "0" * 64, "--dry-run"]) != 0
+    assert p7.main([*args[:-2], "0" * 64, "--dry-run"]) == 1
+    assert "hash de lista no aprobado" in capsys.readouterr().err
     assert (
         tmp_path
         / "orchestrator_pipeline"

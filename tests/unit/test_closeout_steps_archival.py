@@ -111,7 +111,8 @@ def test_arranques_steps_real_propose_without_mutating(tmp_path: Path) -> None:
 
     empty = tmp_path.parent / "empty_archive"
     _init_project(empty)
-    (empty / "orchestrator_pipeline" / "arranques" / "ARRANQUE_nuevo.md").unlink()
+    recent = empty / "orchestrator_pipeline" / "arranques" / "ARRANQUE_nuevo.md"
+    os.utime(recent, None)
     empty_result = step_archive_arranques(
         empty,
         False,

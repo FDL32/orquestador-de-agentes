@@ -2588,10 +2588,12 @@ class TestWOT2026089eMemoryHealthStep:
         assert "--json" not in step.detail
 
 
-class TestWOT2026161nArranquesProposal:
+class TestWOT161nProposal:
     """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
 
-    def _project(self, root: Path, *, with_arranque: bool) -> Path:
+    def _project(
+        self, root: Path, *, with_arranque: bool, recent: bool = False
+    ) -> Path:
         arranques = root / "orchestrator_pipeline" / "arranques"
         arranques.mkdir(parents=True)
         collaboration = root / ".agent" / "collaboration"
@@ -2600,8 +2602,9 @@ class TestWOT2026161nArranquesProposal:
         if with_arranque:
             candidate = arranques / "ARRANQUE_wrapper.md"
             candidate.write_text("wrapper\n", encoding="utf-8")
-            old = candidate.stat().st_mtime - 8 * 86400
-            os.utime(candidate, (old, old))
+            if not recent:
+                old = candidate.stat().st_mtime - 8 * 86400
+                os.utime(candidate, (old, old))
         subprocess.run(["git", "init", "-q", str(root)], check=True)
         subprocess.run(
             ["git", "-C", str(root), "config", "user.email", "test@example.com"],
@@ -2628,7 +2631,7 @@ class TestWOT2026161nArranquesProposal:
         ).exists()
 
     def test_wrapper_real_zero_candidates_passes(self, tmp_path: Path) -> None:
-        project = self._project(tmp_path / "empty", with_arranque=False)
+        project = self._project(tmp_path / "empty", with_arranque=True, recent=True)
         with patch.object(
             session_closeout,
             "SCRIPTS_DIR",

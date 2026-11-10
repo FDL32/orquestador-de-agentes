@@ -361,8 +361,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if report.denominator == 0:
-        print("[arranques-archive] nada que proponer")
-        return 0
+        print(
+            "[arranques-archive] denominador: 0 fichero(s) inspeccionado(s) -- "
+            "VERDE VACUO, no cuenta.",
+            file=sys.stderr,
+        )
+        return 1
 
     _print_report(report, as_json=args.json)
     return 0

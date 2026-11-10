@@ -273,12 +273,7 @@ def test_guard_skips_when_no_archive(tmp_path):
 
 
 def test_archive_flow_enforces_index_consistency(tmp_path):
-    """Rojo con la llamada al guard retirada de `archive()`.
-
-    El `_archive/` arranca con un fichero sin fila (inconsistente). `archive()`
-    mueve el no citado, indexa y DESPUES invoca el guard; al no cuadrar, ABORTA.
-    Si se retira esa invocacion, `archive()` retorna y este test se pone ROJO.
-    """
+    """La propuesta no toca INDEX y el guard sigue sin hallazgos."""
     _make_project(tmp_path, {"ARRANQUE_libre.md": "y\n"})
     _init_repo(tmp_path)
     _commit_all(tmp_path, "init")
@@ -456,7 +451,7 @@ def test_proposal_entries_have_exact_p7_shape(tmp_path):
     assert all(set(entry) == {"rel", "sha256"} for entry in report.proposal)
 
 
-def test_proposal_round_trip_is_accepted_and_bad_digest_is_rejected(tmp_path):
+def test_proposal_round_trip_is_accepted_and_bad_digest_is_rejected(tmp_path, capsys):
     """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
     _make_project(tmp_path, {"ARRANQUE_roundtrip.md": "roundtrip\n"})
     _init_repo(tmp_path)
@@ -482,7 +477,8 @@ def test_proposal_round_trip_is_accepted_and_bad_digest_is_rejected(tmp_path):
         "--dry-run",
     ]
     assert p7.main(args) == 0
-    assert p7.main([*args[:-1], "0" * 64, "--dry-run"]) != 0
+    assert p7.main([*args[:-2], "0" * 64, "--dry-run"]) == 1
+    assert "hash de lista no aprobado" in capsys.readouterr().err
     assert (
         tmp_path / "orchestrator_pipeline" / "arranques" / "ARRANQUE_roundtrip.md"
     ).exists()
@@ -517,3 +513,15 @@ def test_validate_proposal_rejects_junction_ancestor(tmp_path):
             [{"rel": "junction/x.md", "sha256": _sha256(target / "x.md")}],
             tmp_path,
         )
+
+
+def test_archive_main_denominator_zero_is_red(tmp_path, capsys):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    _make_project(tmp_path, {})
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init")
+
+    assert aa.archive(tmp_path).denominator == 0
+    assert aa.main(["--project-root", str(tmp_path)]) == 1
+    assert "VERDE VACUO" in capsys.readouterr().err
+    assert not (_arranques(tmp_path) / "_archive").exists()
