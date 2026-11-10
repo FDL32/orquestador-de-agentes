@@ -18,7 +18,11 @@ from typing import Any
 
 TIMEOUT_MS_MAX = 300000
 TOTAL_SLEEP_MAX_S = 300
-_SLEEP_RE = re.compile(r"\bsleep\s+([0-9]+(?:\.[0-9]+)?)([smhdSMHD]?)")
+# GNU sleep accepts SEVERAL duration operands and sums them (``sleep 2m 9m``
+# waits 11 minutes). Capture the whole run of duration operands after each
+# ``sleep`` so the total is not silently truncated to the first operand.
+_SLEEP_RE = re.compile(r"\bsleep\b((?:\s+[0-9]+(?:\.[0-9]+)?[smhdSMHD]?)+)")
+_DURATION_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)([smhdSMHD]?)")
 _LOOP_RE = re.compile(r"\b(?:while|until)\b")
 _UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
 
@@ -69,13 +73,15 @@ def _sleep_total(command: str) -> float:
     """Calculate the conservative total of unquoted sleep durations.
 
     Before: ``command`` is a shell command string.
-    During: scan outside quotes, parse supported sleep units, and sum seconds.
+    During: scan outside quotes, and for EVERY ``sleep`` sum all of its duration
+    operands (GNU sleep sums multiple operands: ``sleep 2m 9m`` waits 660 s).
     After: return a non-negative float; the sum is a conservative per-iteration
     bound for a loop, not an attempt to model shell control flow.
     """
     total = 0.0
     for match in _SLEEP_RE.finditer(_outside_quotes(command)):
-        total += float(match.group(1)) * _UNIT_SECONDS[match.group(2).lower()]
+        for operand in _DURATION_RE.finditer(match.group(1)):
+            total += float(operand.group(1)) * _UNIT_SECONDS[operand.group(2).lower()]
     return total
 
 
@@ -116,8 +122,10 @@ def main(argv: list[str] | None = None) -> int:
     """Decide whether a Bash tool call may wait in the foreground.
 
     Before: stdin supplies a valid PreToolUse payload with a command string.
-    During: allow non-Bash and background calls, reject excessive timeout, and
-    reject a foreground while/until whose conservative sleep sum exceeds 300s.
+    During: allow non-Bash and background calls, fail closed on a ``timeout``
+    whose type is not a non-boolean number, reject excessive numeric timeout,
+    and reject a foreground while/until whose conservative sleep sum (summing
+    every operand of each GNU sleep) exceeds 300s.
     After: return zero when allowed; fail closed with exit code two otherwise.
     """
     del argv
@@ -128,16 +136,18 @@ def main(argv: list[str] | None = None) -> int:
     tool_input = data["tool_input"]
     if tool_input.get("run_in_background") is True:
         return 0
-    timeout = tool_input.get("timeout")
-    if (
-        isinstance(timeout, (int, float))
-        and not isinstance(timeout, bool)
-        and timeout > TIMEOUT_MS_MAX
-    ):
-        return _fail(
-            "foreground timeout exceeds limit; set run_in_background=true or "
-            "use Monitor"
-        )
+    if "timeout" in tool_input:
+        timeout = tool_input["timeout"]
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)):
+            return _fail(
+                "timeout presente con un tipo no numerico (se esperaban "
+                "milisegundos enteros): fail-closed"
+            )
+        if timeout > TIMEOUT_MS_MAX:
+            return _fail(
+                "foreground timeout exceeds limit; set run_in_background=true or "
+                "use Monitor"
+            )
     command = tool_input["command"]
     outside = _outside_quotes(command)
     if _LOOP_RE.search(outside) and _sleep_total(command) > TOTAL_SLEEP_MAX_S:

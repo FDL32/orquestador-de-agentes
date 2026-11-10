@@ -40,6 +40,16 @@ def test_timeout_sobre_umbral_bloquea():
     )
     assert result.returncode == 2
     assert result.stderr
+    # Un timeout presente con tipo no numerico (o booleano) falla cerrado en vez
+    # de ignorarse: fail-open de tipo era un hueco medido por las lentes.
+    as_text = _run(
+        {"tool_name": "Bash", "tool_input": {"command": "echo ok", "timeout": "301000"}}
+    )
+    as_bool = _run(
+        {"tool_name": "Bash", "tool_input": {"command": "echo ok", "timeout": True}}
+    )
+    assert as_text.returncode == 2 and as_text.stderr
+    assert as_bool.returncode == 2 and as_bool.stderr
 
 
 def test_bucle_sleep_corto_espera_total_bloquea():
@@ -50,6 +60,14 @@ def test_bucle_sleep_corto_espera_total_bloquea():
         }
     )
     assert result.returncode == 2
+    # GNU sleep suma todos sus operandos: sleep 2m 9m son 660 s por iteracion.
+    multi_operand = _run(
+        {
+            "tool_name": "Bash",
+            "tool_input": {"command": "until ready; do sleep 2m 9m; done"},
+        }
+    )
+    assert multi_operand.returncode == 2
 
 
 def test_payload_ilegible_falla_cerrado_rc2():
@@ -105,7 +123,7 @@ def test_background_y_espera_corta_pasan():
     short = _run(
         {
             "tool_name": "Bash",
-            "tool_input": {"command": "while true; do sleep 300; done"},
+            "tool_input": {"command": "sleep 200"},
         }
     )
     assert background.returncode == 0
