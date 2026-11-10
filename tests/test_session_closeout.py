@@ -24,6 +24,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import scripts.session_closeout as session_closeout
 from bus.event_bus import SESSION_CLOSE_RECORDED, EventBus
 from scripts.closeout_steps.archival import (
     step_archive_collaboration as _step_archive_collaboration_impl,
@@ -2585,3 +2586,54 @@ class TestWOT2026089eMemoryHealthStep:
         )
         assert "--project-root dest --motor-root motor" in step.detail
         assert "--json" not in step.detail
+
+
+class TestWOT2026161nArranquesProposal:
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+
+    def _project(self, root: Path, *, with_arranque: bool) -> Path:
+        arranques = root / "orchestrator_pipeline" / "arranques"
+        arranques.mkdir(parents=True)
+        collaboration = root / ".agent" / "collaboration"
+        collaboration.mkdir(parents=True)
+        (collaboration / "backlog.md").write_text("", encoding="utf-8")
+        if with_arranque:
+            candidate = arranques / "ARRANQUE_wrapper.md"
+            candidate.write_text("wrapper\n", encoding="utf-8")
+            old = candidate.stat().st_mtime - 8 * 86400
+            os.utime(candidate, (old, old))
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.email", "test@example.com"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.name", "test"], check=True
+        )
+        subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "commit", "-q", "-m", "init"], check=True
+        )
+        return root
+
+    def test_wrapper_real_passes_and_keeps_origin_file(self, tmp_path: Path) -> None:
+        project = self._project(tmp_path / "with_file", with_arranque=True)
+        script_dir = str(Path(__file__).resolve().parents[1] / "scripts")
+        with patch.object(session_closeout, "SCRIPTS_DIR", script_dir):
+            result = session_closeout._step_archive_arranques(project, False)
+        assert result.status == "PASS"
+        assert "proposed=1" in result.detail
+        assert (
+            project / "orchestrator_pipeline" / "arranques" / "ARRANQUE_wrapper.md"
+        ).exists()
+
+    def test_wrapper_real_zero_candidates_passes(self, tmp_path: Path) -> None:
+        project = self._project(tmp_path / "empty", with_arranque=False)
+        with patch.object(
+            session_closeout,
+            "SCRIPTS_DIR",
+            str(Path(__file__).resolve().parents[1] / "scripts"),
+        ):
+            result = session_closeout._step_archive_arranques(project, False)
+        assert result.status == "PASS"
+        assert result.detail == "nada que proponer"

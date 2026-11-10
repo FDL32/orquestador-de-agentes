@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import shutil
 import subprocess
 import sys
@@ -112,6 +113,16 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _load_p7():
+    spec = importlib.util.spec_from_file_location(
+        "p7_retire_for_161n", _ROOT / "scripts" / "flight" / "p7_retire.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 # ------------------------------------------------------------------ hermeticidad
 def test_git_toplevel_is_the_tmp_project(tmp_path):
     _make_project(tmp_path, {"ARRANQUE_x.md": "x\n"})
@@ -157,6 +168,7 @@ def test_cli_dry_run_publishes_denominator(tmp_path, capsys):
 
 
 def test_uncited_file_moves_with_identical_sha256(tmp_path):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
     _make_project(tmp_path, {"ARRANQUE_libre.md": "contenido libre\n"})
     _init_repo(tmp_path)
     _commit_all(tmp_path, "init")
@@ -165,11 +177,12 @@ def test_uncited_file_moves_with_identical_sha256(tmp_path):
 
     report = aa.archive(tmp_path, min_age_seconds=0)
 
-    assert report.moved == ["ARRANQUE_libre.md"]
-    assert not root_file.exists(), "el no citado debe DESAPARECER de la raiz"
-    moved = _arranques(tmp_path) / "_archive" / "ARRANQUE_libre.md"
-    assert moved.exists(), "el no citado debe APARECER en _archive/"
-    assert _sha256(moved) == before, "el contenido debe ser byte-identico (sha256)"
+    assert report.moved == []
+    assert root_file.exists(), "el proponente no debe retirar el fichero"
+    assert not (_arranques(tmp_path) / "_archive").exists()
+    assert report.proposal == [
+        {"rel": "orchestrator_pipeline/arranques/ARRANQUE_libre.md", "sha256": before}
+    ]
 
 
 def test_negative_control_commit_cited_file_is_not_moved(tmp_path):
@@ -195,6 +208,7 @@ def test_negative_control_commit_cited_file_is_not_moved(tmp_path):
 
     assert "ARRANQUE_referenciado.md" in report.cited
     assert not report.moved
+    assert not report.proposal
     assert (_arranques(tmp_path) / "ARRANQUE_referenciado.md").exists()
     assert not (_arranques(tmp_path) / "_archive" / "ARRANQUE_referenciado.md").exists()
 
@@ -207,13 +221,9 @@ def test_index_has_one_row_per_moved_file(tmp_path):
 
     report = aa.archive(tmp_path, today="2026-09-10", min_age_seconds=0)
 
-    index = _arranques(tmp_path) / "_archive" / "INDEX.md"
-    rows = cai.parse_index_filenames(index)
-    assert len(rows) == 3, "una fila por fichero movido"
-    assert set(rows) == set(report.moved)
-    text = index.read_text(encoding="utf-8")
-    assert text.count("2026-09-10") == 3, "cada fila lleva su fecha"
-    assert text.count(aa.MOTIVO) == 3, "cada fila lleva su motivo"
+    assert report.proposal and len(report.proposal) == 3
+    assert not (_arranques(tmp_path) / "_archive" / "INDEX.md").exists()
+    assert cai.check_index_consistency(_arranques(tmp_path)) == []
 
 
 def test_guard_flags_file_without_row(tmp_path):
@@ -270,15 +280,12 @@ def test_archive_flow_enforces_index_consistency(tmp_path):
     Si se retira esa invocacion, `archive()` retorna y este test se pone ROJO.
     """
     _make_project(tmp_path, {"ARRANQUE_libre.md": "y\n"})
-    archive = _arranques(tmp_path) / "_archive"
-    archive.mkdir()
-    (archive / "ARRANQUE_huerfano.md").write_text("x\n", encoding="utf-8")
-    (archive / "INDEX.md").write_text(_INDEX_EMPTY, encoding="utf-8")
     _init_repo(tmp_path)
     _commit_all(tmp_path, "init")
 
-    with pytest.raises(aa.ArchiveError):
-        aa.archive(tmp_path, min_age_seconds=0)
+    report = aa.archive(tmp_path, min_age_seconds=0)
+    assert report.proposal
+    assert cai.check_index_consistency(_arranques(tmp_path)) == []
 
 
 # ------------------------------------------------------------------ seguridad de movimiento
@@ -291,9 +298,8 @@ def test_archive_refuses_to_overwrite_existing_history(tmp_path):
     _init_repo(tmp_path)
     _commit_all(tmp_path, "init")
 
-    with pytest.raises(aa.ArchiveError):
-        aa.archive(tmp_path, min_age_seconds=0)
-    # El historico NO se sobrescribe.
+    report = aa.archive(tmp_path, min_age_seconds=0)
+    assert report.proposal
     assert (archive / "ARRANQUE_libre.md").read_text(encoding="utf-8") == "ya existia\n"
 
 
@@ -316,19 +322,17 @@ def test_collision_late_in_the_batch_leaves_no_file_moved(tmp_path):
     _init_repo(tmp_path)
     _commit_all(tmp_path, "init")
 
-    with pytest.raises(aa.ArchiveError):
-        aa.archive(tmp_path, min_age_seconds=0)
+    report = aa.archive(tmp_path, min_age_seconds=0)
+    assert len(report.proposal) == 2
 
-    # El historico previo sigue intacto...
+    # El historico previo sigue intacto y ningun proponente lo modifica.
     assert (archive / "ARRANQUE_zzz.md").read_text(encoding="utf-8") == "ya existia\n"
-    # ...y NINGUN fichero quedo movido sin su fila: el guard debe seguir cuadrando.
+    # NINGUN fichero se mueve y el INDEX sigue cuadrando.
     assert (_arranques(tmp_path) / "ARRANQUE_aaa.md").exists(), (
-        "mudanza PARCIAL: el primer fichero se movio y la colision aborto despues"
+        "el proponente no debe retirar el primer fichero"
     )
     assert not (archive / "ARRANQUE_aaa.md").exists()
-    # El unico desajuste que ve el guard es el `zzz.md` SEMBRADO por el fixture
-    # (historico previo sin fila, deliberado). Ningun hallazgo puede nombrar a
-    # `aaa.md`: eso probaria que la mudanza parcial ocurrio.
+    # El fichero sembrado no cambia y la propuesta no escribe el INDEX.
     findings = cai.check_index_consistency(_arranques(tmp_path))
     assert not [f for f in findings if "ARRANQUE_aaa" in f], findings
 
@@ -438,3 +442,76 @@ def test_fresh_uncited_file_is_skipped_until_min_age(tmp_path):
     assert "ARRANQUE_reciente.md" in report.skipped
     assert "ARRANQUE_reciente.md" not in report.archivable
     assert (_arranques(tmp_path) / "ARRANQUE_reciente.md").exists()
+
+
+def test_proposal_entries_have_exact_p7_shape(tmp_path):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    _make_project(tmp_path, {"ARRANQUE_shape.md": "shape\n"})
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init")
+
+    report = aa.archive(tmp_path, min_age_seconds=0)
+
+    assert report.proposal
+    assert all(set(entry) == {"rel", "sha256"} for entry in report.proposal)
+
+
+def test_proposal_round_trip_is_accepted_and_bad_digest_is_rejected(tmp_path):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    _make_project(tmp_path, {"ARRANQUE_roundtrip.md": "roundtrip\n"})
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init")
+    report = aa.archive(tmp_path, min_age_seconds=0)
+    list_path = tmp_path / "proposal.json"
+    list_path.write_text(json.dumps(report.proposal), encoding="utf-8")
+    digest = _sha256(list_path)
+    p7 = _load_p7()
+    archive_root = tmp_path.parent / f"{tmp_path.name}_external"
+    archive_root.mkdir()
+    args = [
+        "--archive-root",
+        str(archive_root),
+        "--family",
+        "arranques",
+        "--origin",
+        str(tmp_path),
+        "--list",
+        str(list_path),
+        "--list-sha256",
+        digest,
+        "--dry-run",
+    ]
+    assert p7.main(args) == 0
+    assert p7.main([*args[:-1], "0" * 64, "--dry-run"]) != 0
+    assert (
+        tmp_path / "orchestrator_pipeline" / "arranques" / "ARRANQUE_roundtrip.md"
+    ).exists()
+
+
+def test_validate_proposal_rejects_empty_and_missing_sha256(tmp_path):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    with pytest.raises(aa.ArchiveError):
+        aa.validate_proposal([], tmp_path)
+    with pytest.raises(aa.ArchiveError):
+        aa.validate_proposal([{"rel": "x.md"}], tmp_path)
+
+
+def test_validate_proposal_rejects_junction_ancestor(tmp_path):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "x.md").write_text("x\n", encoding="utf-8")
+    junction = tmp_path / "junction"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"mklink /J no disponible: {result.stderr}")
+    with pytest.raises(aa.ArchiveError):
+        aa.validate_proposal(
+            [{"rel": "junction/x.md", "sha256": _sha256(target / "x.md")}],
+            tmp_path,
+        )

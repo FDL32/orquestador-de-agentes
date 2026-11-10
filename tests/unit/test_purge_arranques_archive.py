@@ -7,11 +7,15 @@ podria alcanzar el repo real.
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
 import subprocess
 import sys
 from datetime import date, timedelta
 from pathlib import Path
+
+import pytest
 
 
 _ROOT = Path(__file__).resolve().parents[2]
@@ -80,7 +84,12 @@ def _old_date(days: int) -> str:
     return (date.today() - timedelta(days=days)).isoformat()
 
 
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def test_file_older_than_ttl_without_recitation_is_deleted(tmp_path):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
     old = _old_date(200)
     _make_archive_project(
         tmp_path,
@@ -92,12 +101,18 @@ def test_file_older_than_ttl_without_recitation_is_deleted(tmp_path):
 
     report = pa.purge(tmp_path, ttl_days=90)
 
-    assert report.purged == ["ARRANQUE_viejo.md"]
+    assert report.purged == []
     archive = tmp_path / "orchestrator_pipeline" / "arranques" / "_archive"
-    assert not (archive / "ARRANQUE_viejo.md").exists()
+    assert (archive / "ARRANQUE_viejo.md").exists()
+    assert report.proposal == [
+        {
+            "rel": "orchestrator_pipeline/arranques/_archive/ARRANQUE_viejo.md",
+            "sha256": _sha256(archive / "ARRANQUE_viejo.md"),
+        }
+    ]
     index_text = (archive / "INDEX.md").read_text(encoding="utf-8")
-    assert "PURGADO" in index_text
-    assert old in index_text, "la fecha de mudanza original se conserva en la fila"
+    assert "PURGADO" not in index_text
+    assert old in index_text
 
 
 def test_file_within_ttl_is_not_touched(tmp_path):
@@ -253,7 +268,8 @@ def test_cli_json_output_is_single_line(tmp_path, capsys):
     import json
 
     payload = json.loads(out)
-    assert payload["purged"] == ["ARRANQUE_viejo.md"]
+    assert payload["purged"] == []
+    assert len(payload["proposal"]) == 1
 
 
 def test_path_traversal_row_is_rejected_not_purged(tmp_path):
@@ -348,3 +364,90 @@ def test_missing_index_is_a_noop(tmp_path):
 
     assert report.denominator == 0
     assert report.purged == []
+
+
+def test_purge_proposal_round_trip_and_bad_digest(tmp_path):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    old = _old_date(200)
+    _make_archive_project(
+        tmp_path,
+        [("ARRANQUE_roundtrip.md", old, "aa", "no citado ...")],
+        {"ARRANQUE_roundtrip.md"},
+    )
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init")
+    report = pa.purge(tmp_path, ttl_days=90)
+    list_path = tmp_path / "proposal.json"
+    list_path.write_text(json.dumps(report.proposal), encoding="utf-8")
+    digest = _sha256(list_path)
+    spec = importlib.util.spec_from_file_location(
+        "p7_retire_for_purge_161n", _ROOT / "scripts" / "flight" / "p7_retire.py"
+    )
+    p7 = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = p7
+    spec.loader.exec_module(p7)
+    archive_root = tmp_path.parent / f"{tmp_path.name}_external"
+    archive_root.mkdir()
+    args = [
+        "--archive-root",
+        str(archive_root),
+        "--family",
+        "arranques",
+        "--origin",
+        str(tmp_path),
+        "--list",
+        str(list_path),
+        "--list-sha256",
+        digest,
+        "--dry-run",
+    ]
+    assert p7.main(args) == 0
+    assert p7.main([*args[:-1], "0" * 64, "--dry-run"]) != 0
+    assert (
+        tmp_path
+        / "orchestrator_pipeline"
+        / "arranques"
+        / "_archive"
+        / "ARRANQUE_roundtrip.md"
+    ).exists()
+
+
+def test_purge_proposal_has_exact_p7_shape(tmp_path):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    old = _old_date(200)
+    _make_archive_project(
+        tmp_path,
+        [("ARRANQUE_shape.md", old, "aa", "no citado ...")],
+        {"ARRANQUE_shape.md"},
+    )
+    _init_repo(tmp_path)
+    _commit_all(tmp_path, "init")
+    report = pa.purge(tmp_path, ttl_days=90)
+    assert report.proposal
+    assert all(set(entry) == {"rel", "sha256"} for entry in report.proposal)
+
+
+def test_purge_validate_proposal_rejects_contract_boundaries(tmp_path):
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    with pytest.raises(pa.ArchiveError):
+        pa.validate_proposal([], tmp_path)
+    with pytest.raises(pa.ArchiveError):
+        pa.validate_proposal([{"rel": "x.md"}], tmp_path)
+
+    target = tmp_path / "target"
+    target.mkdir()
+    (target / "x.md").write_text("x\n", encoding="utf-8")
+    junction = tmp_path / "junction"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"mklink /J no disponible: {result.stderr}")
+    with pytest.raises(pa.ArchiveError):
+        pa.validate_proposal(
+            [{"rel": "junction/x.md", "sha256": _sha256(target / "x.md")}],
+            tmp_path,
+        )

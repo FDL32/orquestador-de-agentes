@@ -201,11 +201,12 @@ def step_archive_arranques(
         report = _json.loads(stdout.strip().splitlines()[-1]) if stdout.strip() else {}
     except (ValueError, IndexError):
         report = {}
-    moved = len(report.get("moved", []))
-    skipped = len(report.get("skipped", []))
+    proposed = len(report.get("proposal", []))
     detail = (
-        f"denominator={report.get('denominator', '?')} moved={moved} "
-        f"skipped={skipped} (sucio o reciente, no tocado)"
+        f"proposed={proposed} (aplicacion via p7_retire --apply-retire; "
+        "nada movido ni borrado)"
+        if proposed
+        else "nada que proponer"
     )
     return step_result_cls(
         name="archive_arranques",
@@ -266,12 +267,12 @@ def step_purge_arranques_archive(
         report = _json.loads(stdout.strip().splitlines()[-1]) if stdout.strip() else {}
     except (ValueError, IndexError):
         report = {}
-    purged = len(report.get("purged", []))
-    recited = len(report.get("recited", []))
+    proposed = len(report.get("proposal", []))
     detail = (
-        f"ttl_days={report.get('ttl_days', '?')} "
-        f"denominator={report.get('denominator', '?')} purged={purged} "
-        f"recited_protected={recited}"
+        f"proposed={proposed} (aplicacion via p7_retire --apply-retire; "
+        "nada movido ni borrado)"
+        if proposed
+        else "nada que proponer"
     )
     return step_result_cls(
         name="purge_arranques_archive",

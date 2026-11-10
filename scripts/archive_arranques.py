@@ -9,18 +9,21 @@ la brecha no aplica.
 
 CRITERIO (DEC-067L-001): se CONSERVA en la raiz lo CITADO desde cualquiera de las
 TRES superficies publicadas -- `backlog.md` vivo, `_archive/backlog_done.md` y los
-mensajes de commit publicados (`git log --format=%s%n%b`). Los NO citados se MUEVEN a
-`arranques/_archive/`. NO es un tope numerico por recencia: esa via ([A]) esta
+mensajes de commit publicados (`git log --format=%s%n%b`). Los NO citados se
+proponen para `arranques/_archive/`; la aplicacion la hace `p7_retire
+--apply-retire`. NO es un tope numerico por recencia: esa via ([A]) esta
 REFUTADA por medicion (varios de los 27 citados son ANTIGUOS y saldrian de la raiz).
 
-SE MUEVE, JAMAS SE BORRA. El patron de la casa es mover a un hermano (`_drained/`,
-`_retired/`, `collaboration/archive/`). Nada se borra ni se desversiona.
+Este modulo solo propone y nunca mueve ni borra. La aplicacion aprobada se delega
+a P7, que conserva la evidencia bajo su propio contrato.
 
 INDICE = BARRERA (DEC-067L-002): cada movido deja una fila (nombre, fecha, sha256,
 motivo) en `_archive/INDEX.md`; el cuadre en AMBAS direcciones lo verifica
 `scripts/check_arranques_index.py`, cableado en `scripts/prepush_check.py`
-(`run_arranques_index_check`). `archive()` invoca ese mismo guard tras cada mudanza
-(defensa: nunca deja un estado a medio indexar).
+(`run_arranques_index_check`). La propuesta deja el INDEX intacto; P7 aplica la
+retirada aprobada.
+
+WOT-2026-161n: proponente de archivado; aplicacion via `p7_retire --apply-retire`.
 
 METODO del censo: un fichero esta CITADO si su stem (nombre sin `.md`) aparece como
 SUBSTRING en la union de las tres superficies. Medido 2026-09-10: stem substring ->
@@ -47,12 +50,9 @@ Docstring-as-spec:
   During: lee las dos colas publicadas (read-only), ejecuta `git -C <root> log`
       (fail-closed: sin git o con rc != 0 ABORTA, porque un censo incompleto
       moveria evidencia). Clasifica en CITADO / SKIPPED (sucio o reciente) / ARCHIVABLE
-      y, salvo `--dry-run`, MUEVE solo los ARCHIVABLE a `_archive/` y anade su fila al
-      INDEX.
-  After: devuelve un reporte con el DENOMINADOR y las tres listas. `main()` publica
-      el denominador SIEMPRE (un `exit 0` con denominador 0 es verde vacuo) y
-      devuelve 0 con exito, 1 si `archive()` detecta un INDEX inconsistente, 2 si
-      la invocacion no midio (falta el tree/dir, git ausente).
+      y construye una propuesta P7 con ruta relativa y hash actual.
+  After: devuelve un reporte con el DENOMINADOR, las listas y la propuesta.
+      `main()` devuelve 0 con exito y 1 si falla el censo o la validacion.
 """
 
 from __future__ import annotations
@@ -64,8 +64,6 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import date
-from functools import partial
 from pathlib import Path
 
 
@@ -76,17 +74,13 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from check_arranques_index import (  # noqa: E402
-    ARCHIVE_DIRNAME,
-    INDEX_FILENAME,
-    check_index_consistency,
-)
 from scripts.flight.p7_common import (  # noqa: E402
     MIN_AGE_DAYS,
     MIN_AGE_SECONDS,
     ArchiveError,
-    append_rows_atomic,
+    assert_no_link_ancestors,
     git_dirty_names,
+    is_reparse_or_link,
     root_files,
     sha256_file,
 )
@@ -94,27 +88,12 @@ from scripts.flight.p7_common import (  # noqa: E402
 
 ARRANQUES_REL = Path("orchestrator_pipeline") / "arranques"
 README_NAME = "README.md"
-MOTIVO = (
-    "no citado desde backlog.md vivo, _archive/backlog_done.md ni mensajes de "
-    "commit publicados (DEC-067L-001)"
-)
 # WOT-2026-089p: un NO-CITADO con menos de MIN_AGE_DAYS de antiguedad se trata como
 # trabajo en curso, no como historico. 7 dias cubre con margen una sesion larga que se
 # retome tras el fin de semana sin haber cerrado todavia.
 _BACKLOG_SURFACES = (
     Path(".agent") / "collaboration" / "backlog.md",
     Path(".agent") / "collaboration" / "_archive" / "backlog_done.md",
-)
-_INDEX_HEADER = (
-    "# Indice de `arranques/_archive/` (WOT-2026-067m)\n"
-    "\n"
-    "Historico NO CITADO movido desde la raiz de `arranques/` por `DEC-067L-001`.\n"
-    "La raiz conserva lo CITADO desde `backlog.md` vivo, `_archive/backlog_done.md`\n"
-    "o mensajes de commit publicados. Se MUEVE, jamas se borra: todo lo movido\n"
-    "conserva su ruta original aqui, asi que revertir es mover de vuelta.\n"
-    "\n"
-    "| Archivo | Fecha | SHA256 | Motivo |\n"
-    "|---|---|---|---|\n"
 )
 
 
@@ -136,6 +115,7 @@ class ArchiveReport:
     moved: list[str] = field(default_factory=list)
     dry_run: bool = False
     index_path: Path | None = None
+    proposal: list[dict[str, str]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -148,7 +128,33 @@ class ArchiveReport:
             "moved": list(self.moved),
             "dry_run": self.dry_run,
             "index_path": str(self.index_path) if self.index_path else None,
+            "proposal": list(self.proposal),
         }
+
+
+def validate_proposal(entries: list[dict[str, str]], project_root: Path) -> None:
+    """Validate a non-empty P7 proposal against the current project tree.
+
+    Before: ``entries`` contains relative paths and current hashes.
+    During: reject malformed schemas, links, unsafe paths, and stale hashes.
+    After: return only when every entry names the current regular file.
+    """
+    if not entries:
+        raise ArchiveError("la propuesta esta vacia")
+    root = Path(project_root)
+    for entry in entries:
+        if set(entry) != {"rel", "sha256"}:
+            raise ArchiveError("cada entrada debe contener exactamente rel y sha256")
+        rel = entry.get("rel")
+        digest = entry.get("sha256")
+        if not rel or not digest:
+            raise ArchiveError("la propuesta requiere rel y sha256 no vacios")
+        assert_no_link_ancestors(root, rel)
+        path = root / Path(rel)
+        if is_reparse_or_link(path) or not path.is_file():
+            raise ArchiveError(f"entrada propuesta ausente o enlace: {rel}")
+        if sha256_file(path) != digest:
+            raise ArchiveError(f"hash de propuesta no coincide: {rel}")
 
 
 def _git_log_surface(project_root: Path) -> str:
@@ -240,9 +246,6 @@ def classify(
     return cited, skipped, archivables
 
 
-append_index_rows = partial(append_rows_atomic, header=_INDEX_HEADER, newline=None)
-
-
 def archive(
     project_root: Path,
     *,
@@ -250,7 +253,7 @@ def archive(
     today: str | None = None,
     min_age_seconds: int = MIN_AGE_SECONDS,
 ) -> ArchiveReport:
-    """Clasifica y (salvo dry-run) mueve los ARCHIVABLE, indexa y verifica.
+    """Clasifica y propone los ARCHIVABLE para retirada posterior por P7.
 
     WOT-2026-089p: ya NO mueve todo lo NO-CITADO. Un NO-CITADO sucio (en `git
     status --porcelain`) o reciente (`mtime` dentro de `min_age_seconds`) se
@@ -280,45 +283,14 @@ def archive(
     if dry_run or not archivable:
         return report
 
-    archive_dir = arranques_dir / ARCHIVE_DIRNAME
-    archive_dir.mkdir(exist_ok=True)
-    index_path = archive_dir / INDEX_FILENAME
-    report.index_path = index_path
-    stamp = today or date.today().isoformat()
-
-    # WOT-2026-067n: PLAN COMPLETO antes de mover un solo byte. Comprobar la
-    # colision DENTRO del bucle de mudanza dejaba mudanza PARCIAL -- los ficheros
-    # anteriores ya movidos y `append_index_rows` sin llegar a correr, porque el
-    # `raise` cortaba antes. Ese es justo el estado que el guard declara imposible
-    # ("el `_archive/` nace CONSISTENTE"), asi que la premisa era falsa en la ruta
-    # de excepcion. Validar primero hace la operacion todo-o-nada por construccion.
-    plan: list[tuple[Path, Path, str]] = []
-    collisions: list[str] = []
-    for path in archivable:
-        destination = archive_dir / path.name
-        if destination.exists():
-            collisions.append(path.name)
-            continue
-        plan.append((path, destination, sha256_file(path)))
-    if collisions:
-        raise ArchiveError(
-            f"colision: {', '.join(sorted(collisions))} ya existe(n) en "
-            f"{archive_dir}; no se sobrescribe historico. NADA se ha movido."
-        )
-
-    rows: list[str] = []
-    for path, destination, digest in plan:
-        shutil.move(str(path), str(destination))
-        rows.append(f"| {path.name} | {stamp} | {digest} | {MOTIVO} |\n")
-        report.moved.append(path.name)
-
-    append_index_rows(index_path, tuple(rows))
-
-    findings = check_index_consistency(arranques_dir)
-    if findings:
-        raise ArchiveError(
-            "INDEX inconsistente tras la mudanza: " + "; ".join(findings)
-        )
+    report.proposal = [
+        {
+            "rel": path.relative_to(project_root).as_posix(),
+            "sha256": sha256_file(path),
+        }
+        for path in archivable
+    ]
+    validate_proposal(report.proposal, project_root)
     return report
 
 
@@ -326,7 +298,7 @@ def _print_report(report: ArchiveReport, *, as_json: bool) -> None:
     if as_json:
         print(json.dumps(report.as_dict()))
         return
-    accion = "DRY-RUN" if report.dry_run else "MUDANZA"
+    accion = "DRY-RUN" if report.dry_run else "PROPUESTA P7"
     print(f"[arranques-archive] {accion}")
     print(
         f"[arranques-archive] denominador: {report.denominator} "
@@ -343,17 +315,17 @@ def _print_report(report: ArchiveReport, *, as_json: bool) -> None:
         print(f"  SKIPPED    {name}  (sucio o <{MIN_AGE_DAYS}d, trabajo en curso)")
     for name in report.archivable:
         print(f"  ARCHIVABLE {name}")
-    if not report.dry_run:
-        print(
-            f"[arranques-archive] movidos: {len(report.moved)} -> {report.index_path}"
-        )
+    for entry in report.proposal:
+        print(f"  PROPUESTA  {entry['rel']}  {entry['sha256']}")
+    if not report.proposal:
+        print("[arranques-archive] nada que proponer")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Clasifica arranques/ por CITACION (DEC-067L-001), publica el "
-            "denominador y MUEVE los no citados a _archive/ con su fila en INDEX.md."
+            "Clasifica arranques/ por CITACION (DEC-067L-001) y propone retirada "
+            "via p7_retire --apply-retire (WOT-2026-161n)."
         )
     )
     parser.add_argument(
@@ -389,12 +361,8 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if report.denominator == 0:
-        print(
-            "[arranques-archive] denominador: 0 fichero(s) inspeccionado(s) -- "
-            "VERDE VACUO, no cuenta.",
-            file=sys.stderr,
-        )
-        return 1
+        print("[arranques-archive] nada que proponer")
+        return 0
 
     _print_report(report, as_json=args.json)
     return 0

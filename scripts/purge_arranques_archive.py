@@ -1,12 +1,9 @@
-"""WOT-2026-089p: purga por TTL de `orchestrator_pipeline/arranques/_archive/`.
+"""WOT-2026-089p/161n: proponente de purga por TTL de arranques.
 
-CAMBIO DE POLITICA DELIBERADO sobre `DEC-067L-001` ("SE MUEVE, JAMAS SE BORRA"). Esa
-regla protegia contra la *brecha de citacion* en el momento del archivado: mover un
-NO-CITADO no debia perder evidencia que un commit publicado pudiera citar despues. El
-TTL de este modulo NO reabre esa decision -- actua SOLO sobre lo que ya lleva
-`TTL_DAYS` en `_archive/` SIN haber sido re-citado en ese tiempo. Decision del
-usuario (2026-10-08): tras ese plazo, el coste de conservar el fichero supera el
-riesgo de perder evidencia que, de haber sido citada, ya se habria usado.
+CAMBIO DE POLITICA DELIBERADO sobre `DEC-067L-001` ("SE MUEVE, JAMAS SE BORRA").
+Este modulo solo propone candidatos TTL; la aplicacion la hace
+`p7_retire --apply-retire`. WOT-2026-161n conserva la historia de WOT-2026-089p
+y mantiene el INDEX intacto.
 
 POR QUE NO SE BORRA LA FILA DEL INDEX. Borrar la fila entera rompería la propiedad
 de "el indice es lo que existio" y ademas `check_arranques_index.check_index_consistency`
@@ -29,10 +26,10 @@ Docstring-as-spec:
       re-citacion (fail-closed igual que `archive_arranques.py`).
   During: lee las filas del INDEX con fecha parseable; para cada una mas antigua
       que `ttl_days`, verifica re-citacion; si NO esta re-citado y el fichero
-      sigue en disco, lo BORRA (`Path.unlink`) y reescribe su fila con el prefijo
-      `PURGADO <hoy>:`. Salvo `--dry-run`.
-  After: devuelve un reporte con el denominador (filas candidatas por edad), las
-      re-citadas (protegidas), las purgadas y las ya purgadas antes (idempotente:
+      sigue en disco, lo propone con ruta relativa y hash actual. P7 aplica la
+      retirada; este modulo no borra ni reescribe filas.
+      After: devuelve un reporte con el denominador (filas candidatas por edad), las
+      re-citadas (protegidas), las propuestas y las ya purgadas antes (idempotente:
       una fila ya marcada PURGADO no se vuelve a tocar). Exit 0 siempre que la
       medicion se complete (purgar 0 ficheros es un resultado valido, no un fallo).
 """
@@ -52,7 +49,12 @@ _SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS_DIR))
 
-from archive_arranques import ArchiveError, load_citation_blob  # noqa: E402
+from archive_arranques import (  # noqa: E402
+    ArchiveError,
+    load_citation_blob,
+    sha256_file,
+    validate_proposal,
+)
 from check_arranques_index import ARCHIVE_DIRNAME, INDEX_FILENAME  # noqa: E402
 
 
@@ -74,6 +76,7 @@ class PurgeReport:
     already_purged: list[str] = field(default_factory=list)
     already_missing: list[str] = field(default_factory=list)
     rejected_unsafe: list[str] = field(default_factory=list)
+    proposal: list[dict[str, str]] = field(default_factory=list)
     dry_run: bool = False
 
     def as_dict(self) -> dict[str, object]:
@@ -87,6 +90,7 @@ class PurgeReport:
             "already_purged": list(self.already_purged),
             "already_missing": list(self.already_missing),
             "rejected_unsafe": list(self.rejected_unsafe),
+            "proposal": list(self.proposal),
             "dry_run": self.dry_run,
         }
 
@@ -185,7 +189,7 @@ def _resolve_candidate_row(
         # ajena a esta corrida). Marcarlo PURGADO fabricaria un exito que nunca
         # ocurrio y ocultaria la inconsistencia real que el guard debe seguir viendo.
         return "already_missing"
-    target.unlink()
+    # WOT-2026-161n: this script only proposes; P7 applies approved retirements.
     return "purged"
 
 
@@ -213,7 +217,6 @@ def purge(
     blob_cache: dict[str, str | None] = {"value": None}
 
     updated_rows: list[list[str]] = []
-    changed = False
     for row in rows:
         name = row[0]
         if _row_is_purged(row):
@@ -248,13 +251,16 @@ def purge(
             report.already_missing.append(name)
             updated_rows.append(row)
             continue
-        new_motivo = f"PURGADO {reference_date.isoformat()}: {row[3]}"
-        updated_rows.append([row[0], row[1], row[2], new_motivo])
-        report.purged.append(name)
-        changed = True
+        updated_rows.append(row)
+        report.proposal.append(
+            {
+                "rel": (Path(ARRANQUES_REL) / ARCHIVE_DIRNAME / name).as_posix(),
+                "sha256": sha256_file(archive_dir / name),
+            }
+        )
 
-    if changed and not dry_run:
-        _rewrite_index(index_path, updated_rows)
+    if report.proposal:
+        validate_proposal(report.proposal, project_root)
 
     return report
 
@@ -279,26 +285,27 @@ def _print_report(report: PurgeReport, *, as_json: bool) -> None:
     if as_json:
         print(json.dumps(report.as_dict()))
         return
-    accion = "DRY-RUN" if report.dry_run else "PURGA"
+    accion = "DRY-RUN" if report.dry_run else "PROPUESTA P7"
     print(f"[arranques-purge] {accion} (TTL={report.ttl_days}d)")
     print(
         f"[arranques-purge] denominador (candidatas por edad): {report.denominator} | "
         f"re-citadas (protegidas): {len(report.recited)} | "
-        f"purgadas: {len(report.purged)} | "
+        f"propuestas: {len(report.proposal)} | "
         f"ya purgadas antes: {len(report.already_purged)}"
     )
     for name in report.recited:
         print(f"  PROTEGIDA (re-citada) {name}")
-    for name in report.purged:
-        print(f"  PURGADA               {name}")
+    for entry in report.proposal:
+        print(f"  PROPUESTA             {entry['rel']}  {entry['sha256']}")
+    if not report.proposal:
+        print("[arranques-purge] nada que proponer")
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Borra de arranques/_archive/ los ficheros con mas de --ttl-days desde "
-            "su mudanza, salvo que hayan sido re-citados desde entonces. "
-            "Edita su fila en INDEX.md con el prefijo PURGADO en vez de eliminarla."
+            "Propone para p7_retire los ficheros de arranques/_archive/ con mas de "
+            "--ttl-days sin re-citacion; no borra ni edita INDEX.md."
         )
     )
     parser.add_argument("--project-root", type=Path, required=True)

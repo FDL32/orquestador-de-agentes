@@ -13,10 +13,17 @@ support.run_script which uses capture_output=True, text=True).
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from scripts.closeout_steps.archival import step_archive_execution_log
+from scripts.closeout_steps.archival import (
+    step_archive_arranques,
+    step_archive_execution_log,
+    step_purge_arranques_archive,
+)
 from scripts.session_closeout import StepResult
 
 
@@ -36,6 +43,118 @@ def _run(run_script_fn) -> StepResult:
         run_script_fn=run_script_fn,
         step_result_cls=StepResult,
     )
+
+
+_WORKTREE = Path(__file__).resolve().parents[2]
+
+
+def _real_run_script(script_name, args, project_root, timeout=120):
+    return subprocess.run(
+        [
+            sys.executable,
+            str(_WORKTREE / "scripts" / script_name),
+            *args,
+        ],
+        cwd=str(_WORKTREE),
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=timeout,
+        check=False,
+    )
+
+
+def _init_project(root: Path, *, archived: bool = False) -> None:
+    arranques = root / "orchestrator_pipeline" / "arranques"
+    arranques.mkdir(parents=True)
+    collaboration = root / ".agent" / "collaboration"
+    collaboration.mkdir(parents=True)
+    (collaboration / "backlog.md").write_text("", encoding="utf-8")
+    if archived:
+        archive = arranques / "_archive"
+        archive.mkdir()
+        (archive / "INDEX.md").write_text(
+            "| Archivo | Fecha | SHA256 | Motivo |\n|---|---|---|---|\n"
+            "| ARRANQUE_viejo.md | 2020-01-01 | aa | viejo |\n",
+            encoding="utf-8",
+        )
+        (archive / "ARRANQUE_viejo.md").write_text("viejo\n", encoding="utf-8")
+    else:
+        candidate = arranques / "ARRANQUE_nuevo.md"
+        candidate.write_text("nuevo\n", encoding="utf-8")
+        old = candidate.stat().st_mtime - 8 * 86400
+        os.utime(candidate, (old, old))
+    subprocess.run(["git", "init", "-q", str(root)], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(["git", "-C", str(root), "config", "user.name", "test"], check=True)
+    subprocess.run(["git", "-C", str(root), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(root), "commit", "-q", "-m", "init"], check=True)
+
+
+def test_arranques_steps_real_propose_without_mutating(tmp_path: Path) -> None:
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    _init_project(tmp_path)
+    source = tmp_path / "orchestrator_pipeline" / "arranques" / "ARRANQUE_nuevo.md"
+    archive_result = step_archive_arranques(
+        tmp_path,
+        False,
+        run_script_fn=_real_run_script,
+        step_result_cls=StepResult,
+    )
+    assert archive_result.status == "PASS"
+    assert "proposed=1" in archive_result.detail
+    assert source.exists()
+    assert not (source.parent / "_archive").exists()
+
+    empty = tmp_path.parent / "empty_archive"
+    _init_project(empty)
+    (empty / "orchestrator_pipeline" / "arranques" / "ARRANQUE_nuevo.md").unlink()
+    empty_result = step_archive_arranques(
+        empty,
+        False,
+        run_script_fn=_real_run_script,
+        step_result_cls=StepResult,
+    )
+    assert empty_result.status == "PASS"
+    assert empty_result.detail == "nada que proponer"
+
+
+def test_purge_step_real_proposes_and_zero_index_passes(tmp_path: Path) -> None:
+    """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
+    _init_project(tmp_path, archived=True)
+    source = (
+        tmp_path
+        / "orchestrator_pipeline"
+        / "arranques"
+        / "_archive"
+        / "ARRANQUE_viejo.md"
+    )
+    result = step_purge_arranques_archive(
+        tmp_path,
+        False,
+        run_script_fn=_real_run_script,
+        step_result_cls=StepResult,
+    )
+    assert result.status == "PASS"
+    assert "proposed=1" in result.detail
+    assert source.exists()
+    index = source.parent / "INDEX.md"
+    assert "PURGADO" not in index.read_text(encoding="utf-8")
+
+    empty = tmp_path / "empty"
+    _init_project(empty, archived=False)
+    (empty / "orchestrator_pipeline" / "arranques" / "ARRANQUE_nuevo.md").unlink()
+    empty_result = step_purge_arranques_archive(
+        empty,
+        False,
+        run_script_fn=_real_run_script,
+        step_result_cls=StepResult,
+    )
+    assert empty_result.status == "PASS"
+    assert empty_result.detail == "nada que proponer"
 
 
 def test_step_archive_execution_log_warn_on_unrecognized_headers() -> None:
