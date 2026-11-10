@@ -300,6 +300,29 @@ def test_check_lenses_triaje_deficientes_rc2(fixtures):
     assert _run(registry, store, "--check-lenses") == 2
 
 
+@pytest.mark.parametrize(
+    ("lentes", "expected"),
+    [
+        ([None, ""], 2),
+        (["  ", "x"], 2),
+        ([1, 2], 2),
+        (["a", "A"], 2),
+        (["glm", "deepseek"], 0),
+    ],
+    ids=["nulos", "espacios", "numeros", "duplicado-casefold", "dos-distintas"],
+)
+def test_check_lenses_solo_cuenta_lentes_identificables(fixtures, lentes, expected):
+    """c-04 (CO-69 ronda 6): ``str(item)`` contaba None/numeros como lentes.
+
+    Solo un ``str`` no vacio tras ``strip()`` es una lente; ``None``, ``""``,
+    ``"  "``, numeros y objetos no cuentan, y dos formas ``casefold`` iguales
+    son la misma lente.
+    """
+    registry, store = fixtures
+    _write_registry(registry, [_session("IM-1", celda={"lentes": lentes})])
+    assert _run(registry, store, "--check-lenses") == expected
+
+
 def test_check_cutoff_previa_exenta_rc0(fixtures):
     registry, store = fixtures
     _write_registry(

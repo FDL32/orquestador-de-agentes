@@ -136,6 +136,13 @@ def is_im_vivo(session, settled_lookup):
     Before: ``session`` es un registro de sesion y ``settled_lookup`` consulta T3.
     During: combina rol, estado del registry y asentamiento externo.
     After: devuelve booleano; propaga fallos de ``settled_lookup`` para fail-closed.
+
+    Decision explicita (c-01, CO-69 ronda 6): un hilo AUSENTE del almacen no se
+    puede probar asentado, asi que cuenta como VIVO. Para el tope de 2 eso
+    sobre-cuenta (puede dar falso rojo) y nunca sub-cuenta (no puede dar falso
+    verde); es la direccion fail-closed que se quiere. El comportamiento lo
+    fijan ``test_im_vivos_tres_rc_no_cero`` (tabla vacia + 3 ACTIVA -> rc 2) y
+    ``test_im_vivos_dos_rc0`` (tabla vacia + 2 -> rc 0).
     """
     return (
         session.get("role") == "implantacion"
@@ -289,7 +296,17 @@ def check_tr(sessions, cutoff):
 
 
 def check_lenses(sessions, cutoff):
-    """Exige al menos dos modelos distintos en cada celda TR e IM."""
+    """Exige al menos dos modelos distintos en cada celda TR e IM.
+
+    Before: cada celda puede declarar ``lentes`` como lista de cualquier cosa
+        (texto, nulos, numeros u objetos) o no declararlo.
+    During: cuenta solo los elementos que son ``str`` no vacios tras ``strip``
+        y compara sus formas ``casefold``; ``None``, cadenas vacias o de solo
+        espacios, numeros y objetos NO son lentes identificables (c-04, CO-69
+        ronda 6: antes ``str(item)`` hacia pasar ``[None, ""]``).
+    After: 2 si alguna celda medible no tiene dos lentes distintas, 0 si todas
+        las tienen y 3 si no hay celdas medibles.
+    """
     measured = [
         s
         for s in _sessions_for_measure(sessions, cutoff)
@@ -299,10 +316,14 @@ def check_lenses(sessions, cutoff):
         return RC_NOT_MEASURED
     for session in measured:
         lenses = (_cell(session) or {}).get("lentes")
-        if (
-            not isinstance(lenses, list)
-            or len({str(item).casefold() for item in lenses}) < 2
-        ):
+        if not isinstance(lenses, list):
+            return RC_VIOLATION
+        named = {
+            item.strip().casefold()
+            for item in lenses
+            if isinstance(item, str) and item.strip()
+        }
+        if len(named) < 2:
             return RC_VIOLATION
     return RC_OK
 
@@ -361,6 +382,18 @@ def _store_lookup(path):
         return _thread_row(connection, thread_id)
 
     def settled(thread_id):
+        """Indica si el hilo esta asentado en el almacen T3.
+
+        Before: ``thread_id`` identifica un hilo del registro de vuelo.
+        During: lee la fila y resuelve ``deleted_at``, ``settledAt`` y
+            ``unsettledAt`` del payload, con la rama legacy ``status``.
+        After: True si esta asentado; False si no, o si el hilo NO EXISTE.
+
+        Decision explicita (c-01, CO-69 ronda 6): hilo ausente -> False (no
+        asentado). Un hilo que no se puede leer no se puede probar asentado, de
+        modo que cuenta como VIVO en ``is_im_vivo``: sobre-cuenta el tope
+        (falso rojo posible) y nunca lo sub-cuenta (falso verde imposible).
+        """
         value = row(thread_id)
         if value is None:
             return False
