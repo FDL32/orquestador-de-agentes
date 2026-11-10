@@ -372,7 +372,29 @@ def _store_lookup(path):
 
 
 def check_pairing(sessions, cutoff, store):
-    """Comprueba que cada IM tenga su hijo delegated-task con parentThreadId."""
+    """Comprueba que cada IM tenga su hijo delegated-task bien emparentado.
+
+    Before: ``store`` es el almacen T3 real o un fixture con la tabla
+        ``orchestration_v2_projection_threads``; ``sessions`` son las sesiones
+        del registro de vuelo.
+    During: por cada IM medible lee el hilo hijo declarado en la celda y exige
+        ``lineage.parentThreadId`` igual al ``threadId`` del IM y
+        ``lineage.relationshipToParent`` igual a ``subagent``.
+    After: 0 si todos los hijos emparentan, 2 si el hijo falta o su
+        ``parentThreadId`` es ajeno, y 3 (NO MEDIDO) si el almacen no guarda el
+        linaje necesario.
+
+    c-12 (CO-69): medido en el almacen REAL en solo lectura (conexion
+    ``sqlite3`` abierta con ``mode=ro`` sobre ``~/.t3/userdata/statev2.sqlite``):
+    de 1426 filas de
+    ``orchestration_v2_projection_threads``, las 583 con prefijo
+    ``thread:delegated-task:`` guardan ``lineage`` con ``parentThreadId``,
+    ``rootThreadId`` y ``relationshipToParent``, y el valor es ``subagent`` en
+    el 100 % de los hijos delegados (770 filas del almacen lo llevan; las 656
+    restantes lo traen a ``None`` por no ser hijas). Por eso la ausencia del
+    campo o un valor distinto NO se juzga como violacion: es NO MEDIDO, porque
+    el emparejamiento deja de estar declarado por el almacen.
+    """
     measured = [
         s
         for s in _sessions_for_measure(sessions, cutoff)
@@ -392,6 +414,11 @@ def check_pairing(sessions, cutoff, store):
             payload = _payload(child)
             lineage = payload.get("lineage")
             if not isinstance(lineage, dict) or not lineage.get("parentThreadId"):
+                return RC_NOT_MEASURED
+            # c-12 (CO-69): el almacen real guarda relationshipToParent en el
+            # 100 % de los hijos delegados (ver docstring: 583/583). Sin ese
+            # dato el emparejamiento no esta declarado: NO MEDIDO, no veredicto.
+            if lineage.get("relationshipToParent") != "subagent":
                 return RC_NOT_MEASURED
             if lineage.get("parentThreadId") != session.get("threadId"):
                 return RC_VIOLATION

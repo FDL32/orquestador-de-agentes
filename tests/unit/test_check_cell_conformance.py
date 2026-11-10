@@ -95,7 +95,12 @@ def test_read_only_conforme_rc0(fixtures):
             {
                 "thread_id": "thread:delegated-task:one",
                 "account": "codex-a",
-                "payload": {"lineage": {"parentThreadId": "mcp:IM-1"}},
+                "payload": {
+                    "lineage": {
+                        "parentThreadId": "mcp:IM-1",
+                        "relationshipToParent": "subagent",
+                    }
+                },
             }
         ],
     )
@@ -222,6 +227,26 @@ def test_check_tr_triador_incorrecto_rc2(fixtures):
     assert _run(registry, store, "--check-tr") == 2
 
 
+def test_check_tr_revisor_incorrecto_rc2(fixtures):
+    """CO-69: triador correcto y revisor PRESENTE pero erroneo -> rc 2.
+
+    Antes solo se medía el triador o la ausencia del par; el mutante que borra
+    la condición del revisor en ``check_tr`` sobrevivía a la batería focal.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "TR-1",
+                "triaje",
+                celda={"triador": "gemma4", "revisor": "glm5.2"},
+            )
+        ],
+    )
+    assert _run(registry, store, "--check-tr") == 2
+
+
 def test_check_lenses_dos_rc0(fixtures):
     registry, store = fixtures
     _write_registry(registry, [_session("IM-1", celda=_cell())])
@@ -287,7 +312,12 @@ def test_check_pairing_hijo_propio_rc0(fixtures):
         [
             {
                 "thread_id": "thread:delegated-task:one",
-                "payload": {"lineage": {"parentThreadId": "mcp:IM-1"}},
+                "payload": {
+                    "lineage": {
+                        "parentThreadId": "mcp:IM-1",
+                        "relationshipToParent": "subagent",
+                    }
+                },
             }
         ],
     )
@@ -302,7 +332,12 @@ def test_check_pairing_hijo_ajeno_rc2(fixtures):
         [
             {
                 "thread_id": "thread:delegated-task:one",
-                "payload": {"lineage": {"parentThreadId": "mcp:OTHER"}},
+                "payload": {
+                    "lineage": {
+                        "parentThreadId": "mcp:OTHER",
+                        "relationshipToParent": "subagent",
+                    }
+                },
             }
         ],
     )
@@ -313,6 +348,29 @@ def test_check_pairing_sin_parent_no_medido(fixtures):
     registry, store = fixtures
     _write_registry(registry, [_session("IM-1", celda=_cell())])
     _write_store(store, [{"thread_id": "thread:delegated-task:one", "payload": {}}])
+    assert _run(registry, store, "--check-pairing") == 3
+
+
+@pytest.mark.parametrize(
+    "lineage",
+    [
+        {"parentThreadId": "mcp:IM-1"},
+        {"parentThreadId": "mcp:IM-1", "relationshipToParent": "root"},
+    ],
+    ids=["ausente", "distinto"],
+)
+def test_check_pairing_relationship_no_medido(fixtures, lineage):
+    """c-12: sin ``relationshipToParent`` o con valor distinto -> NO MEDIDO.
+
+    El almacen real lo guarda en el 100 % de los hijos delegados (583/583); su
+    ausencia no es una violacion del emparejamiento, es falta de dato.
+    """
+    registry, store = fixtures
+    _write_registry(registry, [_session("IM-1", celda=_cell())])
+    _write_store(
+        store,
+        [{"thread_id": "thread:delegated-task:one", "payload": {"lineage": lineage}}],
+    )
     assert _run(registry, store, "--check-pairing") == 3
 
 
