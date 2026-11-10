@@ -486,6 +486,21 @@ def _parse_json_field(value, field, expected):
     return parsed
 
 
+def _has_veredicto(lens):
+    """Indica si la lente declara un veredicto textual no vacio.
+
+    Before: ``lens`` es una entrada de ``lentes`` sin validar.
+    During: exige ``dict`` con ``veredicto`` que sea ``str`` y tenga contenido
+        tras ``strip``; ``None``, numeros, objetos y solo-espacios no son
+        veredicto (c-06, CO-69 ronda 7: ``str(None)`` daba "None" y pasaba).
+    After: True solo con un veredicto textual util; no muta nada.
+    """
+    if not isinstance(lens, dict):
+        return False
+    veredicto = lens.get("veredicto")
+    return isinstance(veredicto, str) and bool(veredicto.strip())
+
+
 def _validate_cell_requirements(item, *, require_cell=False):
     """Aplica las obligaciones de celda y lentes de una sesion proyectada.
 
@@ -517,10 +532,7 @@ def _validate_cell_requirements(item, *, require_cell=False):
         if (
             not isinstance(lenses, list)
             or len(lenses) < 2
-            or any(
-                not isinstance(lens, dict) or not str(lens.get("veredicto", "")).strip()
-                for lens in lenses
-            )
+            or any(not _has_veredicto(lens) for lens in lenses)
         ):
             raise RegistryError("ASENTADA exige dos veredictos de lentes", RC_INVALID)
 

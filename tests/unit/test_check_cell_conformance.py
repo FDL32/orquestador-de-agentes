@@ -187,6 +187,52 @@ def test_check_im_builder_dict_revisor_igual_al_nombre_rc2(fixtures):
     assert _run(registry, store, "--check-im") == 2
 
 
+@pytest.mark.parametrize(
+    "revisor",
+    [None, 1, {"a": 1}, "   "],
+    ids=["null", "numero", "dict", "espacios"],
+)
+def test_check_im_revisor_no_textual_rc2(fixtures, revisor):
+    """Barrido c-02 (CO-69 ronda 7): el revisor debe ser texto identificable.
+
+    Solo un ``str`` con contenido tras ``strip`` cuenta como revisor; ``None``,
+    numeros, objetos y solo-espacios no identifican a nadie.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [_session("IM-1", celda={"revisor": revisor, "builder": "codex luna"})],
+    )
+    assert _run(registry, store, "--check-im") == 2
+
+
+@pytest.mark.parametrize(
+    ("builder", "expected"),
+    [
+        ("anticodex", 2),
+        ("codex luna", 0),
+        ("codex-luna", 0),
+    ],
+    ids=["anticodex-rc2", "codex-espacio-rc0", "codex-guion-rc0"],
+)
+def test_check_im_builder_codex_con_frontera(fixtures, builder, expected):
+    """MINOR-2 (BA03 ronda 7): ``"codex" in lowered`` no tenia frontera.
+
+    Un builder "anticodex" se colaba como codex valido; ahora "codex" exige la
+    misma frontera que "sol", y "codex luna" / "codex-luna" siguen valiendo.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "IM-1", celda={"revisor": "nan deepseek-v4-flash", "builder": builder}
+            )
+        ],
+    )
+    assert _run(registry, store, "--check-im") == expected
+
+
 def test_check_im_builder_sol_rc2(fixtures):
     registry, store = fixtures
     _write_registry(
@@ -270,6 +316,35 @@ def test_check_tr_revisor_incorrecto_rc2(fixtures):
             )
         ],
     )
+    assert _run(registry, store, "--check-tr") == 2
+
+
+@pytest.mark.parametrize(
+    ("campo", "valor"),
+    [
+        ("triador", {"a": "gemma4"}),
+        ("triador", 1),
+        ("revisor", {"a": "glm5.3-flash"}),
+        ("revisor", 1),
+    ],
+    ids=[
+        "triador-dict-con-modelo",
+        "triador-numero",
+        "revisor-dict-con-modelo",
+        "revisor-numero",
+    ],
+)
+def test_check_tr_campos_no_textuales_rc2(fixtures, campo, valor):
+    """Barrido c-03 (CO-69 ronda 7): triador/revisor deben ser texto.
+
+    Antes se aplicaba ``str(...)`` al valor, asi que un objeto cuyo repr
+    contuviera el modelo esperado se colaba (dict con ``gemma4`` o
+    ``glm5.3-flash`` en el repr); ahora solo cuenta texto.
+    """
+    registry, store = fixtures
+    celda = {"triador": "gemma4", "revisor": "glm5.3-flash"}
+    celda[campo] = valor
+    _write_registry(registry, [_session("TR-1", "triaje", celda=celda)])
     assert _run(registry, store, "--check-tr") == 2
 
 
@@ -465,6 +540,29 @@ def test_check_pairing_builder_dict_thread_sin_prefijo_no_medido(fixtures):
     assert _run(registry, store, "--check-pairing") == 3
 
 
+def test_check_pairing_builder_dict_thread_no_textual_no_medido(fixtures):
+    """Barrido c-12 (CO-69 ronda 7): un threadId no textual no es hijo medible.
+
+    Antes ``_child_id`` devolvia el valor del dict tal cual; un entero hacia
+    fallar ``startswith`` con un AttributeError que ``_run_mode`` no captura.
+    Ahora no hay dato medible: NO MEDIDO.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "IM-1",
+                celda={
+                    "revisor": "nan",
+                    "builder": {"name": "codex luna", "threadId": 123},
+                },
+            )
+        ],
+    )
+    assert _run(registry, store, "--check-pairing") == 3
+
+
 def test_store_lookup_settled_fechas_reales(fixtures):
     _, store = fixtures
     _write_store(
@@ -617,6 +715,44 @@ def test_im_cuentas_distintas_rc0(fixtures):
         ],
     )
     assert _run(registry, store, "--check-im-cuentas") == 0
+
+
+def test_im_cuentas_builder_dict_sin_prefijo_no_medido(fixtures):
+    """c-17 (CO-69 ronda 7): sin prefijo delegated-task la cuenta no se mide.
+
+    ``check_im_cuentas`` usaba ``_child_id`` sin exigir el prefijo que si exige
+    ``check_pairing``: dos IM con ``builder.threadId = "mcp:..."`` y cuentas
+    distintas daban rc 0 sin ser hijos delegated-task. Ahora es NO MEDIDO.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                f"IM-{i}",
+                celda={
+                    "revisor": "nan",
+                    "builder": {
+                        "name": "codex luna",
+                        "threadId": f"mcp:otro-{i}",
+                    },
+                },
+            )
+            for i in range(2)
+        ],
+    )
+    _write_store(
+        store,
+        [
+            {
+                "thread_id": f"mcp:otro-{i}",
+                "account": f"codex-{i}",
+                "payload": {},
+            }
+            for i in range(2)
+        ],
+    )
+    assert _run(registry, store, "--check-im-cuentas") == 3
 
 
 def test_im_status_settled_en_registry_no_es_vivo(fixtures):

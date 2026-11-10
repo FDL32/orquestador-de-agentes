@@ -238,17 +238,21 @@ def _builder_name(builder):
     Before: ``builder`` es la celda declarada, en la forma string historica o
         en el dict que el resto del comprobador acepta (``name`` y ``threadId``,
         ver ``_child_id``).
-    During: si es un dict, toma ``name``; si falta, cae al texto serializado
-        para conservar el comportamiento anterior.
-    After: devuelve el nombre como texto; con dict nunca devuelve su repr
-        cuando hay ``name``, que es lo que hacia imposible compararlo con el
-        revisor (c-02, CO-69 ronda 5).
+    During: acepta solo texto: un dict cuenta si ``name`` es ``str`` con
+        contenido tras ``strip``; un builder string cuenta tal cual; cualquier
+        otro tipo (``None``, numeros, objetos) NO declara nombre.
+    After: devuelve el nombre o ``""``; nunca el repr de un dict ni el texto de
+        un numero, que es lo que permitia colar valores no identificables como
+        builder (c-02 ronda 5 y barrido de la clase, CO-69 ronda 7).
     """
     if isinstance(builder, dict):
         name = builder.get("name")
-        if name:
-            return str(name)
-    return str(builder)
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+        return ""
+    if isinstance(builder, str):
+        return builder.strip()
+    return ""
 
 
 def check_im(sessions, cutoff):
@@ -263,15 +267,18 @@ def check_im(sessions, cutoff):
     for session in measured:
         cell = _cell(session)
         revisor, builder = (cell or {}).get("revisor"), (cell or {}).get("builder")
-        builder_text = _builder_name(builder) if builder else ""
+        builder_text = _builder_name(builder)
         if (
-            not revisor
-            or not builder
-            or str(revisor).casefold() == builder_text.casefold()
+            not isinstance(revisor, str)
+            or not revisor.strip()
+            or not builder_text
+            or revisor.strip().casefold() == builder_text.casefold()
         ):
             return RC_VIOLATION
         lowered = builder_text.casefold()
-        if "codex" not in lowered or re.search(
+        # MINOR-2 (BA03 ronda 7): "codex" exige frontera, igual que "sol"; por
+        # subcadena un builder "anticodex" se colaba como codex valido.
+        if not re.search(r"(?<![a-z0-9])codex(?![a-z0-9])", lowered) or re.search(
             r"(?<![a-z0-9])sol(?![a-z0-9])", lowered
         ):
             return RC_VIOLATION
@@ -287,9 +294,13 @@ def check_tr(sessions, cutoff):
         return RC_NOT_MEASURED
     for session in measured:
         cell = _cell(session) or {}
+        triador = cell.get("triador")
+        revisor = cell.get("revisor")
         if (
-            "gemma4" not in str(cell.get("triador", "")).casefold()
-            or "glm5.3-flash" not in str(cell.get("revisor", "")).casefold()
+            not isinstance(triador, str)
+            or "gemma4" not in triador.casefold()
+            or not isinstance(revisor, str)
+            or "glm5.3-flash" not in revisor.casefold()
         ):
             return RC_VIOLATION
     return RC_OK
@@ -367,11 +378,24 @@ def check_cutoff(sessions, cutoff):
 
 
 def _child_id(builder):
-    """Extrae un id de hilo hijo declarado por la celda."""
+    """Extrae un id de hilo hijo declarado por la celda.
+
+    Before: ``builder`` es la celda declarada (dict con ``threadId`` o la forma
+        string historica).
+    During: acepta solo ids textuales no vacios; cualquier otro tipo
+        (``None``, numeros, objetos) no declara hijo medible.
+    After: devuelve el id o ``None``; nunca un objeto que haga fallar
+        ``startswith`` en los llamadores (barrido de la clase, CO-69 ronda 7).
+    """
     if isinstance(builder, dict):
-        return builder.get("threadId") or builder.get("thread_id") or builder.get("id")
-    text = str(builder or "")
-    return text if text.startswith("thread:delegated-task:") else None
+        for key in ("threadId", "thread_id", "id"):
+            value = builder.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+    if not isinstance(builder, str):
+        return None
+    return builder if builder.startswith("thread:delegated-task:") else None
 
 
 def _store_lookup(path):
@@ -439,12 +463,11 @@ def check_pairing(sessions, cutoff, store):
 
     c-12 (CO-69): medido en el almacen REAL en solo lectura (conexion
     ``sqlite3`` abierta con ``mode=ro`` sobre ``~/.t3/userdata/statev2.sqlite``):
-    de 1426 filas de
-    ``orchestration_v2_projection_threads``, las 583 con prefijo
-    ``thread:delegated-task:`` guardan ``lineage`` con ``parentThreadId``,
-    ``rootThreadId`` y ``relationshipToParent``, y el valor es ``subagent`` en
-    el 100 % de los hijos delegados (770 filas del almacen lo llevan; las 656
-    restantes lo traen a ``None`` por no ser hijas). Por eso la ausencia del
+    las 586 filas con prefijo ``thread:delegated-task:`` guardan ``lineage`` con
+    ``parentThreadId``, ``rootThreadId`` y ``relationshipToParent``, y el valor
+    es ``subagent`` en el 100 % de los hijos delegados. La clave esta en TODAS
+    las filas del almacen: snapshot 2026-11-10 de 1431 filas, 773 con
+    ``subagent`` y 658 con ``None`` por no ser hijas. Por eso la ausencia del
     campo o un valor distinto NO se juzga como violacion: es NO MEDIDO, porque
     el emparejamiento deja de estar declarado por el almacen.
     """
@@ -504,7 +527,10 @@ def check_im_cuentas(sessions, cutoff, store):
         accounts = []
         for session in vivos:
             child_id = _child_id((_cell(session) or {}).get("builder"))
-            if not child_id:
+            # c-17 (CO-69 ronda 7): las cuentas solo se pueden leer de un hijo
+            # delegated-task; sin el prefijo no hay dato medible (NO MEDIDO),
+            # no un verde por omision.
+            if not child_id or not child_id.startswith("thread:delegated-task:"):
                 return RC_NOT_MEASURED
             child = row(child_id)
             if child is None:

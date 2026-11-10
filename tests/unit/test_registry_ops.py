@@ -3611,6 +3611,37 @@ def test_asiento_asentada_prefijo_con_dos_lentes_rc0(tmp_path, apply):
     assert result.returncode == 0
 
 
+@pytest.mark.parametrize(
+    "veredicto",
+    [None, 1, {"a": 1}, "   "],
+    ids=["null", "numero", "dict", "espacios"],
+)
+@pytest.mark.parametrize("apply", [False, True])
+def test_asiento_asentada_veredicto_no_textual_rc2(tmp_path, veredicto, apply):
+    """c-06 (CO-69 ronda 7): ``str(None)`` daba "None" y contaba veredicto.
+
+    Un veredicto solo vale si es ``str`` con contenido tras ``strip``; null,
+    numeros, objetos y solo-espacios no son dos veredictos validos, ni en
+    dry-run ni con ``--apply``.
+    """
+    registry = tmp_path / "registry.json"
+    write_registry(
+        registry,
+        [
+            {
+                **session(),
+                "role": "implantacion",
+                "started": "2026-11-10T10:00:00+01:00",
+            }
+        ],
+    )
+    result = run_cli(
+        registry,
+        *_settle_args([{"veredicto": veredicto}, {"veredicto": veredicto}], apply),
+    )
+    assert result.returncode == 2
+
+
 def test_asiento_asentada_coordinadora_sin_lentes_rc0(tmp_path):
     """El rol NO gobernado no exige lentes aunque la sesion sea post-corte.
 
