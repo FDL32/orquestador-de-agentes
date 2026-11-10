@@ -385,6 +385,7 @@ extra_guards:
   # check_/validate_/guard_, asi que sin declararlo aqui el censo no lo ve; el
   # veredicto lo decide `wired_via` mas abajo.
   builder_agent: scripts/builder_agent.py
+  pretooluse_bash_wait_guard: .agent/hooks/pretooluse_bash_wait_guard.py
 
 wired_via:
   # check_gitleaks_seed_divergence: RETIRADO de wired_via (WOT-2026-059f,
