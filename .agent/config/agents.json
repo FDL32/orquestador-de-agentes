@@ -1424,7 +1424,8 @@
         "backend_keys": [
           "BA03",
           "BA07",
-          "BA254"
+          "BA254",
+          "BA02"
         ],
         "min_distinct": 2,
         "policy": "declared",
@@ -1434,7 +1435,7 @@
         "exempt_tickets": [
           "WOT-2026-129d"
         ],
-        "note": "WOT-2026-129y: cobertura elegible copiada de la verdad del roster del vuelo (session_types.implantacion.lenses.MANAGER_REVIEW=[BA03] + revisor_repo_motor_interino=BA07). BA05 excluida por WOT-2026-129r (no puede revisar repo_motor via loop-round). WOT-2026-129d exento: esta entrada NO re-adjudica su evidencia (DoD 5). 2026-11-01 CO-17 (orden del usuario, H130/H131): BA254 (Codex gpt-6.1-sol, challenger_codex_sol_cli) se anade como TERCERA elegible por sustitucion de facto de BA07, que da timeouts/colgados repetidos; min_distinct sigue en 2, asi que BA07 pasa a ser opcional. Si el roster del vuelo declara nuevas claves para esta fase, este campo se actualiza por ticket (D1 del work_plan: fuente unica versionada; la deriva es fail-safe)."
+        "note": "WOT-2026-129y: cobertura elegible copiada de la verdad del roster del vuelo (session_types.implantacion.lenses.MANAGER_REVIEW=[BA03] + revisor_repo_motor_interino=BA07). BA05 excluida por WOT-2026-129r (no puede revisar repo_motor via loop-round). WOT-2026-129d exento: esta entrada NO re-adjudica su evidencia (DoD 5). 2026-11-01 CO-17 (orden del usuario, H130/H131): BA254 (Codex gpt-6.1-sol, challenger_codex_sol_cli) se anade como TERCERA elegible por sustitucion de facto de BA07, que da timeouts/colgados repetidos; min_distinct sigue en 2, asi que BA07 pasa a ser opcional. Si el roster del vuelo declara nuevas claves para esta fase, este campo se actualiza por ticket (D1 del work_plan: fuente unica versionada; la deriva es fail-safe). 2026-11-10 CO-68 (WOT-2026-161q, rediseno v3): BA02 (kilo, nan/qwen3.8-flash, familia qwen) se anade COMO ELEGIBLE al final de backend_keys; snapshot fechado del sandbox (BA02 n=122, 84 % de entrega, mediana 203 s; datos fechados, NO son umbral). BA07 sigue elegible pero OPCIONAL: con min_distinct 2, BA03 mas BA02 cubren sin esperar a BA07 (que acumula timeouts de 900 s en 161l). NO se declara reserva (reserve_* sigue ausente: el mecanismo de WOT-2026-152t queda APAGADO, una reserva solo cuenta tras 2 colgados de la primaria en la misma instancia). El registro del USO RESTRINGIDO (no veto) de BA254 se difiere a T1."
       }
     }
   },
