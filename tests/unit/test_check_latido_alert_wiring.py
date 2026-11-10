@@ -55,9 +55,7 @@ class Box:
     """Motor sintetico (repo git con los 5 scripts del inventario) + roster + latidos."""
 
     def __init__(self, root: Path) -> None:
-        self.root = root
-        self.motor = root / "motor"
-        self.flight = self.motor / "scripts" / "flight"
+        self._bind(root)
         self.flight.mkdir(parents=True)
         for name in _STUBS:
             (self.flight / name).write_text(f"# stub {name}\n", encoding="utf-8")
@@ -66,15 +64,31 @@ class Box:
         _git(self.motor, "config", "user.name", "t")
         _git(self.motor, "add", "-A")
         _git(self.motor, "commit", "-q", "-m", "stubs")
+        self.roster.write_text("{}", encoding="utf-8")
+        self.ops.mkdir()
+
+    @classmethod
+    def _bound(cls, root: Path) -> Box:
+        """Before: recibe una copia ya construida. During: liga sus rutas. After: devuelve la caja ligada."""
+        obj = cls.__new__(cls)
+        obj._bind(root)
+        return obj
+
+    def _bind(self, root: Path) -> None:
+        """Before: recibe la raiz de una caja. During: calcula todas sus rutas. After: no escribe nada."""
+        self.root = root
+        self.motor = root / "motor"
+        self.flight = self.motor / "scripts" / "flight"
         self.py = sys.executable
-        sysroot = os.environ.get("SYSTEMROOT", "")
         self.ps = str(
-            Path(sysroot) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+            Path(os.environ.get("SYSTEMROOT", ""))
+            / "System32"
+            / "WindowsPowerShell"
+            / "v1.0"
+            / "powershell.exe"
         )
         self.roster = root / "roster.json"
-        self.roster.write_text("{}", encoding="utf-8")
         self.ops = root / "ops"
-        self.ops.mkdir()
 
     def s(self, name: str) -> str:
         """Ruta absoluta del script del inventario dentro del motor sintetico."""
@@ -224,9 +238,20 @@ def _hermetic_alert_subprocesses(monkeypatch, tmp_path, request):
     monkeypatch.setattr(subprocess, "Popen", guarded_popen)
 
 
+@pytest.fixture(scope="session")
+def _box_template(tmp_path_factory) -> Path:
+    """Before: recibe el factory aislado del worker. During: construye una plantilla. After: devuelve su raiz."""
+    template = tmp_path_factory.mktemp("box_template")
+    Box(template)
+    return template
+
+
 @pytest.fixture
-def box(tmp_path) -> Box:
-    return Box(tmp_path)
+def box(tmp_path, _box_template) -> Box:
+    """Before: recibe la plantilla y el tmp del test. During: copia el arbol. After: devuelve una caja propia."""
+    dest = tmp_path / "box"
+    shutil.copytree(_box_template, dest)
+    return Box._bound(dest)
 
 
 def run(argv: list[str], capsys) -> tuple[int, str]:
