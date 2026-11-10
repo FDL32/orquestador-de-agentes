@@ -209,12 +209,17 @@ def _sessions_for_measure(sessions, cutoff):
         if session.get("role") not in {"implantacion", "triaje"}:
             continue
         started = session.get("started")
-        if not started:
+        # CO-69 ronda 8: solo un texto puede conceder la exencion de fecha. Un
+        # entero JSON como 20261109 stringifica a "20261109" (ISO basico, que
+        # fromisoformat acepta desde Python 3.11) y quedaria "antes del corte":
+        # se trata como medible, igual que None o ilegible (fail-closed hacia
+        # medicion).
+        if not isinstance(started, str) or not started.strip():
             result.append(session)
             continue
         try:
             if (
-                datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+                datetime.fromisoformat(started.strip().replace("Z", "+00:00"))
                 .date()
                 .isoformat()
                 >= cutoff
@@ -360,10 +365,12 @@ def check_cutoff(sessions, cutoff):
     ]
     for session in governed:
         started = session.get("started")
-        if not started:
+        # CO-69 ronda 8: un `started` no textual (p.ej. el entero 20261109) no
+        # cuenta como sesion previa al corte; solo el texto puede eximir.
+        if not isinstance(started, str) or not started.strip():
             continue
         try:
-            date = datetime.fromisoformat(str(started).replace("Z", "+00:00")).date()
+            date = datetime.fromisoformat(started.strip().replace("Z", "+00:00")).date()
         except ValueError as exc:
             del exc
             continue

@@ -4,7 +4,7 @@ import os
 import subprocess
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -3640,6 +3640,56 @@ def test_asiento_asentada_veredicto_no_textual_rc2(tmp_path, veredicto, apply):
         *_settle_args([{"veredicto": veredicto}, {"veredicto": veredicto}], apply),
     )
     assert result.returncode == 2
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_asiento_asentada_fecha_no_textual_rc2(tmp_path, apply):
+    """CO-69 ronda 8: un ``started`` no textual NO concede la exencion de fecha.
+
+    ``str(20261109)`` da "20261109", que ``fromisoformat`` acepta como ISO
+    basico desde Python 3.11 y quedaba antes del corte, de modo que ASENTADA sin
+    lentes pasaba omitiendo los dos veredictos, en dry-run y con ``--apply``.
+    """
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    write_registry(
+        registry,
+        [{**session(), "role": "implantacion", "started": 20261109}],
+    )
+    before = registry.read_bytes()
+    args = [
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        "ASENTADA",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    ]
+    if apply:
+        args.append("--apply")
+    result = run_cli(registry, *args, ledger=ledger)
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+
+
+def test_asiento_fecha_no_textual_objeto_date_rc2():
+    """CO-69 ronda 8: misma clase con un no-texto cuyo ``str`` es ISO en 3.10.
+
+    El entero 20261109 solo discrimina en 3.11+ (ISO basico); un ``date``
+    produce "2026-11-09" en cualquier version y antes concedia la exencion.
+    """
+    item = {
+        **session(),
+        "role": "implantacion",
+        "status": "ASENTADA",
+        "started": date(2026, 11, 9),
+    }
+    with pytest.raises(_REGISTRY_OPS_MODULE.RegistryError) as caught:
+        _REGISTRY_OPS_MODULE._validate_cell_requirements(item)
+    assert caught.value.code == _REGISTRY_OPS_MODULE.RC_INVALID
 
 
 def test_asiento_asentada_coordinadora_sin_lentes_rc0(tmp_path):

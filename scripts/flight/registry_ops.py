@@ -517,10 +517,12 @@ def _validate_cell_requirements(item, *, require_cell=False):
     status = str(item.get("status", "")).strip().casefold()
     started = item.get("started")
     before_cutoff = False
-    if started:
+    # CO-69 ronda 8: un `started` no textual (p.ej. el entero JSON 20261109)
+    # no concede la exencion de fecha; la sesion queda sujeta a los veredictos.
+    if isinstance(started, str) and started.strip():
         try:
             before_cutoff = (
-                datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+                datetime.fromisoformat(started.strip().replace("Z", "+00:00"))
                 .date()
                 .isoformat()
                 < CUTOFF_DATE

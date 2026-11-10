@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sqlite3
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -408,6 +409,40 @@ def test_check_cutoff_previa_exenta_rc0(fixtures):
         ],
     )
     assert _run(registry, store, "--check-cutoff") == 0
+
+
+@pytest.mark.parametrize(
+    "started",
+    [20261109, date(2026, 11, 9)],
+    ids=["entero-json", "objeto-date"],
+)
+def test_sessions_for_measure_fecha_no_textual_se_mide(started):
+    """CO-69 ronda 8: ``started`` no textual no excluye la sesion de la medicion.
+
+    Solo un texto puede conceder la exencion de fecha. ``str(20261109)`` da
+    "20261109" (ISO basico aceptado desde 3.11) y el ``date`` reproduce la misma
+    clase en 3.10; ambos deben medirse.
+    """
+    session = _session("IM-1", started=started)
+    assert checker._sessions_for_measure([session], "2026-11-10") == [session]
+    old_text = _session("IM-old", started="2026-11-09T10:00:00+01:00")
+    assert checker._sessions_for_measure([old_text], "2026-11-10") == []
+
+
+@pytest.mark.parametrize(
+    "started",
+    [20261109, date(2026, 11, 9)],
+    ids=["entero-json", "objeto-date"],
+)
+def test_check_cutoff_fecha_no_textual_no_es_previa(started):
+    """CO-69 ronda 8: ``started`` no textual no cuenta como previa al corte.
+
+    Se llama a ``check_cutoff`` directamente porque un ``date`` no es
+    serializable a JSON; el entero cubre la ruta del registry y el ``date`` la
+    misma clase en Python 3.10 (su ``str`` ya es ISO valido).
+    """
+    session = _session("IM-1", started=started)
+    assert checker.check_cutoff([session], "2026-11-10") == 3
 
 
 def test_check_im_no_mide_sesion_previa_rc0(fixtures):
