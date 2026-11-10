@@ -442,6 +442,8 @@ def test_purge_validate_proposal_rejects_contract_boundaries(tmp_path):
         ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:

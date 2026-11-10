@@ -506,6 +506,8 @@ def test_validate_proposal_rejects_junction_ancestor(tmp_path):
         ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         check=False,
     )
     if result.returncode != 0:
