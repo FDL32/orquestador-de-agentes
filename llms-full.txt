@@ -207,7 +207,7 @@ append `--project-root <destino>` to commands that operate on project state.
   el mismo bullet puede impedir que el parser de FLT reconozca la ruta.
 
 ### Espera => trabajo avanzable
-Al esperar, no cierres el turno sin enumerar y hacer trabajo avanzable (solo lectura, preparacion o registro; sin alterar el proceso principal ni decidir por el usuario; arreglos via Hacer ahora vs aplazar). Atiende el resultado al llegar. Si no hay, anota el motivo. Detalle: `.agent/rules/common/espera_trabajo_paralelo.md`.
+Al esperar, no cierres el turno ni bloquees una llamada >300 s (en segundo plano) sin enumerar/hacer trabajo avanzable (solo lectura, preparacion, registro; sin decidir por el usuario; Hacer ahora vs aplazar). Atiende el resultado al llegar; si no hay, anota motivo. Detalle: `.agent/rules/common/espera_trabajo_paralelo.md`.
 
 ### Orden de trabajo: AGRUPA los commits, la suite va la ULTIMA (WOT-2026-026t)
 
