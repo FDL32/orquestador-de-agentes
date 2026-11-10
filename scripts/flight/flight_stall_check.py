@@ -68,6 +68,8 @@ GIT_MARKERS = ("index.lock", "MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD")
 
 _CA = None
 CFG = None
+DETECTOR_NAMES = ("quota", "cola", "git", "disco", "hook", "tarea", "im-ocioso")
+_CELL_CHECKER = None
 
 
 def _load_alert():
@@ -85,6 +87,26 @@ def _load_alert():
         spec.loader.exec_module(mod)
         _CA = mod
     return _CA
+
+
+def _load_cell_checker():
+    """Carga el comprobador de celdas por ruta del motor.
+
+    Before: ``check_cell_conformance.py`` vive junto a este detector.
+    During: usa importlib para conservar el aislamiento de imports del vuelo.
+    After: devuelve el modulo cacheado o propaga el fallo de carga al aislador.
+    """
+    global _CELL_CHECKER
+    if _CELL_CHECKER is None:
+        path = Path(__file__).resolve().with_name("check_cell_conformance.py")
+        spec = importlib.util.spec_from_file_location("check_cell_conformance", path)
+        if spec is None or spec.loader is None:
+            raise RuntimeError(f"no se pudo cargar {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        _CELL_CHECKER = module
+    return _CELL_CHECKER
 
 
 def _load_json_dict(path):
@@ -621,7 +643,16 @@ def _resolve_paths(a, ops):  # noqa: C901
     env = os.environ
     causes = []
     cfg = SimpleNamespace(
-        ops=ops, state=None, cola=None, motor=None, quota=None, session_code=None
+        ops=ops,
+        state=None,
+        cola=None,
+        motor=None,
+        quota=None,
+        session_code=None,
+        registry=None,
+        store=Path(
+            env.get("T3_STATE_DB", Path.home() / ".t3" / "userdata" / "statev2.sqlite")
+        ),
     )
     cfg.wt_globs, cfg.free_gb_min, cfg.disk_anchor = [], FREE_GB_DEFAULT, Path("/")
     if ops is not None:
@@ -633,6 +664,7 @@ def _resolve_paths(a, ops):  # noqa: C901
                 f"flight-dir sin resolver: pasa --flight-dir o define {FLIGHT_DIR_ENV}"
             )
         cfg.cola = _resolve_dir(raw, "flight-dir") / COLA_REL
+        cfg.registry = Path(raw) / "session_registry.json"
         roster = Path(raw) / FLIGHT_ROSTER_NAME
         if roster.is_file():
             try:
@@ -674,6 +706,45 @@ def _resolve_paths(a, ops):  # noqa: C901
         cfg.quota = ops / QUOTA_NAME
     fatal = _free_gb_min(cfg, env.get("STALL_FREE_GB_MIN"))
     return cfg, causes, fatal
+
+
+def check_im_ocioso(out, st):
+    """Avisa cuando hay menos de dos IM vivos y existe cola apta.
+
+    Before: ``CFG`` tiene registry/store resueltos y ``out`` fue poblado por
+        ``check_cola``.
+    During: carga el comprobador compartido, consulta solo los hilos de las
+        sesiones y usa su predicado ``live_ims``; no notifica ni escribe estado.
+    After: devuelve un hallazgo ``im-ocioso`` o una causa ciega; los fallos de
+        lectura se propagan para que ``_detect`` produzca ``detector-roto``.
+    """
+    del st
+    if out.get("cola_abiertas", 0) <= 0:
+        return []
+    if CFG.registry is None or not CFG.registry.is_file():
+        out["im_ocioso_ciego"] = "registry"
+        return [
+            ("detector-ciego-im-ocioso", "AVISO", "Detector IM ocioso sin registry")
+        ]
+    if CFG.store is None or not CFG.store.is_file():
+        out["im_ocioso_ciego"] = "store"
+        return [
+            (
+                "detector-ciego-im-ocioso",
+                "AVISO",
+                "Detector IM ocioso sin almacen T3",
+            )
+        ]
+    checker = _load_cell_checker()
+    sessions = checker._registry(CFG.registry)
+    connection, _, settled = checker._store_lookup(CFG.store)
+    try:
+        vivos = checker.live_ims(sessions, settled)
+    finally:
+        connection.close()
+    if len(vivos) < 2:
+        return [("im-ocioso", "AVISO", f"Hay {len(vivos)} IM vivos con cola apta")]
+    return []
 
 
 def _free_gb_min(cfg, raw):
@@ -793,25 +864,30 @@ def _heartbeat_check(a, ca):
     return max(2, notify_rc) if state_failed else 2
 
 
-def _detect(out, st):
+def _detect(out, st, only=None):
     """Ejecuta todos los detectores aislando el fallo de cada uno.
 
     Before: ``out`` es el acumulador y ``st`` el estado del tick.
-    During: invoca quota, cola, git, disco, hook y tarea; captura excepciones y añade ``detector-roto``.
+    During: invoca quota, cola, git, disco, hook, tarea e im-ocioso; captura
+        excepciones y anade ``detector-roto``.
     After: devuelve ``(hallazgos, roto)`` y conserva los resultados de detectores sanos.
     """
     found, broke = [], False
-    for fn in (
-        lambda: check_quota(out),
-        lambda: check_cola(out, st),
-        lambda: check_git(out, st),
-        lambda: check_disk(out),
-        lambda: check_hook(out),
-        lambda: check_tarea(out),
-    ):
+    detectors = {
+        "quota": lambda: check_quota(out),
+        "cola": lambda: check_cola(out, st),
+        "git": lambda: check_git(out, st),
+        "disco": lambda: check_disk(out),
+        "hook": lambda: check_hook(out),
+        "tarea": lambda: check_tarea(out),
+        "im-ocioso": lambda: check_im_ocioso(out, st),
+    }
+    selected = [only] if only else list(DETECTOR_NAMES)
+    for name in selected:
+        fn = detectors[name]
         try:
             found += fn()
-        except Exception as exc:  # noqa: PERF203 - un detector roto no tapa a los demas
+        except Exception as exc:
             broke = True
             found.append(
                 (
@@ -913,7 +989,14 @@ def run(a):  # noqa: C901 - detector legacy mas el modo heartbeat aislado
             return 2
         return _heartbeat_check(a, ca)
     st, out = _state(), {}
-    found, broke = _detect(out, st)
+    detector = None if a.test_detector == "todos" else a.test_detector
+    found, broke = _detect(out, st, detector)
+    if a.test_detector:
+        if broke:
+            print("STALL_CHECK_BROKEN: detector de prueba fallo")
+            return 2
+        print("test-detector:", a.test_detector, "hallazgos=", len(found))
+        return 0 if a.test_detector == "todos" else 1 if found else 0
     if causes:
         found.insert(
             0,
@@ -983,9 +1066,20 @@ def main(argv=None):
         "--quota-file",
         help="ultima salida de quota_tick.py; por defecto <ops-dir>/quota_last.txt",
     )
+    ap.add_argument(
+        "--test-detector",
+        nargs="?",
+        const="todos",
+        help="ejecuta un detector aislado, o todos si no se da nombre",
+    )
     a = ap.parse_args(argv)
-    if a.heartbeat_check and (a.baseline or a.self_check):
-        ap.error("--heartbeat-check no se combina con --baseline ni --self-check")
+    if a.test_detector and a.test_detector not in ("todos", *DETECTOR_NAMES):
+        ap.error("--test-detector exige 'todos' o uno de: " + ", ".join(DETECTOR_NAMES))
+    if a.heartbeat_check and (a.baseline or a.self_check or a.test_detector):
+        ap.error(
+            "--heartbeat-check no se combina con --baseline, --self-check ni "
+            "--test-detector"
+        )
     if a.heartbeat_check and (not a.ops_dir or not a.flight_dir):
         ap.error("--heartbeat-check exige --ops-dir y --flight-dir")
     try:

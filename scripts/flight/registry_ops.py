@@ -67,6 +67,7 @@ MUTABLE_FIELDS = (
     "reporta_a",
     "worktree",
     "generation",
+    "lentes",
 )
 SNAPSHOT_FIELDS = ("threadId", "settled", "status", "updatedAt", "modelo", "cuenta")
 RECONCILE_FIELDS = ("settled", "status", "updatedAt", "modelo", "cuenta")
@@ -80,6 +81,7 @@ OPTIONAL_FIELDS = (
     "generation",
     "launched_by",
     "worktree",
+    "celda",
 )
 
 
@@ -460,8 +462,52 @@ def _session_for_alta(args, data):
     for field in OPTIONAL_FIELDS:
         value = getattr(args, field)
         if value is not None:
+            if field == "celda":
+                value = _parse_json_field(value, field, dict)
             item[field] = value
+    _validate_cell_requirements(item, require_cell=True)
     return item
+
+
+def _parse_json_field(value, field, expected):
+    """Parsea un campo JSON declarado por CLI.
+
+    Before: ``value`` es texto de argparse y ``expected`` es el tipo contractual.
+    During: decodifica JSON y valida el tipo sin efectos de escritura.
+    After: devuelve el valor tipado o lanza ``RegistryError`` rc 2.
+    """
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RegistryError(f"{field} no es JSON valido", RC_INVALID) from exc
+    if not isinstance(parsed, expected):
+        raise RegistryError(f"{field} debe ser {expected.__name__}", RC_INVALID)
+    return parsed
+
+
+def _validate_cell_requirements(item, *, require_cell=False):
+    """Aplica las obligaciones de celda y lentes de una sesion proyectada.
+
+    Before: ``item`` es la sesion actual o resultante, sin mutar el registry.
+    During: exige celda en IM/TR solo cuando ``require_cell`` es verdadero y
+        exige dos veredictos al pasar a ASENTADA en cualquier proyeccion.
+    After: retorna ``None`` si conforme o lanza ``RegistryError`` rc 2.
+    """
+    if require_cell and item.get("role") in ("implantacion", "triaje"):
+        cell = item.get("celda")
+        if not isinstance(cell, dict) or not cell:
+            raise RegistryError("alta de IM/TR exige celda", RC_INVALID)
+    if str(item.get("status", "")).upper() == "ASENTADA":
+        lenses = item.get("lentes")
+        if (
+            not isinstance(lenses, list)
+            or len(lenses) < 2
+            or any(
+                not isinstance(lens, dict) or not str(lens.get("veredicto", "")).strip()
+                for lens in lenses
+            )
+        ):
+            raise RegistryError("ASENTADA exige dos veredictos de lentes", RC_INVALID)
 
 
 def _handle_alta(args):
@@ -486,6 +532,8 @@ def _handle_alta(args):
         )
         return RC_OK
 
+    _session_for_alta(args, _read_registry(path))
+
     def mutate(data):
         data["sessions"].append(_session_for_alta(args, data))
 
@@ -502,7 +550,7 @@ def _handle_alta(args):
     return RC_OK
 
 
-def _handle_asiento(args):
+def _handle_asiento(args):  # noqa: C901 - valida la proyeccion dry-run y apply
     """Valida o aplica cambios de transicion permitidos.
 
     Before: ``args`` identifica un code y puede contener campos mutables.
@@ -521,6 +569,12 @@ def _handle_asiento(args):
     path = Path(args.registry)
     if not args.apply:
         item = _require_session(_read_registry(path), args.code)
+        projected = dict(item)
+        for field, value in changes.items():
+            if field == "lentes":
+                value = _parse_json_field(value, field, list)
+            projected[field] = value
+        _validate_cell_requirements(projected)
         plan = {
             "code": args.code,
             "cambios": {
@@ -530,10 +584,25 @@ def _handle_asiento(args):
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         return RC_OK
 
+    item = _require_session(_read_registry(path), args.code)
+    projected = dict(item)
+    for field, value in changes.items():
+        if field == "lentes":
+            value = _parse_json_field(value, field, list)
+        projected[field] = value
+    _validate_cell_requirements(projected)
+
     def mutate(data):
         item = _require_session(data, args.code)
+        projected = dict(item)
         for field, value in changes.items():
-            item[field] = value
+            if field == "lentes":
+                value = _parse_json_field(value, field, list)
+            projected[field] = value
+        _validate_cell_requirements(projected)
+        for field, value in projected.items():
+            if field in changes:
+                item[field] = value
 
     detail = f"code={args.code} campos={sorted(changes)}"
     _apply_change(

@@ -921,6 +921,84 @@ def test_argumento_desconocido_es_rc2_de_argparse(box):
     assert exc.value.code == 2
 
 
+def test_test_detector_aisla_fallo_rc2_stall_check_broken(box):
+    def boom(out):
+        raise RuntimeError("detector roto")
+
+    box.monkeypatch.setattr(box.m, "check_quota", boom)
+    result = box.tick("--test-detector", "quota")
+    assert result.rc == 2
+    assert "STALL_CHECK_BROKEN" in result.out
+
+
+def test_test_detector_ok_rc0(box):
+    result = box.tick("--test-detector", "quota")
+    assert result.rc == 0
+    assert "test-detector: quota" in result.out
+
+
+def test_test_detector_sin_valor_sanos_rc0(box):
+    result = box.tick("--test-detector")
+    assert result.rc == 0
+    assert "test-detector: todos" in result.out
+
+
+def test_test_detector_sin_valor_detector_roto_rc2(box):
+    def boom(out):
+        raise RuntimeError("detector roto")
+
+    box.monkeypatch.setattr(box.m, "check_quota", boom)
+    result = box.tick("--test-detector")
+    assert result.rc == 2
+    assert "STALL_CHECK_BROKEN" in result.out
+
+
+def _write_cell_fixtures(box, count):
+    import sqlite3
+
+    sessions = [
+        {
+            "code": f"IM-{index}",
+            "role": "implantacion",
+            "status": "ACTIVA",
+            "started": "2026-11-10T10:00:00+01:00",
+            "threadId": f"mcp:IM-{index}",
+        }
+        for index in range(count)
+    ]
+    (box.flight / "session_registry.json").write_text(
+        json.dumps({"sessions": sessions}), encoding="utf-8"
+    )
+    store = box.root / "statev2.sqlite"
+    connection = sqlite3.connect(store)
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_threads ("
+        "thread_id TEXT PRIMARY KEY, deleted_at TEXT, payload_json TEXT, "
+        "provider_instance_id TEXT)"
+    )
+    connection.commit()
+    connection.close()
+    box.monkeypatch.setenv("T3_STATE_DB", str(store))
+    box.m.CFG = types.SimpleNamespace(
+        registry=box.flight / "session_registry.json", store=store
+    )
+
+
+def test_im_ocioso_1_im_y_cola_apta_avisa(box):
+    _write_cell_fixtures(box, 1)
+    assert box.m.check_im_ocioso({"cola_abiertas": 1}, {})[0][0] == "im-ocioso"
+
+
+def test_im_ocioso_2_ims_no_avisa(box):
+    _write_cell_fixtures(box, 2)
+    assert box.m.check_im_ocioso({"cola_abiertas": 1}, {}) == []
+
+
+def test_im_ocioso_cola_no_apta_no_avisa(box):
+    _write_cell_fixtures(box, 1)
+    assert box.m.check_im_ocioso({"cola_abiertas": 0}, {}) == []
+
+
 # ------------------------------------------------------------------ filas 106-113: run
 def test_fila106_detector_que_lanza_es_detector_roto_rc2_y_no_tapa_a_los_demas(box):
     """Fila 106 (M16): un detector roto avisa, no tapa al resto (el hook sigue siendo URGENTE) y rc 2."""
@@ -2290,5 +2368,20 @@ def test_go_tick_fallo_y_exito_no_duplica_aviso(box):
         == 0
     )
     sent = len(box.sent)
-    assert box.tick().sent == []
-    assert len(box.sent) == sent
+    next_tick = box.tick()
+    assert ("detector-ciego-im-ocioso", "AVISO", "stall") in next_tick.events
+    assert len(box.sent) == sent + 1
+
+
+def test_detect_aisla_fallo_y_conserva_detector_sano(box):
+    box.tick("--dry-run")
+    box.cola.write_text("# cola\n" + ABIERTA + "\n", encoding="utf-8")
+
+    def boom(out):
+        raise RuntimeError("detector roto")
+
+    box.monkeypatch.setattr(box.m, "check_quota", boom)
+    found, broke = box.m._detect({}, {})
+    assert broke is True
+    assert any(key == "detector-roto" for key, _, _ in found)
+    assert any(key.startswith("cola-") for key, _, _ in found)

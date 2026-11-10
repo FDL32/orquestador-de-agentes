@@ -388,6 +388,13 @@ extra_guards:
   pretooluse_bash_wait_guard: .agent/hooks/pretooluse_bash_wait_guard.py
 
 wired_via:
+  # WOT-2026-161l: el detector de latido invoca el comprobador por ruta
+  # importlib y el AST de frontera no alcanza este cableado dinamico.
+  check_cell_conformance: >-
+    scripts/flight/flight_stall_check.py:746 (checker.live_ims en
+    check_im_ocioso; carga dinamica en :101). Probe: rg -n
+    "check_cell_conformance.py|live_ims" scripts/flight/flight_stall_check.py
+    -> debe encontrar la carga y el uso dentro del detector.
   # check_gitleaks_seed_divergence: RETIRADO de wired_via (WOT-2026-059f,
   # hallazgo mecanico de check-guard-wiring: "declared unwired/via, but it IS
   # wired"). El AST de 1-hop ya alcanza este cableado por su cuenta -- la

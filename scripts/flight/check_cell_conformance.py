@@ -1,0 +1,491 @@
+#!/usr/bin/env python3
+"""Comprueba en solo lectura la conformidad de celdas del vuelo.
+
+Before: ``--registry`` identifica un JSON de registro y, para los modos que
+    miden T3, ``--store`` identifica una base SQLite legible en modo read-only.
+During: carga sesiones y consulta solamente hilos concretos por ``thread_id``;
+    aplica las reglas de celda, corte, emparejamiento, vivos y cuentas sin
+    modificar ningun fichero.
+After: devuelve 0 si todo lo medible es conforme, 2 si hay violacion y 3 si
+    falta cualquier dato necesario para medir; el agregado da prioridad a 2,
+    despues a 3 y nunca convierte NO MEDIDO en verde.
+"""
+
+import argparse
+import importlib.util
+import json
+import os
+import re
+import sqlite3
+import sys
+from datetime import datetime
+from pathlib import Path
+
+
+RC_OK = 0
+RC_VIOLATION = 2
+RC_NOT_MEASURED = 3
+CUTOFF_DATE = "2026-11-10"
+REGISTRY_ENV = "FLIGHT_DIR"
+STORE_ENV = "T3_STATE_DB"
+THREADS_TABLE = "orchestration_v2_projection_threads"
+
+
+class MeasurementError(Exception):
+    """Indica que una comprobacion no pudo medir su dato de entrada."""
+
+
+def estado_no_vivo(status):
+    """Clasifica un estado de registry como asentado.
+
+    Before: ``status`` puede ser cualquier valor procedente del JSON.
+    During: normaliza texto y compara las dos formas canonicas de asentado.
+    After: devuelve ``True`` para ``ASENTADA...`` o ``settled`` y ``False`` en otro caso.
+    """
+    value = str(status or "").strip().casefold()
+    return value.startswith("asentada") or value == "settled"
+
+
+def _load_store_module():
+    """Carga el abridor oficial de statev2 por ruta.
+
+    Before: este modulo esta junto a ``verify_user_authorization.py``.
+    During: importa con importlib sin alterar ``sys.path``.
+    After: devuelve el modulo que expone ``open_store_ro`` o eleva medicion.
+    """
+    path = Path(__file__).resolve().with_name("verify_user_authorization.py")
+    try:
+        spec = importlib.util.spec_from_file_location("verify_user_authorization", path)
+        if spec is None or spec.loader is None:
+            raise MeasurementError(f"no se pudo cargar abridor: {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        spec.loader.exec_module(module)
+        return module
+    except (OSError, ImportError, AttributeError, MeasurementError) as exc:
+        if isinstance(exc, MeasurementError):
+            raise
+        raise MeasurementError(f"abridor T3 ilegible: {exc}") from exc
+
+
+def _open_store(path):
+    """Abre statev2 mediante el helper canonico y valida la tabla consultada.
+
+    Before: ``path`` es la ruta candidata al almacen.
+    During: abre en read-only y comprueba la tabla sin recorrer sus filas.
+    After: devuelve una conexion SQLite o eleva ``MeasurementError``.
+    """
+    try:
+        connection = _load_store_module().open_store_ro(path)
+        columns = {
+            row[1] for row in connection.execute(f"PRAGMA table_info({THREADS_TABLE})")
+        }
+        required = {"thread_id", "deleted_at", "payload_json", "provider_instance_id"}
+        if not required <= columns:
+            connection.close()
+            raise MeasurementError("tabla T3 sin columnas requeridas")
+        return connection
+    except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
+        raise MeasurementError(f"almacen T3 ilegible: {exc}") from exc
+
+
+def _thread_row(connection, thread_id):
+    """Lee una fila de hilo concreta por su clave primaria.
+
+    Before: ``connection`` apunta al almacen read-only y ``thread_id`` no esta vacio.
+    During: ejecuta una consulta parametrizada con ``WHERE thread_id = ?``.
+    After: devuelve un dict de fila o ``None`` si el hilo no existe.
+    """
+    if not thread_id:
+        return None
+    row = connection.execute(
+        "SELECT thread_id, deleted_at, payload_json, provider_instance_id "
+        "FROM orchestration_v2_projection_threads WHERE thread_id = ?",
+        (thread_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def _payload(row):
+    """Parsea el payload de una fila de hilo.
+
+    Before: ``row`` contiene ``payload_json``.
+    During: decodifica JSON y exige un objeto.
+    After: devuelve el objeto o eleva ``MeasurementError``.
+    """
+    try:
+        value = json.loads(row["payload_json"])
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise MeasurementError(f"payload de hilo ilegible: {exc}") from exc
+    if not isinstance(value, dict):
+        raise MeasurementError("payload de hilo no es objeto")
+    return value
+
+
+def is_im_vivo(session, settled_lookup):
+    """Determina si una sesion de implantacion sigue viva.
+
+    Before: ``session`` es un registro de sesion y ``settled_lookup`` consulta T3.
+    During: combina rol, estado del registry y asentamiento externo.
+    After: devuelve booleano; propaga fallos de ``settled_lookup`` para fail-closed.
+    """
+    return (
+        session.get("role") == "implantacion"
+        and not estado_no_vivo(session.get("status"))
+        and not settled_lookup(session.get("threadId"))
+    )
+
+
+def live_ims(sessions, settled_lookup):
+    """Devuelve las sesiones IM vivas usando el predicado canonico.
+
+    Before: ``sessions`` es una lista de diccionarios y el lookup es callable.
+    During: filtra sin cambiar los registros de entrada.
+    After: retorna una lista nueva de IM vivos.
+    """
+    return [session for session in sessions if is_im_vivo(session, settled_lookup)]
+
+
+def _registry(path):
+    """Carga y valida el registro de sesiones.
+
+    Before: ``path`` apunta a un JSON accesible.
+    During: lee el fichero y valida ``sessions`` como lista de objetos.
+    After: retorna la lista de sesiones o eleva ``MeasurementError``.
+    """
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+        raise MeasurementError(f"registry ilegible: {exc}") from exc
+    sessions = value.get("sessions") if isinstance(value, dict) else None
+    if not isinstance(sessions, list) or not all(
+        isinstance(item, dict) for item in sessions
+    ):
+        raise MeasurementError("registry sin sessions valida")
+    return sessions
+
+
+def _default_registry():
+    """Resuelve el registry desde ``FLIGHT_DIR``.
+
+    Before: el entorno puede contener un directorio de vuelo.
+    During: anade ``session_registry.json`` solo si existe.
+    After: retorna una ruta existente o ``None``.
+    """
+    raw = os.environ.get(REGISTRY_ENV)
+    if not raw:
+        return None
+    path = Path(raw) / "session_registry.json"
+    return path if path.is_file() else None
+
+
+def _sessions_for_measure(sessions, cutoff):
+    """Excluye sesiones anteriores al corte.
+
+    Before: ``sessions`` contiene fechas ISO o valores ausentes.
+    During: compara la parte de fecha con ``cutoff``.
+    After: devuelve sesiones medibles y eleva si una fecha posterior es ilegible.
+    """
+    result = []
+    for session in sessions:
+        started = session.get("started")
+        if not started:
+            raise MeasurementError("sesion sin started")
+        try:
+            if (
+                datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+                .date()
+                .isoformat()
+                >= cutoff
+            ):
+                result.append(session)
+        except ValueError as exc:
+            raise MeasurementError(f"started ilegible: {started}") from exc
+    return result
+
+
+def _cell(session):
+    """Obtiene una declaracion de celda como diccionario no vacio."""
+    value = session.get("celda")
+    return value if isinstance(value, dict) else None
+
+
+def check_im(sessions, cutoff):
+    """Comprueba la celda IM: revisor distinto y builder codex no-sol."""
+    measured = [
+        s
+        for s in _sessions_for_measure(sessions, cutoff)
+        if s.get("role") == "implantacion"
+    ]
+    if not measured:
+        return RC_NOT_MEASURED
+    for session in measured:
+        cell = _cell(session)
+        revisor, builder = (cell or {}).get("revisor"), (cell or {}).get("builder")
+        if (
+            not revisor
+            or not builder
+            or str(revisor).casefold() == str(builder).casefold()
+        ):
+            return RC_VIOLATION
+        builder_text = str(builder).casefold()
+        if "codex" not in builder_text or re.search(
+            r"(?<![a-z0-9])sol(?![a-z0-9])", builder_text
+        ):
+            return RC_VIOLATION
+    return RC_OK
+
+
+def check_tr(sessions, cutoff):
+    """Comprueba el par TR gemma4 y glm5.3-flash."""
+    measured = [
+        s for s in _sessions_for_measure(sessions, cutoff) if s.get("role") == "triaje"
+    ]
+    if not measured:
+        return RC_NOT_MEASURED
+    for session in measured:
+        cell = _cell(session) or {}
+        if (
+            "gemma4" not in str(cell.get("triador", "")).casefold()
+            or "glm5.3-flash" not in str(cell.get("revisor", "")).casefold()
+        ):
+            return RC_VIOLATION
+    return RC_OK
+
+
+def check_lenses(sessions, cutoff):
+    """Exige al menos dos modelos distintos en cada celda TR e IM."""
+    measured = [
+        s
+        for s in _sessions_for_measure(sessions, cutoff)
+        if s.get("role") in {"triaje", "implantacion"}
+    ]
+    if not measured:
+        return RC_NOT_MEASURED
+    for session in measured:
+        lenses = (_cell(session) or {}).get("lentes")
+        if (
+            not isinstance(lenses, list)
+            or len({str(item).casefold() for item in lenses}) < 2
+        ):
+            return RC_VIOLATION
+    return RC_OK
+
+
+def check_cutoff(sessions, cutoff):
+    """Valida que exista una sesion exenta y que ninguna previa se mida.
+
+    Before: ``sessions`` contiene sesiones con ``started`` y ``cutoff`` es una
+        fecha ISO inclusiva.
+    During: identifica sesiones anteriores y contrasta ese conjunto con el
+        conjunto medido por ``_sessions_for_measure``.
+    After: devuelve 3 si no hay previas, 2 si una previa entra en medicion y 0
+        cuando las previas quedan exentas.
+    """
+    if not sessions:
+        return RC_NOT_MEASURED
+    previous = []
+    for session in sessions:
+        started = session.get("started")
+        if not started:
+            raise MeasurementError("sesion sin started")
+        try:
+            date = datetime.fromisoformat(str(started).replace("Z", "+00:00")).date()
+        except ValueError as exc:
+            raise MeasurementError(f"started ilegible: {started}") from exc
+        if date.isoformat() < cutoff:
+            previous.append(session)
+    if not previous:
+        return RC_NOT_MEASURED
+    measured = _sessions_for_measure(sessions, cutoff)
+    if any(any(candidate is session for candidate in measured) for session in previous):
+        return RC_VIOLATION
+    return RC_OK
+
+
+def _child_id(builder):
+    """Extrae un id de hilo hijo declarado por la celda."""
+    if isinstance(builder, dict):
+        return builder.get("threadId") or builder.get("thread_id") or builder.get("id")
+    text = str(builder or "")
+    return text if text.startswith("thread:delegated-task:") else None
+
+
+def _store_lookup(path):
+    """Construye lookups de asentamiento, pairing y cuenta sobre un almacen."""
+    connection = _open_store(path)
+
+    def row(thread_id):
+        return _thread_row(connection, thread_id)
+
+    def settled(thread_id):
+        value = row(thread_id)
+        if value is None:
+            return False
+        payload = _payload(value)
+        status = payload.get("status") or payload.get("threadStatus")
+        return bool(
+            value.get("deleted_at") or str(status or "").casefold() == "settled"
+        )
+
+    return connection, row, settled
+
+
+def check_pairing(sessions, cutoff, store):
+    """Comprueba que cada IM tenga su hijo delegated-task con parentThreadId."""
+    measured = [
+        s
+        for s in _sessions_for_measure(sessions, cutoff)
+        if s.get("role") == "implantacion"
+    ]
+    if not measured:
+        return RC_NOT_MEASURED
+    connection, row, _ = _store_lookup(store)
+    try:
+        for session in measured:
+            child_id = _child_id((_cell(session) or {}).get("builder"))
+            if not child_id or not child_id.startswith("thread:delegated-task:"):
+                return RC_NOT_MEASURED
+            child = row(child_id)
+            if child is None:
+                return RC_VIOLATION
+            payload = _payload(child)
+            lineage = payload.get("lineage")
+            if not isinstance(lineage, dict) or not lineage.get("parentThreadId"):
+                return RC_NOT_MEASURED
+            if lineage.get("parentThreadId") != session.get("threadId"):
+                return RC_VIOLATION
+    finally:
+        connection.close()
+    return RC_OK
+
+
+def check_im_vivos(sessions, cutoff, store):
+    """Exige como maximo dos IM vivos."""
+    measured = _sessions_for_measure(sessions, cutoff)
+    if not measured:
+        return RC_NOT_MEASURED
+    connection, _, settled = _store_lookup(store)
+    try:
+        vivos = live_ims(measured, settled)
+    finally:
+        connection.close()
+    return RC_VIOLATION if len(vivos) > 2 else RC_OK
+
+
+def check_im_cuentas(sessions, cutoff, store):
+    """Exige cuentas provider distintas para IM vivos."""
+    measured = _sessions_for_measure(sessions, cutoff)
+    if not measured:
+        return RC_NOT_MEASURED
+    connection, row, settled = _store_lookup(store)
+    try:
+        vivos = live_ims(measured, settled)
+        accounts = []
+        for session in vivos:
+            child_id = _child_id((_cell(session) or {}).get("builder"))
+            if not child_id:
+                return RC_NOT_MEASURED
+            child = row(child_id)
+            if child is None:
+                return RC_NOT_MEASURED
+            account = child.get("provider_instance_id") or _payload(child).get(
+                "providerInstanceId"
+            )
+            if not account:
+                return RC_NOT_MEASURED
+            accounts.append(account)
+    finally:
+        connection.close()
+    return RC_VIOLATION if len(accounts) != len(set(accounts)) else RC_OK
+
+
+def _paths(args):
+    """Resuelve defaults CLI sin crear ningun fichero."""
+    registry = Path(args.registry) if args.registry else _default_registry()
+    store = Path(
+        args.store
+        or os.environ.get(
+            STORE_ENV, Path.home() / ".t3" / "userdata" / "statev2.sqlite"
+        )
+    )
+    return registry, store, args.cutoff or CUTOFF_DATE
+
+
+def _run_mode(name, sessions, cutoff, store):
+    """Ejecuta un modo individual y traduce fallos a NO MEDIDO."""
+    try:
+        if name == "im":
+            return check_im(sessions, cutoff)
+        if name == "tr":
+            return check_tr(sessions, cutoff)
+        if name == "lenses":
+            return check_lenses(sessions, cutoff)
+        if name == "cutoff":
+            return check_cutoff(sessions, cutoff)
+        if name == "pairing":
+            return check_pairing(sessions, cutoff, store)
+        if name == "im-vivos":
+            return check_im_vivos(sessions, cutoff, store)
+        return check_im_cuentas(sessions, cutoff, store)
+    except MeasurementError as exc:
+        print(f"NO MEDIDO {name}: {exc}", file=sys.stderr)
+        return RC_NOT_MEASURED
+
+
+def main(argv=None):
+    """Ejecuta el modo solicitado y conserva precedencia violation > not measured.
+
+    Before: argumentos CLI validos.
+    During: carga registry y ejecuta un modo o todos en read-only.
+    After: retorna 0, 2 o 3 y solo imprime diagnostico; nunca escribe estado.
+    """
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--registry")
+    parser.add_argument("--store")
+    parser.add_argument("--cutoff", default=CUTOFF_DATE)
+    parser.add_argument("--read-only", action="store_true")
+    for mode in ("im", "tr", "lenses", "cutoff", "pairing", "im-vivos", "im-cuentas"):
+        parser.add_argument(f"--check-{mode}", action="store_true")
+    args = parser.parse_args(argv)
+    selected = [
+        name
+        for name in (
+            "im",
+            "tr",
+            "lenses",
+            "cutoff",
+            "pairing",
+            "im-vivos",
+            "im-cuentas",
+        )
+        if getattr(args, f"check_{name.replace('-', '_')}")
+    ]
+    if not selected or args.read_only:
+        selected = ("im", "tr", "lenses", "cutoff", "pairing", "im-vivos", "im-cuentas")
+    registry, store, cutoff = _paths(args)
+    if registry is None:
+        print("NO MEDIDO: registry irresoluble", file=sys.stderr)
+        return RC_NOT_MEASURED
+    try:
+        sessions = _registry(registry)
+    except MeasurementError as exc:
+        print(f"NO MEDIDO: {exc}", file=sys.stderr)
+        return RC_NOT_MEASURED
+    codes = [_run_mode(name, sessions, cutoff, store) for name in selected]
+    result = (
+        RC_VIOLATION
+        if RC_VIOLATION in codes
+        else RC_NOT_MEASURED
+        if RC_NOT_MEASURED in codes
+        else RC_OK
+    )
+    details = ", ".join(
+        f"{name}={code}" for name, code in zip(selected, codes, strict=True)
+    )
+    print("check_cell_conformance:", details, f"rc={result}")
+    return result
+
+
+if __name__ == "__main__":
+    sys.exit(main())

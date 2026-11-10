@@ -3362,3 +3362,169 @@ def test_y06_handshake_signals_real_acquisition_slow_acquisition_no_false_red(
         json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()
     ]
     assert len(rows) == 2
+
+
+def test_alta_implantacion_sin_celda_rc2_dry_run(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry)
+    result = run_cli(
+        registry,
+        "alta",
+        "--code",
+        "IM-111",
+        "--role",
+        "implantacion",
+        "--slot",
+        "celda",
+        "--thread-id",
+        "mcp:im111",
+        "--started",
+        "2026-11-10T10:00:00+01:00",
+        "--status",
+        "ACTIVA",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    )
+    assert result.returncode == 2
+
+
+def test_alta_implantacion_sin_celda_rc2_apply(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    apply = True
+    write_registry(registry)
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        "alta",
+        "--code",
+        "IM-111",
+        "--role",
+        "implantacion",
+        "--slot",
+        "celda",
+        "--thread-id",
+        "mcp:im111",
+        "--started",
+        "2026-11-10T10:00:00+01:00",
+        "--status",
+        "ACTIVA",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+        *(["--apply"] if apply else []),
+        ledger=str(ledger),
+    )
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+
+
+def test_alta_implantacion_con_celda_rc0(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry)
+    result = run_cli(
+        registry,
+        "alta",
+        "--code",
+        "IM-111",
+        "--role",
+        "implantacion",
+        "--slot",
+        "celda",
+        "--thread-id",
+        "mcp:im111",
+        "--started",
+        "2026-11-10T10:00:00+01:00",
+        "--status",
+        "ACTIVA",
+        "--celda",
+        '{"revisor":"nan","builder":"codex luna"}',
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    )
+    assert result.returncode == 0
+
+
+def _settle_args(lenses, apply=False):
+    return [
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        "ASENTADA",
+        "--lentes",
+        json.dumps(lenses),
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    ] + (["--apply"] if apply else [])
+
+
+def test_asiento_asentada_sin_dos_veredictos_rc2_dry_run(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    write_registry(registry, [session()])
+    before = registry.read_bytes()
+    result = run_cli(registry, *_settle_args([{"veredicto": "APPROVE"}]), ledger=ledger)
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+
+
+def test_asiento_asentada_sin_dos_veredictos_rc2_apply(tmp_path):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    write_registry(registry, [session()])
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        *_settle_args([{"veredicto": "APPROVE"}], apply=True),
+        ledger=ledger,
+    )
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+
+
+def test_asiento_implantacion_sin_celda_no_asentada_rc0(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(
+        registry,
+        [
+            {
+                **session(),
+                "role": "implantacion",
+                "status": "ACTIVA",
+            }
+        ],
+    )
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--worktree",
+        "wt-1",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    )
+    assert result.returncode == 0
+
+
+def test_asiento_asentada_con_dos_veredictos_rc0(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry, [session()])
+    result = run_cli(
+        registry,
+        *_settle_args([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}]),
+    )
+    assert result.returncode == 0
