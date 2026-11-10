@@ -3470,7 +3470,16 @@ def _settle_args(lenses, apply=False):
 def test_asiento_asentada_sin_dos_veredictos_rc2_dry_run(tmp_path):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "ledger.jsonl"
-    write_registry(registry, [session()])
+    write_registry(
+        registry,
+        [
+            {
+                **session(),
+                "role": "implantacion",
+                "started": "2026-11-10T10:00:00+01:00",
+            }
+        ],
+    )
     before = registry.read_bytes()
     result = run_cli(registry, *_settle_args([{"veredicto": "APPROVE"}]), ledger=ledger)
     assert result.returncode == 2
@@ -3481,7 +3490,16 @@ def test_asiento_asentada_sin_dos_veredictos_rc2_dry_run(tmp_path):
 def test_asiento_asentada_sin_dos_veredictos_rc2_apply(tmp_path):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "ledger.jsonl"
-    write_registry(registry, [session()])
+    write_registry(
+        registry,
+        [
+            {
+                **session(),
+                "role": "implantacion",
+                "started": "2026-11-10T10:00:00+01:00",
+            }
+        ],
+    )
     before = registry.read_bytes()
     result = run_cli(
         registry,
@@ -3528,3 +3546,110 @@ def test_asiento_asentada_con_dos_veredictos_rc0(tmp_path):
         *_settle_args([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}]),
     )
     assert result.returncode == 0
+
+
+@pytest.mark.parametrize("status", ["ASENTADA: done", "ASENTADA (x)", "ASENTADA"])
+@pytest.mark.parametrize("apply", [False, True])
+def test_asiento_asentada_prefijo_sin_lentes_rc2(tmp_path, status, apply):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    write_registry(
+        registry,
+        [
+            {
+                **session(),
+                "role": "implantacion",
+                "started": "2026-11-10T10:00:00+01:00",
+            }
+        ],
+    )
+    before = registry.read_bytes()
+    args = [
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        status,
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    ]
+    if apply:
+        args.append("--apply")
+    result = run_cli(registry, *args, ledger=ledger)
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_asiento_asentada_prefijo_con_dos_lentes_rc0(tmp_path, apply):
+    registry = tmp_path / "registry.json"
+    write_registry(
+        registry,
+        [
+            {
+                **session(),
+                "role": "implantacion",
+                "started": "2026-11-10T10:00:00+01:00",
+            }
+        ],
+    )
+    result = run_cli(
+        registry,
+        *_settle_args([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}], apply),
+    )
+    assert result.returncode == 0
+
+
+def test_asiento_asentada_coordinadora_sin_lentes_rc0(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry, [session()])
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--role",
+        "orquestadora",
+        "--status",
+        "ASENTADA: CO-64 ...",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    )
+    assert result.returncode == 0
+
+
+def test_asiento_asentada_sesion_pre_corte_sin_lentes_rc0(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(
+        registry,
+        [
+            {
+                **session(),
+                "role": "implantacion",
+                "started": "2026-11-09T23:59:00+01:00",
+            }
+        ],
+    )
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        "ASENTADA: old",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    )
+    assert result.returncode == 0
+
+
+def test_registry_ops_cutoff_matches_checker():
+    from scripts.flight import check_cell_conformance
+
+    assert _REGISTRY_OPS_MODULE.CUTOFF_DATE == check_cell_conformance.CUTOFF_DATE

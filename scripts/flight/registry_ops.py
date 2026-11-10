@@ -57,6 +57,7 @@ RC_ROSTER_GATE = 3
 RC_CONFLICT = 4
 RC_LOCK = 5
 RC_LOCK_RELEASE = 6
+CUTOFF_DATE = "2026-11-10"  # espejo de check_cell_conformance.CUTOFF_DATE
 LOCK_ATTEMPTS = 20
 LOCK_DELAY_S = 0.05
 MUTABLE_FIELDS = (
@@ -497,7 +498,21 @@ def _validate_cell_requirements(item, *, require_cell=False):
         cell = item.get("celda")
         if not isinstance(cell, dict) or not cell:
             raise RegistryError("alta de IM/TR exige celda", RC_INVALID)
-    if str(item.get("status", "")).upper() == "ASENTADA":
+    role_requires_lenses = item.get("role") in ("implantacion", "triaje")
+    status = str(item.get("status", "")).strip().casefold()
+    started = item.get("started")
+    before_cutoff = False
+    if started:
+        try:
+            before_cutoff = (
+                datetime.fromisoformat(str(started).replace("Z", "+00:00"))
+                .date()
+                .isoformat()
+                < CUTOFF_DATE
+            )
+        except ValueError:
+            before_cutoff = False
+    if role_requires_lenses and status.startswith("asentada") and not before_cutoff:
         lenses = item.get("lentes")
         if (
             not isinstance(lenses, list)

@@ -953,14 +953,14 @@ def test_test_detector_sin_valor_detector_roto_rc2(box):
     assert "STALL_CHECK_BROKEN" in result.out
 
 
-def _write_cell_fixtures(box, count):
+def _write_cell_fixtures(box, count, statuses=None):
     import sqlite3
 
     sessions = [
         {
             "code": f"IM-{index}",
             "role": "implantacion",
-            "status": "ACTIVA",
+            "status": (statuses or ["ACTIVA"] * count)[index],
             "started": "2026-11-10T10:00:00+01:00",
             "threadId": f"mcp:IM-{index}",
         }
@@ -979,8 +979,12 @@ def _write_cell_fixtures(box, count):
     connection.commit()
     connection.close()
     box.monkeypatch.setenv("T3_STATE_DB", str(store))
-    box.m.CFG = types.SimpleNamespace(
-        registry=box.flight / "session_registry.json", store=store
+    box.monkeypatch.setattr(
+        box.m,
+        "CFG",
+        types.SimpleNamespace(
+            registry=box.flight / "session_registry.json", store=store
+        ),
     )
 
 
@@ -997,6 +1001,22 @@ def test_im_ocioso_2_ims_no_avisa(box):
 def test_im_ocioso_cola_no_apta_no_avisa(box):
     _write_cell_fixtures(box, 1)
     assert box.m.check_im_ocioso({"cola_abiertas": 0}, {}) == []
+
+
+def test_im_ocioso_unico_vivo_entre_estados_reales_avisa(box):
+    dead = [
+        "SETTLED (hilo completed y asentado ...)",
+        "settled",
+        "RELEVADA por IM-8 / NO_REABRIR",
+        "CERRADA, sin trabajo",
+        "COMPLETADA e INTEGRADA en la rama del vuelo",
+        "ENTREGADO, SIN INTEGRAR",
+        "ASENTADA: ...",
+        "ASENTADA (...)",
+        "FALLIDA (contexto agotado)",
+    ]
+    _write_cell_fixtures(box, len(dead) + 1, [*dead, "ACTIVA"])
+    assert box.m.check_im_ocioso({"cola_abiertas": 1}, {})[0][0] == "im-ocioso"
 
 
 # ------------------------------------------------------------------ filas 106-113: run
@@ -2347,6 +2367,7 @@ def test_go_tick_fallo_y_exito_no_duplica_aviso(box):
         )
         == 2
     )
+    box.monkeypatch.setattr(box.m, "check_im_ocioso", lambda out, st: [])
     failed_tick = box.tick()
     assert failed_tick.sent[0][0] == "IM-56"
     box.notify_rc = 0
@@ -2368,9 +2389,18 @@ def test_go_tick_fallo_y_exito_no_duplica_aviso(box):
         == 0
     )
     sent = len(box.sent)
-    next_tick = box.tick()
-    assert ("detector-ciego-im-ocioso", "AVISO", "stall") in next_tick.events
-    assert len(box.sent) == sent + 1
+    assert box.tick().sent == []
+    assert len(box.sent) == sent
+
+
+def test_detector_ciego_im_ocioso_no_duplica_aviso(box):
+    box.cola.write_text("# cola\n" + ABIERTA + "\n", encoding="utf-8")
+    first = box.tick()
+    sent = len(box.sent)
+    second = box.tick()
+    assert any(event[0] == "detector-ciego-im-ocioso" for event in first.events)
+    assert second.sent == []
+    assert len(box.sent) == sent
 
 
 def test_detect_aisla_fallo_y_conserva_detector_sano(box):

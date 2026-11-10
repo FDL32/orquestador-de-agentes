@@ -32,18 +32,26 @@ THREADS_TABLE = "orchestration_v2_projection_threads"
 
 
 class MeasurementError(Exception):
-    """Indica que una comprobacion no pudo medir su dato de entrada."""
+    """Indica que una comprobacion no pudo medir su dato de entrada.
 
-
-def estado_no_vivo(status):
-    """Clasifica un estado de registry como asentado.
-
-    Before: ``status`` puede ser cualquier valor procedente del JSON.
-    During: normaliza texto y compara las dos formas canonicas de asentado.
-    After: devuelve ``True`` para ``ASENTADA...`` o ``settled`` y ``False`` en otro caso.
+    Before: una lectura o validacion encuentra un dato ausente o ilegible.
+    During: conserva la causa para que el modo CLI la traduzca a rc 3.
+    After: no modifica estado y permite distinguir NO MEDIDO de violacion.
     """
-    value = str(status or "").strip().casefold()
-    return value.startswith("asentada") or value == "settled"
+
+
+RE_ACTIVA_PREFIX = re.compile(r"^ACTIVA(\s|$)")
+# Copia deliberada de scripts/check_roster_matches_acting_thread.py:77.
+
+
+def is_activa(status):
+    """Comprueba el predicado canonico de estado activo.
+
+    Before: ``status`` procede del registro y puede ser cualquier valor.
+    During: aplica literalmente ``^ACTIVA(\\s|$)`` sin lista blanca adicional.
+    After: devuelve ``True`` solo para ``ACTIVA`` y sus estados con sufijo.
+    """
+    return bool(RE_ACTIVA_PREFIX.match(str(status or "")))
 
 
 def _load_store_module():
@@ -85,7 +93,7 @@ def _open_store(path):
             connection.close()
             raise MeasurementError("tabla T3 sin columnas requeridas")
         return connection
-    except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
+    except (OSError, RuntimeError, sqlite3.Error, ValueError, TypeError) as exc:
         raise MeasurementError(f"almacen T3 ilegible: {exc}") from exc
 
 
@@ -131,7 +139,7 @@ def is_im_vivo(session, settled_lookup):
     """
     return (
         session.get("role") == "implantacion"
-        and not estado_no_vivo(session.get("status"))
+        and is_activa(session.get("status"))
         and not settled_lookup(session.get("threadId"))
     )
 
@@ -180,17 +188,23 @@ def _default_registry():
 
 
 def _sessions_for_measure(sessions, cutoff):
-    """Excluye sesiones anteriores al corte.
+    """Filtra primero IM/TR y excluye sesiones anteriores al corte.
 
-    Before: ``sessions`` contiene fechas ISO o valores ausentes.
-    During: compara la parte de fecha con ``cutoff``.
-    After: devuelve sesiones medibles y eleva si una fecha posterior es ilegible.
+    Before: ``sessions`` contiene sesiones de cualquier rol y fechas ISO o
+        valores ausentes.
+    During: descarta primero roles no gobernados; compara fechas datables con
+        ``cutoff`` y conserva fechas ausentes o ilegibles para medirlas.
+    After: devuelve solo IM/TR medibles, fail-closed hacia medicion y nunca
+        eleva por un ``started`` ausente o ilegible.
     """
     result = []
     for session in sessions:
+        if session.get("role") not in {"implantacion", "triaje"}:
+            continue
         started = session.get("started")
         if not started:
-            raise MeasurementError("sesion sin started")
+            result.append(session)
+            continue
         try:
             if (
                 datetime.fromisoformat(str(started).replace("Z", "+00:00"))
@@ -200,7 +214,8 @@ def _sessions_for_measure(sessions, cutoff):
             ):
                 result.append(session)
         except ValueError as exc:
-            raise MeasurementError(f"started ilegible: {started}") from exc
+            del exc
+            result.append(session)
     return result
 
 
@@ -280,19 +295,26 @@ def check_cutoff(sessions, cutoff):
     During: identifica sesiones anteriores y contrasta ese conjunto con el
         conjunto medido por ``_sessions_for_measure``.
     After: devuelve 3 si no hay previas, 2 si una previa entra en medicion y 0
-        cuando las previas quedan exentas.
+        cuando las previas quedan exentas. La rama rc 2 es un guard de
+        regresion: el filtro canonico mantiene ambos conjuntos disjuntos.
     """
     if not sessions:
         return RC_NOT_MEASURED
     previous = []
-    for session in sessions:
+    governed = [
+        session
+        for session in sessions
+        if session.get("role") in {"implantacion", "triaje"}
+    ]
+    for session in governed:
         started = session.get("started")
         if not started:
-            raise MeasurementError("sesion sin started")
+            continue
         try:
             date = datetime.fromisoformat(str(started).replace("Z", "+00:00")).date()
         except ValueError as exc:
-            raise MeasurementError(f"started ilegible: {started}") from exc
+            del exc
+            continue
         if date.isoformat() < cutoff:
             previous.append(session)
     if not previous:

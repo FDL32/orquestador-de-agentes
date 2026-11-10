@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from scripts.flight import check_cell_conformance as checker
 def _session(
     code,
     role="implantacion",
-    status="ACTIVE",
+    status="ACTIVA",
     started="2026-11-10T10:00:00+01:00",
     **extra,
 ):
@@ -103,6 +104,17 @@ def test_read_only_conforme_rc0(fixtures):
 def test_no_medido_nunca_verde(tmp_path):
     registry = tmp_path / "missing.json"
     assert checker.main(["--registry", str(registry), "--check-im"]) == 3
+
+
+def test_registry_none_no_medido_rc3(tmp_path, monkeypatch):
+    monkeypatch.delenv("FLIGHT_DIR", raising=False)
+    assert checker.main(["--check-im"]) == 3
+
+
+def test_store_inexistente_no_medido_rc3(fixtures):
+    registry, _ = fixtures
+    _write_registry(registry, [_session("IM-1", celda=_cell())])
+    assert _run(registry, registry.parent / "missing.sqlite", "--check-pairing") == 3
 
 
 def test_read_only_no_escribe(fixtures):
@@ -221,6 +233,21 @@ def test_check_lenses_una_rc2(fixtures):
     assert _run(registry, store, "--check-lenses") == 2
 
 
+def test_check_lenses_duplicadas_rc2(fixtures):
+    registry, store = fixtures
+    _write_registry(registry, [_session("IM-1", celda={"lentes": ["glm", "glm"]})])
+    assert _run(registry, store, "--check-lenses") == 2
+
+
+def test_check_lenses_triaje_deficientes_rc2(fixtures):
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [_session("TR-1", "triaje", celda={"lentes": ["glm"]})],
+    )
+    assert _run(registry, store, "--check-lenses") == 2
+
+
 def test_check_cutoff_previa_exenta_rc0(fixtures):
     registry, store = fixtures
     _write_registry(
@@ -285,6 +312,21 @@ def test_check_pairing_sin_parent_no_medido(fixtures):
     registry, store = fixtures
     _write_registry(registry, [_session("IM-1", celda=_cell())])
     _write_store(store, [{"thread_id": "thread:delegated-task:one", "payload": {}}])
+    assert _run(registry, store, "--check-pairing") == 3
+
+
+def test_check_pairing_hijo_ausente_rc2(fixtures):
+    registry, store = fixtures
+    _write_registry(registry, [_session("IM-1", celda=_cell())])
+    assert _run(registry, store, "--check-pairing") == 2
+
+
+def test_check_pairing_builder_sin_prefijo_no_medido(fixtures):
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [_session("IM-1", celda={"builder": "codex luna"})],
+    )
     assert _run(registry, store, "--check-pairing") == 3
 
 
@@ -371,6 +413,113 @@ def test_im_status_settled_en_registry_no_es_vivo(fixtures):
     assert _run(registry, store, "--check-im-vivos") == 0
 
 
+def test_is_im_vivo_vocabulario_real():
+    dead = [
+        "SETTLED (hilo completed y asentado ...)",
+        "settled",
+        "RELEVADA por IM-8 / NO_REABRIR",
+        "CERRADA, sin trabajo",
+        "COMPLETADA e INTEGRADA en la rama del vuelo",
+        "ENTREGADO, SIN INTEGRAR",
+        "ASENTADA: ...",
+        "ASENTADA (...)",
+        "FALLIDA (contexto agotado)",
+    ]
+    sessions = [
+        _session(f"dead-{index}", status=status) for index, status in enumerate(dead)
+    ]
+    sessions += [
+        _session("live-1", status="ACTIVA"),
+        _session("live-2", status="ACTIVA (ACK medido ... )"),
+    ]
+    live = checker.live_ims(sessions, lambda thread_id: False)
+    assert [session["code"] for session in live] == ["live-1", "live-2"]
+
+
+def test_check_cutoff_violation_guard_regression(fixtures, monkeypatch):
+    registry, store = fixtures
+    sessions = [
+        _session("old", started="2026-11-09T23:59:00+01:00"),
+        _session("new", celda=_cell()),
+    ]
+    _write_registry(registry, sessions)
+    monkeypatch.setattr(checker, "_sessions_for_measure", lambda value, cutoff: value)
+    assert _run(registry, store, "--check-cutoff") == 2
+
+
+def test_im_vivos_ignora_orquestadora_sin_started(fixtures):
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "OR-5",
+                role="orquestadora",
+                status="DESACTIVADA (sin trabajo)",
+                started=None,
+            ),
+            _session("IM-111", celda=_cell()),
+        ],
+    )
+    assert _run(registry, store, "--check-im-vivos") == 0
+
+
+def test_started_ausente_en_im_y_tr_se_mide_fail_closed(fixtures):
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session("IM-1", started=None),
+            _session(
+                "TR-1",
+                role="triaje",
+                started=None,
+                celda={"triador": "gemma4", "revisor": "glm5.3-flash"},
+            ),
+        ],
+    )
+    assert _run(registry, store, "--check-im") == 2
+    _write_registry(
+        registry,
+        [
+            _session("IM-1", started=None, celda=_cell()),
+            _session(
+                "TR-1",
+                role="triaje",
+                started=None,
+                celda={"triador": "gemma4", "revisor": "glm5.3-flash"},
+            ),
+        ],
+    )
+    assert _run(registry, store, "--check-im") == 0
+
+
+def test_registro_vivo_solo_lectura_no_medido_rc3():
+    candidates = []
+    flight_dir = os.environ.get("FLIGHT_DIR")
+    if flight_dir:
+        candidates.append(Path(flight_dir) / "session_registry.json")
+    project_root = os.environ.get("AGENT_PROJECT_ROOT")
+    if project_root:
+        candidates.extend(
+            (Path(project_root) / ".agent" / "runtime").rglob("session_registry.json")
+        )
+    registry = next((path for path in candidates if path.is_file()), None)
+    if registry is None:
+        pytest.skip("no hay session_registry.json vivo disponible")
+    store = Path(
+        os.environ.get(
+            "T3_STATE_DB", Path.home() / ".t3" / "userdata" / "statev2.sqlite"
+        )
+    )
+    if not store.is_file():
+        pytest.skip("no hay statev2.sqlite vivo disponible")
+    before = hashlib.sha256(registry.read_bytes()).digest()
+    assert _run(registry, store, "--check-im-vivos") != 3
+    assert _run(registry, store, "--check-cutoff") != 3
+    assert hashlib.sha256(registry.read_bytes()).digest() == before
+
+
 def test_policy_declara_comprobador_wired():
     from scripts.check_guard_wiring import _load_policy
 
@@ -378,11 +527,13 @@ def test_policy_declara_comprobador_wired():
     entry = policy["wired_via"].get("check_cell_conformance")
     assert entry
     assert "Probe:" in entry
-    assert "flight_stall_check.py:746" in entry
+    assert "flight_stall_check.py" in entry
     assert "check_cell_conformance.py|live_ims" in entry
 
 
-def test_estado_no_vivo_y_lookup_son_predicados_reales():
-    assert checker.estado_no_vivo("ASENTADA: IM-109")
-    with pytest.raises((AttributeError, TypeError)):
-        checker.is_im_vivo(None, lambda value: False)
+def test_contract_error_is_explicit_registry_error():
+    from scripts.flight import registry_ops
+
+    with pytest.raises(registry_ops.RegistryError) as caught:
+        registry_ops._parse_json_field("{", "celda", dict)
+    assert caught.value.code == registry_ops.RC_INVALID
