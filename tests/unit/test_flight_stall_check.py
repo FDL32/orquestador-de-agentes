@@ -953,7 +953,7 @@ def test_test_detector_sin_valor_detector_roto_rc2(box):
     assert "STALL_CHECK_BROKEN" in result.out
 
 
-def _write_cell_fixtures(box, count, statuses=None):
+def _write_cell_fixtures(box, count, statuses=None, settled_threads=None):
     import sqlite3
 
     sessions = [
@@ -976,9 +976,15 @@ def _write_cell_fixtures(box, count, statuses=None):
         "thread_id TEXT PRIMARY KEY, deleted_at TEXT, payload_json TEXT, "
         "provider_instance_id TEXT)"
     )
+    for thread_id, payload in settled_threads or []:
+        connection.execute(
+            "INSERT INTO orchestration_v2_projection_threads "
+            "(thread_id, deleted_at, payload_json, provider_instance_id) "
+            "VALUES (?, NULL, ?, NULL)",
+            (thread_id, json.dumps(payload)),
+        )
     connection.commit()
     connection.close()
-    box.monkeypatch.setenv("T3_STATE_DB", str(store))
     box.monkeypatch.setattr(
         box.m,
         "CFG",
@@ -1016,6 +1022,18 @@ def test_im_ocioso_unico_vivo_entre_estados_reales_avisa(box):
         "FALLIDA (contexto agotado)",
     ]
     _write_cell_fixtures(box, len(dead) + 1, [*dead, "ACTIVA"])
+    assert box.m.check_im_ocioso({"cola_abiertas": 1}, {})[0][0] == "im-ocioso"
+
+
+def test_im_ocioso_tres_ims_dos_hilos_settled_deja_un_vivo(box):
+    _write_cell_fixtures(
+        box,
+        3,
+        settled_threads=[
+            ("mcp:IM-0", {"settledAt": "2026-11-10T11:22:00Z"}),
+            ("mcp:IM-1", {"settledAt": "2026-11-10T11:23:00Z"}),
+        ],
+    )
     assert box.m.check_im_ocioso({"cola_abiertas": 1}, {})[0][0] == "im-ocioso"
 
 

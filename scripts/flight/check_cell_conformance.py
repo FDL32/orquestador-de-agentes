@@ -346,9 +346,27 @@ def _store_lookup(path):
             return False
         payload = _payload(value)
         status = payload.get("status") or payload.get("threadStatus")
-        return bool(
-            value.get("deleted_at") or str(status or "").casefold() == "settled"
-        )
+        if value.get("deleted_at") or str(status or "").casefold() == "settled":
+            return True
+        settled_at = payload.get("settledAt")
+        if settled_at is None:
+            return False
+        try:
+            settled_date = datetime.fromisoformat(
+                str(settled_at).replace("Z", "+00:00")
+            )
+            unsettled_at = payload.get("unsettledAt")
+            if unsettled_at is None:
+                return True
+            unsettled_date = datetime.fromisoformat(
+                str(unsettled_at).replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError) as exc:
+            raise MeasurementError("fecha de asentamiento ilegible") from exc
+        try:
+            return unsettled_date < settled_date
+        except TypeError as exc:
+            raise MeasurementError("fechas de asentamiento incompatibles") from exc
 
     return connection, row, settled
 
@@ -450,7 +468,7 @@ def _run_mode(name, sessions, cutoff, store):
         if name == "im-vivos":
             return check_im_vivos(sessions, cutoff, store)
         return check_im_cuentas(sessions, cutoff, store)
-    except MeasurementError as exc:
+    except (MeasurementError, sqlite3.Error, RuntimeError) as exc:
         print(f"NO MEDIDO {name}: {exc}", file=sys.stderr)
         return RC_NOT_MEASURED
 

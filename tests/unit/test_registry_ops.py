@@ -3540,7 +3540,16 @@ def test_asiento_implantacion_sin_celda_no_asentada_rc0(tmp_path):
 
 def test_asiento_asentada_con_dos_veredictos_rc0(tmp_path):
     registry = tmp_path / "registry.json"
-    write_registry(registry, [session()])
+    write_registry(
+        registry,
+        [
+            {
+                **session(),
+                "role": "implantacion",
+                "started": "2026-11-10T10:00:00+01:00",
+            }
+        ],
+    )
     result = run_cli(
         registry,
         *_settle_args([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}]),

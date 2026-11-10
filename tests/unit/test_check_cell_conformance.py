@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 
@@ -330,6 +331,71 @@ def test_check_pairing_builder_sin_prefijo_no_medido(fixtures):
     assert _run(registry, store, "--check-pairing") == 3
 
 
+def test_store_lookup_settled_fechas_reales(fixtures):
+    _, store = fixtures
+    _write_store(
+        store,
+        [
+            {"thread_id": "settled", "payload": {"settledAt": "2026-11-10T11:22:00Z"}},
+            {
+                "thread_id": "unsettled",
+                "payload": {
+                    "settledAt": "2026-11-10T11:22:00Z",
+                    "unsettledAt": "2026-11-10T11:23:00Z",
+                },
+            },
+            {
+                "thread_id": "reset-settled",
+                "payload": {
+                    "settledAt": "2026-11-10T11:24:00Z",
+                    "unsettledAt": "2026-11-10T11:23:00Z",
+                },
+            },
+            {"thread_id": "live", "payload": {}},
+        ],
+    )
+    connection, _, settled = checker._store_lookup(store)
+    try:
+        assert settled("settled") is True
+        assert settled("unsettled") is False
+        assert settled("reset-settled") is True
+        assert settled("live") is False
+    finally:
+        connection.close()
+
+
+def test_store_lookup_settled_deleted_y_status_legacy(fixtures):
+    _, store = fixtures
+    _write_store(
+        store,
+        [
+            {
+                "thread_id": "deleted",
+                "deleted_at": "2026-11-10T11:22:00Z",
+                "payload": {},
+            },
+            {"thread_id": "status", "payload": {"status": "settled"}},
+        ],
+    )
+    connection, _, settled = checker._store_lookup(store)
+    try:
+        assert settled("deleted") is True
+        assert settled("status") is True
+    finally:
+        connection.close()
+
+
+def test_check_pairing_consulta_sqlite_error_no_medido(fixtures, monkeypatch):
+    registry, store = fixtures
+    _write_registry(registry, [_session("IM-1", celda=_cell())])
+
+    def fail(*args):
+        raise sqlite3.OperationalError("consulta rota")
+
+    monkeypatch.setattr(checker, "_thread_row", fail)
+    assert _run(registry, store, "--check-pairing") == 3
+
+
 def _three_ims(registry):
     _write_registry(
         registry,
@@ -353,6 +419,24 @@ def test_im_vivos_dos_rc0(fixtures):
         [
             _session(f"IM-{i}", celda=_cell(f"thread:delegated-task:{i}"))
             for i in range(2)
+        ],
+    )
+    assert _run(registry, store, "--check-im-vivos") == 0
+
+
+def test_im_vivos_descuenta_hilo_settled_real_rc0(fixtures):
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [_session(f"IM-{index}") for index in range(3)],
+    )
+    _write_store(
+        store,
+        [
+            {
+                "thread_id": "mcp:IM-0",
+                "payload": {"settledAt": "2026-11-10T11:22:00Z"},
+            }
         ],
     )
     assert _run(registry, store, "--check-im-vivos") == 0
@@ -494,7 +578,7 @@ def test_started_ausente_en_im_y_tr_se_mide_fail_closed(fixtures):
     assert _run(registry, store, "--check-im") == 0
 
 
-def test_registro_vivo_solo_lectura_no_medido_rc3():
+def test_registro_vivo_solo_lectura_mide_rc_distinto_de_3():
     candidates = []
     flight_dir = os.environ.get("FLIGHT_DIR")
     if flight_dir:
@@ -529,6 +613,19 @@ def test_policy_declara_comprobador_wired():
     assert "Probe:" in entry
     assert "flight_stall_check.py" in entry
     assert "check_cell_conformance.py|live_ims" in entry
+
+
+def test_c09_canon_pilares_declara_cuatro_filas():
+    path = (
+        Path(__file__).parents[2] / ".agent" / "rules" / "common" / "vuelo_pilares.md"
+    )
+    lines = [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if re.match(r"^. P3[0456] ", line)
+    ]
+    assert len(lines) == 4
+    assert all("check_cell_conformance" in line for line in lines)
 
 
 def test_contract_error_is_explicit_registry_error():
