@@ -161,6 +161,32 @@ def test_check_im_sesion_unica_rc2(fixtures):
     assert _run(registry, store, "--check-im") == 2
 
 
+def test_check_im_builder_dict_revisor_igual_al_nombre_rc2(fixtures):
+    """c-02 (CO-69 ronda 5): con builder dict, la sesion unica se mide por name.
+
+    Comparar contra ``str(builder)`` (el repr del dict) nunca casaba con el
+    revisor y la celda daba rc 0: falso verde en la forma que el propio
+    comprobador acepta (``_child_id`` lee ``threadId`` del dict).
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "IM-1",
+                celda={
+                    "revisor": "codex luna",
+                    "builder": {
+                        "name": "codex luna",
+                        "threadId": "thread:delegated-task:x",
+                    },
+                },
+            )
+        ],
+    )
+    assert _run(registry, store, "--check-im") == 2
+
+
 def test_check_im_builder_sol_rc2(fixtures):
     registry, store = fixtures
     _write_registry(
@@ -385,6 +411,33 @@ def test_check_pairing_builder_sin_prefijo_no_medido(fixtures):
     _write_registry(
         registry,
         [_session("IM-1", celda={"builder": "codex luna"})],
+    )
+    assert _run(registry, store, "--check-pairing") == 3
+
+
+def test_check_pairing_builder_dict_thread_sin_prefijo_no_medido(fixtures):
+    """c-12 (CO-69 ronda 5): el prefijo exigido se mide tambien con builder dict.
+
+    Sin el guard ``startswith("thread:delegated-task:")`` el hijo se buscaria
+    por ``mcp:...`` y el resultado seria un veredicto (rc 2) en vez de NO
+    MEDIDO (rc 3), que es lo que el contrato pide cuando la celda no declara un
+    hilo delegado medible.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "IM-1",
+                celda={
+                    "revisor": "nan",
+                    "builder": {
+                        "name": "codex luna",
+                        "threadId": "mcp:no-delegado",
+                    },
+                },
+            )
+        ],
     )
     assert _run(registry, store, "--check-pairing") == 3
 

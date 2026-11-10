@@ -225,6 +225,25 @@ def _cell(session):
     return value if isinstance(value, dict) else None
 
 
+def _builder_name(builder):
+    """Devuelve el nombre del builder declarado por la celda.
+
+    Before: ``builder`` es la celda declarada, en la forma string historica o
+        en el dict que el resto del comprobador acepta (``name`` y ``threadId``,
+        ver ``_child_id``).
+    During: si es un dict, toma ``name``; si falta, cae al texto serializado
+        para conservar el comportamiento anterior.
+    After: devuelve el nombre como texto; con dict nunca devuelve su repr
+        cuando hay ``name``, que es lo que hacia imposible compararlo con el
+        revisor (c-02, CO-69 ronda 5).
+    """
+    if isinstance(builder, dict):
+        name = builder.get("name")
+        if name:
+            return str(name)
+    return str(builder)
+
+
 def check_im(sessions, cutoff):
     """Comprueba la celda IM: revisor distinto y builder codex no-sol."""
     measured = [
@@ -237,15 +256,16 @@ def check_im(sessions, cutoff):
     for session in measured:
         cell = _cell(session)
         revisor, builder = (cell or {}).get("revisor"), (cell or {}).get("builder")
+        builder_text = _builder_name(builder) if builder else ""
         if (
             not revisor
             or not builder
-            or str(revisor).casefold() == str(builder).casefold()
+            or str(revisor).casefold() == builder_text.casefold()
         ):
             return RC_VIOLATION
-        builder_text = str(builder).casefold()
-        if "codex" not in builder_text or re.search(
-            r"(?<![a-z0-9])sol(?![a-z0-9])", builder_text
+        lowered = builder_text.casefold()
+        if "codex" not in lowered or re.search(
+            r"(?<![a-z0-9])sol(?![a-z0-9])", lowered
         ):
             return RC_VIOLATION
     return RC_OK

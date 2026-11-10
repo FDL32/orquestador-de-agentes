@@ -3612,8 +3612,26 @@ def test_asiento_asentada_prefijo_con_dos_lentes_rc0(tmp_path, apply):
 
 
 def test_asiento_asentada_coordinadora_sin_lentes_rc0(tmp_path):
+    """El rol NO gobernado no exige lentes aunque la sesion sea post-corte.
+
+    c-06 (CO-69 ronda 5): la version anterior usaba ``session()`` (role
+    ``builder``, ``started`` pre-corte) y pasaba por la exencion de fecha, no
+    por el rol: el mutante ``role_requires_lenses = True`` sobrevivia. Aqui el
+    rol ``orquestadora`` y un ``started`` POSTERIOR al corte aislan la regla de
+    rol; ``--role`` no es campo mutable, asi que el rol del registro es el que
+    manda.
+    """
     registry = tmp_path / "registry.json"
-    write_registry(registry, [session()])
+    write_registry(
+        registry,
+        [
+            {
+                **session(),
+                "role": "orquestadora",
+                "started": "2026-11-11T10:00:00+01:00",
+            }
+        ],
+    )
     result = run_cli(
         registry,
         "asiento",
