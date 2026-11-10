@@ -7,6 +7,7 @@ After: a mismatch raises :class:`ArchiveError`; candidate classification never r
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -97,7 +98,11 @@ def root_files(
 
 
 def append_rows_atomic(
-    path: Path, rows: Iterable[str], header: str | None = None
+    path: Path,
+    rows: Iterable[str],
+    header: str | None = None,
+    *,
+    newline: str | None = "\n",
 ) -> None:
     """Before: ``path`` is a ledger and rows are complete text records.
     During: append through a sibling temporary file and atomic replacement.
@@ -111,7 +116,7 @@ def append_rows_atomic(
     payload = existing + "".join(rows)
     fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline=newline) as handle:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
@@ -153,7 +158,11 @@ def git_tracked_files(project_root: Path) -> set[str]:
 
 def git_dirty_names(project_root: Path) -> set[str]:
     """Before: ``project_root`` is a git repository.
-    During: inspect all tracked and untracked status entries.
+    During: inspect all tracked and untracked status entries with ``-uall``.
+        ``-uall`` is mandatory because plain porcelain collapses an entire
+        untracked directory into one line, leaving the work-in-progress guard
+        blind to its individual files. Parse rename entries on both sides of
+        ``old -> new`` so either path keeps its basename protected.
     After: return dirty basenames, aborting on git failure.
     """
     proc = _git(Path(project_root), "status", "--porcelain", "-uall")
@@ -262,26 +271,37 @@ def write_jsonl_index_atomic(path: Path, rows: Iterable[dict[str, Any]]) -> None
 def reconcile_index(
     archive_root: Path, rows: Iterable[dict[str, Any]], family: str
 ) -> list[str]:
-    """Before: ``rows`` describes files under ``archive_root/family``.
-    During: compare indexed relative names with the actual non-link files.
+    """Before: ``rows`` is the shared index for all archive families.
+    During: filter ARCHIVADO rows by ``family`` and compare canonicalized
+        indexed names with the actual non-link files under that family. The
+        shared index is reconciled *by family*, so another family's rows never
+        contaminate this comparison; paths are resolved and normcased before
+        component-wise containment checks.
     After: return findings in both directions, sorted and prefixed.
     """
-    root = Path(archive_root) / family
+    root = (Path(archive_root) / family).resolve()
+    root_key = Path(os.path.normcase(str(root)))
     indexed: set[str] = set()
     for row in rows:
-        if row.get("status") != "ARCHIVADO":
+        if row.get("status") != "ARCHIVADO" or row.get("family") != family:
             continue
         for key in ("zip", "manifest"):
             value = row.get(key)
             if not value:
                 raise ArchiveError(f"fila ARCHIVADO sin {key}")
             candidate = Path(str(value))
+            if not candidate.is_absolute():
+                candidate = Path(archive_root) / candidate
+            candidate_key = Path(os.path.normcase(str(candidate.resolve())))
             try:
-                indexed.add(candidate.relative_to(root).as_posix())
+                indexed.add(candidate_key.relative_to(root_key).as_posix())
             except ValueError as exc:
                 raise ArchiveError(f"ruta de indice fuera de familia: {value}") from exc
     actual = (
-        {p.relative_to(root).as_posix() for p in walk_files_no_links(root)}
+        {
+            Path(os.path.normcase(str(p.resolve()))).relative_to(root_key).as_posix()
+            for p in walk_files_no_links(root)
+        }
         if root.is_dir()
         else set()
     )
@@ -311,8 +331,14 @@ def _pid_alive(pid: int) -> bool:
             return probe.returncode == 0 and str(pid) in (probe.stdout or "")
     try:
         os.kill(pid, 0)
-    except (ProcessLookupError, OSError, SystemError):
+    except PermissionError:
+        return True
+    except ProcessLookupError:
         return False
+    except OSError as exc:
+        return exc.errno not in (errno.EINVAL, errno.ESRCH)
+    except SystemError:
+        return True
     return True
 
 

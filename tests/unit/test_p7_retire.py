@@ -23,7 +23,7 @@ def _fixture(
     tmp_path: Path, *, commit: bool = False
 ) -> tuple[Path, Path, dict[str, object], str, Path]:
     origin = tmp_path / "origin"
-    origin.mkdir()
+    origin.mkdir(parents=True)
     source = origin / "old.md"
     source.write_text("old bytes", encoding="utf-8")
     _git(origin, "init", "-q")
@@ -60,6 +60,19 @@ def _args(
         digest,
         *extra,
     ]
+
+
+def _args_family(
+    origin: Path,
+    archive: Path,
+    digest: str,
+    approved: Path,
+    family: str,
+    *extra: str,
+) -> list[str]:
+    args = _args(origin, archive, digest, approved, *extra)
+    args[args.index("arranques")] = family
+    return args
 
 
 def test_lista_aprobada(tmp_path: Path) -> None:
@@ -124,7 +137,8 @@ def test_dry_run_por_defecto(tmp_path: Path) -> None:
     archive.mkdir()
     assert p7_retire.main(_args(origin, archive, digest, approved)) == 0
     assert list(archive.rglob("*.zip")) == []
-    assert (origin / "old.md").exists()
+    assert not (archive / "index.jsonl").exists()
+    assert not list(archive.rglob("*.manifest.json"))
 
 
 def test_aplicacion_solo_via_p7(tmp_path: Path) -> None:
@@ -186,7 +200,7 @@ def test_no_junctions(tmp_path: Path) -> None:
         approved.write_text(json.dumps(approved_entry) + "\n", encoding="utf-8")
         good_hash = hashlib.sha256(approved.read_bytes()).hexdigest()
         walked_manifest = p7_common.manifest_of_tree(origin)
-        assert all(not row["rel"].startswith("link.md") for row in walked_manifest)
+        assert all("inside.md" not in row["rel"] for row in walked_manifest)
         archive.mkdir()
         assert (
             p7_retire.main(
@@ -285,7 +299,8 @@ def test_ttl_solo_genera_candidatas(
     assert result == 0
     assert '"rel": "old.md"' in output
     assert origin.joinpath("old.md").read_bytes() == before
-    assert not (archive / "arranques").exists()
+    assert not list(archive.rglob("*.zip"))
+    assert not (archive / "index.jsonl").exists()
     assert p7_common.classify_candidates(
         [entry], now=entry["mtime"] + 86401, ttl_dias=1, min_age_segundos=0
     ) == [entry]
@@ -304,9 +319,11 @@ def test_apply_archive_zip_manifest_and_rehash(tmp_path: Path) -> None:
         p7_common.sha256_file(zip_path)
         == p7_common.load_jsonl_index(archive / "index.jsonl")[0]["zip_sha256"]
     )
-    assert json.loads(manifest_path.read_text(encoding="utf-8"))[0][
-        "sha256"
-    ] == p7_common.sha256_file(origin / "old.md")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert all(set(row) == {"rel", "size", "mtime", "sha256"} for row in manifest)
+    assert all(
+        row["sha256"] == p7_common.sha256_file(origin / row["rel"]) for row in manifest
+    )
 
 
 def test_apply_retire_solo_despues_de_archivado(tmp_path: Path) -> None:
@@ -323,3 +340,100 @@ def test_apply_retire_solo_despues_de_archivado(tmp_path: Path) -> None:
         p7_retire.main(_args(origin, archive, digest, approved, "--apply-retire")) == 0
     )
     assert not (origin / "old.md").exists()
+
+
+def test_reconciliacion_compartida_por_familia_y_precondicion(tmp_path: Path) -> None:
+    origin_a, archive, _, digest_a, approved_a = _fixture(tmp_path / "a")
+    origin_b, _, _, digest_b, approved_b = _fixture(tmp_path / "b")
+    archive.mkdir()
+    assert (
+        p7_retire.main(
+            _args_family(
+                origin_a, archive, digest_a, approved_a, "a", "--apply-archive"
+            )
+        )
+        == 0
+    )
+    assert (
+        p7_retire.main(
+            _args_family(
+                origin_b, archive, digest_b, approved_b, "b", "--apply-archive"
+            )
+        )
+        == 0
+    )
+    rows = p7_common.load_jsonl_index(archive / "index.jsonl")
+    assert {row["family"] for row in rows} == {"a", "b"}
+    assert (
+        p7_retire.main(_args_family(origin_a, archive, digest_a, approved_a, "a")) == 0
+    )
+    assert (
+        p7_retire.main(_args_family(origin_b, archive, digest_b, approved_b, "b")) == 0
+    )
+
+    broken = dict(rows[0])
+    broken["family"] = "b"
+    broken["zip"] = str(archive / "b" / "missing.zip")
+    broken["manifest"] = str(archive / "b" / "missing.manifest.json")
+    p7_common.write_jsonl_index_atomic(archive / "index.jsonl", [*rows, broken])
+    before_zips = sorted((archive / "a").glob("*.zip"))
+    assert (
+        p7_retire.main(
+            _args_family(
+                origin_a, archive, digest_a, approved_a, "a", "--apply-archive"
+            )
+        )
+        != 0
+    )
+    assert sorted((archive / "a").glob("*.zip")) == before_zips
+
+
+@pytest.mark.parametrize("layout", ["archive_inside", "origin_inside", "equal"])
+def test_archive_root_y_origin_no_se_superponen(
+    tmp_path: Path, layout: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    origin, archive, _, digest, approved = _fixture(tmp_path / "fixture")
+    if layout == "archive_inside":
+        archive = origin / "archive"
+        archive.mkdir()
+    elif layout == "origin_inside":
+        archive = tmp_path / "outer"
+        archive.mkdir()
+        origin = archive / "origin"
+        origin.mkdir()
+        source = origin / "old.md"
+        source.write_text("old bytes", encoding="utf-8")
+    else:
+        archive = origin
+    result = p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive"))
+    assert result == 2
+    assert "archive-root" in capsys.readouterr().err
+    assert not (archive / ".p7.lock").exists()
+    assert not (archive / "index.jsonl").exists()
+    assert list(archive.rglob("*.zip")) == []
+
+
+def test_main_respeta_lock_vivo_y_corrupto(tmp_path: Path) -> None:
+    origin, archive, _, digest, approved = _fixture(tmp_path / "live")
+    archive.mkdir()
+    lock = archive / ".p7.lock"
+    lock.write_text(
+        json.dumps({"pid": os.getpid(), "cwd": str(tmp_path)}), encoding="utf-8"
+    )
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) != 0
+    )
+    assert lock.read_text(encoding="utf-8")
+    assert not list(archive.rglob("*.zip"))
+    assert not (archive / "index.jsonl").exists()
+
+    origin, archive, _, digest, approved = _fixture(tmp_path / "corrupt")
+    archive.mkdir()
+    lock = archive / ".p7.lock"
+    lock.write_bytes(b"not json")
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) != 0
+    )
+    assert lock.read_bytes() == b"not json"
+    assert not list(archive.rglob("*.zip"))
+    assert not (archive / "index.jsonl").exists()

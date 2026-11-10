@@ -36,6 +36,33 @@ def _mounted(root: Path) -> bool:
         return False
 
 
+def _canonical_path(path: Path) -> Path:
+    """Before: ``path`` identifies a configured filesystem tree.
+    During: resolve it without requiring existence and normalize its case.
+    After: return a stable component-comparable path for containment checks.
+    """
+    return Path(os.path.normcase(str(Path(path).resolve(strict=False))))
+
+
+def _paths_overlap(left: Path, right: Path) -> bool:
+    """Before: ``left`` and ``right`` are configured roots.
+    During: compare canonical path components, never string prefixes.
+    After: return True when either root contains the other, including equality.
+    """
+    left_key = _canonical_path(left)
+    right_key = _canonical_path(right)
+    try:
+        left_key.relative_to(right_key)
+        return True
+    except ValueError:
+        pass
+    try:
+        right_key.relative_to(left_key)
+        return True
+    except ValueError:
+        return False
+
+
 def _entry_name(entry: dict[str, object]) -> str:
     return str(entry.get("rel", entry.get("path", entry.get("name", ""))))
 
@@ -95,6 +122,35 @@ def _check_index(archive_root: Path, family: str, index: Path) -> None:
         raise p7_common.ArchiveError("indice P7 inconsistente: " + "; ".join(findings))
 
 
+def _check_shared_index(archive_root: Path, family: str, index: Path) -> None:
+    """Before: ``index`` is the shared ledger and ``family`` is selected.
+    During: reconcile the selected family and every family already represented
+        in the shared ledger, preserving family-local path comparisons while
+        refusing to proceed over any pre-existing broken family.
+    After: return only when the shared archive is consistent for all known
+        families.
+    """
+    rows = p7_common.load_jsonl_index(index)
+    families = {family}
+    families.update(
+        str(row["family"])
+        for row in rows
+        if row.get("status") == "ARCHIVADO" and row.get("family")
+    )
+    for candidate in sorted(families):
+        _check_index(archive_root, candidate, index)
+
+
+def _validate_manifest_shape(manifest: list[dict[str, object]]) -> None:
+    """Before: ``manifest`` contains decoded manifest rows.
+    During: require the exact schema on every row, not only the first row.
+    After: return only for a uniformly shaped manifest.
+    """
+    expected = {"rel", "size", "mtime", "sha256"}
+    if any(set(row) != expected for row in manifest):
+        raise p7_common.ArchiveError("manifiesto con claves inesperadas")
+
+
 def _apply_archive(
     args: argparse.Namespace,
     entries: list[dict[str, object]],
@@ -121,6 +177,7 @@ def _apply_archive(
     manifest = [
         row for row in manifest if row["rel"] in {_entry_name(e) for e in entries}
     ]
+    _validate_manifest_shape(manifest)
     with zipfile.ZipFile(zip_path) as archive:
         for row in manifest:
             with archive.open(row["rel"]) as member:
@@ -179,6 +236,7 @@ def _apply_retire(
         if archive.testzip() is not None:
             raise p7_common.ArchiveError("zip archivado corrupto")
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    _validate_manifest_shape(manifest)
     with zipfile.ZipFile(zip_path) as archive:
         for row in manifest:
             with archive.open(row["rel"]) as member:
@@ -208,7 +266,7 @@ def _apply_retire(
     return 0
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901
     """Before: parse an explicit archive root and approved list.
     During: hold an external lock and execute the selected P7 transition.
     After: return 0, 1, 2, or 4 according to the fail-closed CLI contract.
@@ -241,6 +299,12 @@ def main(argv: list[str] | None = None) -> int:
         or (args.apply_retire and args.dry_run)
     ):
         return 2
+    if _paths_overlap(args.archive_root, args.origin):
+        print(
+            "ERROR: archive-root y origin deben ser arboles disjuntos",
+            file=sys.stderr,
+        )
+        return 2
     if not _mounted(args.archive_root):
         return 4
     if not args.origin.is_dir():
@@ -251,13 +315,14 @@ def main(argv: list[str] | None = None) -> int:
         index, md, lock = _index_paths(args.archive_root, args.family)
         p7_common.acquire_lock(lock, pid=os.getpid(), cwd=str(Path.cwd()))
         try:
+            _check_shared_index(args.archive_root, args.family, index)
             if args.apply_archive:
                 rc = _apply_archive(args, entries, args.origin, index, md)
             elif args.apply_retire:
                 rc = _apply_retire(args, entries, args.origin, index, md)
             else:
-                _check_index(args.archive_root, args.family, index)
                 rc = 0
+            _check_shared_index(args.archive_root, args.family, index)
             if args.json:
                 print(
                     json.dumps(
@@ -280,7 +345,8 @@ def main(argv: list[str] | None = None) -> int:
     except (p7_common.ArchiveError, KeyError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
-    except (OSError, ValueError, zipfile.BadZipFile, json.JSONDecodeError):
+    except (OSError, ValueError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
 

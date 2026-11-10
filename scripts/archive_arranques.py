@@ -240,7 +240,7 @@ def classify(
     return cited, skipped, archivables
 
 
-append_index_rows = partial(append_rows_atomic, header=_INDEX_HEADER)
+append_index_rows = partial(append_rows_atomic, header=_INDEX_HEADER, newline=None)
 
 
 def archive(

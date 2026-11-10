@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
 import subprocess
 import sys
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -26,7 +28,7 @@ def test_manifiesto_arbol(tmp_path: Path) -> None:
     (nested / "b.txt").write_text("beta", encoding="utf-8")
     manifest = p7_common.manifest_of_tree(tmp_path)
     assert [row["rel"] for row in manifest] == ["a.txt", "nested/b.txt"]
-    assert set(manifest[0]) == {"rel", "size", "mtime", "sha256"}
+    assert all(set(row) == {"rel", "size", "mtime", "sha256"} for row in manifest)
     assert manifest[0]["size"] == (tmp_path / "a.txt").stat().st_size
     assert manifest[0]["mtime"] == (tmp_path / "a.txt").stat().st_mtime
     assert manifest[0]["sha256"] == p7_common.sha256_file(tmp_path / "a.txt")
@@ -91,6 +93,7 @@ def test_cuadre_bidireccional(tmp_path: Path) -> None:
     rows = [
         {
             "status": "ARCHIVADO",
+            "family": family,
             "zip": str(root / "ghost.zip"),
             "manifest": str(root / "ghost.manifest.json"),
         }
@@ -102,6 +105,28 @@ def test_cuadre_bidireccional(tmp_path: Path) -> None:
         "fichero_sin_fila: real.manifest.json",
         "fichero_sin_fila: real.zip",
     ]
+
+
+def test_cuadre_normaliza_rutas_y_filtra_familia(tmp_path: Path) -> None:
+    family_root = tmp_path / "A"
+    family_root.mkdir()
+    (family_root / "real.zip").write_text("real", encoding="utf-8")
+    (family_root / "real.manifest.json").write_text("manifest", encoding="utf-8")
+    rows = [
+        {
+            "status": "ARCHIVADO",
+            "family": "b",
+            "zip": str(tmp_path / "b" / "other.zip"),
+            "manifest": str(tmp_path / "b" / "other.manifest.json"),
+        },
+        {
+            "status": "ARCHIVADO",
+            "family": "A",
+            "zip": str(tmp_path / "A" / ".." / "A" / "real.zip"),
+            "manifest": "A/real.manifest.json",
+        },
+    ]
+    assert p7_common.reconcile_index(tmp_path, rows, "A") == []
 
 
 def test_lista_aprobada_hash_y_entrada(tmp_path: Path) -> None:
@@ -170,3 +195,73 @@ def test_archive_script_imports_from_neutral_cwd(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "denominador: 1" in result.stdout
+
+
+def test_archive_arranques_reusa_p7_common_sin_retirada_duplicada() -> None:
+    script = Path(__file__).resolve().parents[2] / "scripts" / "archive_arranques.py"
+    tree = ast.parse(script.read_text(encoding="utf-8"))
+    shared = {
+        "sha256_file",
+        "root_files",
+        "append_rows_atomic",
+        "git_dirty_names",
+        "git_tracked_files",
+        "manifest_of_tree",
+        "verify_manifest_entries",
+        "is_reparse_or_link",
+        "walk_files_no_links",
+        "load_jsonl_index",
+        "write_jsonl_index_atomic",
+        "reconcile_index",
+        "acquire_lock",
+        "release_lock",
+        "lock_is_held",
+        "load_approved_list",
+        "verify_list_entries",
+        "assert_no_link_ancestors",
+        "classify_candidates",
+    }
+    assert any(
+        isinstance(node, ast.ImportFrom) and node.module == "scripts.flight.p7_common"
+        for node in tree.body
+    )
+    defined = {
+        node.name
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    assert not defined & shared
+    assert not any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and __import__("re").match(r"^(retire|apply_|remove_|purge_)", node.name)
+        for node in tree.body
+    )
+
+
+def test_archive_arranques_index_conserva_eol_de_plataforma(tmp_path: Path) -> None:
+    archive_arranques = import_module("scripts.archive_arranques")
+    project = tmp_path / "project"
+    arranques = project / "orchestrator_pipeline" / "arranques"
+    arranques.mkdir(parents=True)
+    (arranques / "old.md").write_text("old\n", encoding="utf-8")
+    collaboration = project / ".agent" / "collaboration"
+    collaboration.mkdir(parents=True)
+    (collaboration / "backlog.md").write_text("", encoding="utf-8")
+    subprocess.run(["git", "-C", str(project), "init", "-q"], check=True)
+    subprocess.run(
+        ["git", "-C", str(project), "config", "user.email", "test@example.com"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(project), "config", "user.name", "test"], check=True
+    )
+    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(project), "commit", "-q", "-m", "fixture"], check=True
+    )
+    archive_arranques.archive(project, min_age_seconds=0)
+    raw = (arranques / "_archive" / "INDEX.md").read_bytes()
+    if os.linesep == "\r\n":
+        assert raw.count(b"\r\n") == raw.count(b"\n")
+    else:
+        assert b"\r\n" not in raw
