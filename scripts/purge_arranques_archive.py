@@ -31,8 +31,9 @@ Docstring-as-spec:
   After: devuelve un reporte con el denominador (filas candidatas por edad), las
       re-citadas (protegidas), las propuestas y las ya purgadas antes (idempotente:
       una fila ya marcada PURGADO no se vuelve a tocar). No purga ni reescribe el
-      INDEX. Exit 0 siempre que la medicion se complete (0 candidatos es un
-      resultado valido, no un fallo).
+      INDEX. Exit 0 siempre que la medicion se complete: para ESTE proponente
+      0 candidatos (incluido el caso sin INDEX / denominador 0) es un resultado
+      valido y devuelve rc 0; no aplica cambios ni borra nada.
 """
 
 from __future__ import annotations

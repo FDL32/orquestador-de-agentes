@@ -52,7 +52,9 @@ Docstring-as-spec:
       moveria evidencia). Clasifica en CITADO / SKIPPED (sucio o reciente) / ARCHIVABLE
       y construye una propuesta P7 con ruta relativa y hash actual.
   After: devuelve un reporte con el DENOMINADOR, las listas y la propuesta.
-      `main()` devuelve 0 con exito y 1 si falla el censo o la validacion.
+      `main()` devuelve 0 cuando hay 0 archivables con denominador > 0 ("nada
+      que proponer"); 1 si el denominador es 0 (VERDE VACUO) o si falla el censo
+      o la validacion; 2 si falta el directorio arranques/.
 """
 
 from __future__ import annotations
@@ -322,6 +324,14 @@ def _print_report(report: ArchiveReport, *, as_json: bool) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """CLI del proponente de archivado P7 (WOT-2026-161n).
+
+    Before: recibe --project-root de un arbol git hermetico; flags --dry-run/--json.
+    During: clasifica arranques/, emite la propuesta P7 e imprime el reporte.
+    After: rc 0 si hay 0 archivables con denominador > 0 ("nada que proponer");
+        rc 1 si denominador == 0 (VERDE VACUO) o si falla el censo/validacion;
+        rc 2 si falta el directorio orchestrator_pipeline/arranques/.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Clasifica arranques/ por CITACION (DEC-067L-001) y propone retirada "
