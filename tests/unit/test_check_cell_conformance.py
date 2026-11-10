@@ -626,6 +626,13 @@ def test_c09_canon_pilares_declara_cuatro_filas():
     ]
     assert len(lines) == 4
     assert all("check_cell_conformance" in line for line in lines)
+    # CO-69 (WOT-2026-161l): las cuatro filas conservan las SIETE celdas de la
+    # tabla y ninguna vacia; el mutante que borra una celda (p.ej. la columna
+    # `fuente larga`) hace caer esta asercion.
+    for line in lines:
+        cells = line.strip().split("|")[1:-1]
+        assert len(cells) == 7, f"fila con {len(cells)} celdas: {line[:24]}"
+        assert all(cell.strip() for cell in cells), f"celda vacia en: {line[:24]}"
 
 
 def test_contract_error_is_explicit_registry_error():
