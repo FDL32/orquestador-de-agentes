@@ -52,6 +52,14 @@ RECEIPTS_REL = Path(".agent") / "runtime" / "integration_receipts"
 _WRAPPER_AUTHORITY = "repo_motor"
 
 
+class FamilyCheckError(ValueError):
+    """Before: se recibe una ficha, canon o registro de familia declarativo.
+
+    During: valida que el dato tenga la forma necesaria para medir c-13.
+    After: el dato es interpretable o se lanza este error fail-closed.
+    """
+
+
 def receipt_path(project_root: Path, tip: str) -> Path:
     """Before: `tip` es un SHA40. During: compone la ruta. After: `<root>/<RECEIPTS_REL>/<tip>.json`."""
     return project_root / RECEIPTS_REL / f"{tip}.json"
@@ -308,6 +316,144 @@ def integrate(
     )
 
 
+def parse_ficha_models(text: str) -> dict[str, tuple[str, str]]:
+    """Extrae autor y revisor desde las claves planas de una ficha.
+
+    Before: `text` contiene una ficha con `autor_modelo:` y
+        `revisor_modelo:` en formato `backend|model`.
+    During: busca claves al inicio de linea sin aceptar valores incompletos ni
+        partes adicionales.
+    After: devuelve `{"autor": (backend, model), "revisor": (...)}` o lanza
+        `FamilyCheckError` nombrando la clave defectuosa.
+    """
+    found: dict[str, tuple[str, str]] = {}
+    keys = {"autor_modelo": "autor", "revisor_modelo": "revisor"}
+    for line in text.splitlines():
+        key, separator, value = line.partition(":")
+        normalized_key = key.strip().casefold()
+        if normalized_key not in keys:
+            continue
+        parts = [part.strip() for part in value.split("|")]
+        if not separator or len(parts) != 2 or any(not part for part in parts):
+            raise FamilyCheckError(f"clave {normalized_key} mal formada")
+        found[keys[normalized_key]] = (parts[0], parts[1])
+    for raw_key, result_key in keys.items():
+        if result_key not in found:
+            raise FamilyCheckError(f"falta la clave {raw_key}")
+    return found
+
+
+def canon_p33_status(text: str) -> str | None:
+    """Obtiene el estado de la fila P33 del canon de pilares.
+
+    Before: `text` es el Markdown del canon que puede contener una tabla P33.
+    During: divide cada fila en celdas y acepta solo la fila cuya primera celda
+        es exactamente `P33`.
+    After: devuelve la tercera celda limpia o `None` si la fila no existe.
+    """
+    for line in text.splitlines():
+        cells = [cell.strip() for cell in line.split("|")]
+        if cells and cells[0] == "":
+            cells = cells[1:]
+        if cells and cells[-1] == "":
+            cells = cells[:-1]
+        if len(cells) >= 3 and cells[0] == "P33":
+            return cells[2]
+    return None
+
+
+def family_violations(
+    author_family: str, reviewer_family: str, lenses: list[dict]
+) -> list[str]:
+    """Nombra cada lente contada que comparte familia con autor o revisor.
+
+    Before: `author_family` y `reviewer_family` son familias resueltas y cada
+        lente tiene backend, model, backend_key y family.
+    During: compara por igualdad y conserva una violacion independiente por
+        cada coincidencia, incluso si coincide con ambos.
+    After: devuelve las lineas de fallo en orden de entrada; no tiene I/O.
+    """
+    violations: list[str] = []
+    for lens in lenses:
+        for role, family in (("autor", author_family), ("revisor", reviewer_family)):
+            if lens["family"] == family:
+                violations.append(
+                    f"lente {lens['backend_key']} {lens['backend']}/{lens['model']} "
+                    f"(familia {lens['family']}) comparte familia con el {role} "
+                    f"(familia {family})"
+                )
+    return violations
+
+
+def check_family(
+    ticket: str,
+    candidate: str,
+    project_root: Path | None,
+    motor_root: Path,
+) -> tuple[int, list[str]]:
+    """Comprueba c-13 para las lentes contadas del commit candidato.
+
+    Before: `project_root` contiene la ficha y los artefactos del bucle, el
+        canon P33 del motor esta disponible y el motor esta limpio.
+    During: valida preflight, resuelve el candidato, lee ficha/canon, cuenta
+        rondas sustantivas y resuelve cada familia desde MODEL_FAMILY_MAP.
+    After: devuelve rc 0 conforme, rc 1 por familia compartida o rc 2 si no
+        puede medirse; nunca fusiona ni escribe.
+    """
+    bad = _preflight(project_root, motor_root, False)
+    if bad is not None or project_root is None:
+        return 2, [
+            f"NO VERIFICABLE familia {ticket}: {bad[1] if bad else 'project-root ausente'}"
+        ]
+    rc, candidate_sha = _git(
+        motor_root, "rev-parse", "--verify", f"{candidate}^{{commit}}"
+    )
+    if rc != 0 or not candidate_sha:
+        return 2, [f"NO VERIFICABLE familia {ticket}: candidato no resoluble"]
+    ficha_path = project_root / ".agent" / "collaboration" / f"FICHA_{ticket}.md"
+    canon_path = motor_root / ".agent" / "rules" / "common" / "vuelo_pilares.md"
+    from scripts.check_loop_execution import (
+        FamilyResolutionError,
+        counted_lenses_for_commit,
+        model_family,
+    )
+
+    try:
+        declarations = parse_ficha_models(ficha_path.read_text(encoding="utf-8"))
+        status = canon_p33_status(canon_path.read_text(encoding="utf-8"))
+        if status != "RATIFICADA":
+            reason = (
+                "P33 ausente" if status is None else f"P33 no RATIFICADA ({status})"
+            )
+            return 2, [f"NO VERIFICABLE familia {ticket}: {reason}"]
+        from scripts.ensemble_dispatch import MODEL_FAMILY_MAP
+
+        records = counted_lenses_for_commit(project_root, candidate_sha)
+        if not records:
+            return 2, [f"NO VERIFICABLE familia {ticket}: cero lentes contadas"]
+        author_family = model_family(*declarations["autor"], MODEL_FAMILY_MAP)
+        reviewer_family = model_family(*declarations["revisor"], MODEL_FAMILY_MAP)
+        lenses: list[dict] = []
+        for record in records:
+            family = model_family(record["backend"], record["model"], MODEL_FAMILY_MAP)
+            lenses.append({**record, "family": family})
+    except (
+        OSError,
+        FamilyCheckError,
+        FamilyResolutionError,
+        KeyError,
+        ValueError,
+    ) as exc:
+        return 2, [f"NO VERIFICABLE familia {ticket}: {exc}"]
+    violations = family_violations(author_family, reviewer_family, lenses)
+    if violations:
+        return 1, [
+            f"FAIL familia {ticket}: {len(violations)} violacion(es)",
+            *violations,
+        ]
+    return 0, [f"OK familia {ticket} {len(lenses)} lentes contadas"]
+
+
 def _cwd_toplevel() -> Path:
     """El toplevel git del cwd; si git no contesta, el propio cwd (el preflight lo rechaza)."""
     rc, top = _git(Path.cwd(), "rev-parse", "--show-toplevel")
@@ -334,13 +480,23 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--attest", action="store_true", help="solo audita un tip ya integrado"
     )
+    ap.add_argument(
+        "--check-family",
+        action="store_true",
+        help="comprueba c-13 sin fusionar ni escribir recibo",
+    )
     args = ap.parse_args(argv)
     project_root = Path(args.project_root).resolve() if args.project_root else None
     motor_root = Path(args.motor_root).resolve() if args.motor_root else _cwd_toplevel()
     try:
-        rc, lines = integrate(
-            args.ticket, args.candidate, project_root, motor_root, args.attest
-        )
+        if args.check_family:
+            rc, lines = check_family(
+                args.ticket, args.candidate, project_root, motor_root
+            )
+        else:
+            rc, lines = integrate(
+                args.ticket, args.candidate, project_root, motor_root, args.attest
+            )
     except Exception as exc:
         rc, lines = 2, [f"NO VERIFICABLE defecto del wrapper: {exc!r}"]
     print("\n".join(lines))

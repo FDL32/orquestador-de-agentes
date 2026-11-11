@@ -29,6 +29,62 @@ import ensemble_dispatch as ed  # noqa: E402
 import remap_evidence_shas as remap  # noqa: E402
 
 
+def test_model_family_prefers_exact_pair_and_normalizes_transport_prefix():
+    assert cle.model_family("codex", "gpt-5.6-luna") == "codex"
+    assert cle.model_family("opencode", "nan/deepseek-v4-flash") == "deepseek"
+
+
+def test_model_family_unknown_and_ambiguous_are_fail_closed():
+    with pytest.raises(cle.FamilyResolutionError):
+        cle.model_family("nano", "desconocido")
+    with pytest.raises(cle.FamilyResolutionError):
+        cle.model_family(
+            "unknown",
+            "transport/shared-model",
+            {
+                ("a", "one/shared-model"): "alpha",
+                ("b", "two/shared-model"): "beta",
+            },
+        )
+
+
+def test_counted_lenses_for_commit_uses_real_scorecard_and_emitted_nonce(tmp_path):
+    ensemble = tmp_path / ".agent" / "runtime" / "ensemble"
+    ensemble.mkdir(parents=True)
+    rows = [
+        {
+            **_ronda("BA10"),
+            "backend": "nan_api",
+            "model": "deepseek-v4-flash",
+            "output_chars": 12,
+            "evidencia": "ok",
+        },
+        {
+            **_ronda("BA10", nonce="MISSING"),
+            "backend": "nan_api",
+            "model": "deepseek-v4-flash",
+            "output_chars": 12,
+            "evidencia": "ok",
+        },
+        {
+            **_ronda("BA11"),
+            "backend": "kilo",
+            "model": "nan/gemma4",
+            "output_chars": 0,
+            "evidencia": "",
+        },
+    ]
+    (ensemble / "scorecard.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    (ensemble / "emitted_nonces.jsonl").write_text(
+        json.dumps(_emitted()) + "\n", encoding="utf-8"
+    )
+    assert cle.counted_lenses_for_commit(tmp_path, "abc") == [
+        {"backend": "nan_api", "model": "deepseek-v4-flash", "backend_key": "BA10"}
+    ]
+
+
 def _emitted(nonce="N1", commit="abc", loop="L700", ts="2026-07-24T10:00:00+00:00"):
     return {
         "ts": ts,

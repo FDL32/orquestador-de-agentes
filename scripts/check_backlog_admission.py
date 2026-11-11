@@ -152,6 +152,115 @@ class MeasurementError(RuntimeError):
     """Fallo de medicion (git/IO): rc=2, nunca un veredicto."""
 
 
+def parse_ficha_lenses(text: str) -> dict:
+    """Extrae el triador y los veredictos de lentes de una ficha.
+
+    Before: `text` contiene `triador_modelo: backend|model` y cero o mas
+        lineas `lente_N: backend|model|veredicto`.
+    During: valida exactamente dos partes para el triador y tres para cada
+        lente, sin convertir valores no textuales ni aceptar partes vacias.
+    After: devuelve `triador` y la lista ordenada de lentes, o lanza
+        `MeasurementError` para una declaracion no medible.
+    """
+    triador: tuple[str, str] | None = None
+    lenses: list[tuple[int, str, str, str]] = []
+    seen_keys: set[str] = set()
+    seen_numbers: dict[int, tuple[str, str]] = {}
+    for line in text.splitlines():
+        key, separator, raw_value = line.partition(":")
+        normalized_key = key.strip().casefold()
+        if normalized_key == "triador_modelo":
+            parts = [part.strip() for part in raw_value.split("|")]
+            if not separator or len(parts) != 2 or any(not part for part in parts):
+                raise MeasurementError("triador_modelo mal formado")
+            triador = (parts[0], parts[1])
+            continue
+        match = re.fullmatch(r"lente_(\d+)", normalized_key)
+        if match is None:
+            continue
+        parts = [part.strip() for part in raw_value.split("|")]
+        if not separator or len(parts) != 3 or any(not part for part in parts):
+            raise MeasurementError(f"{normalized_key} mal formada")
+        number = int(match.group(1))
+        identity = (parts[0].casefold(), parts[1].casefold())
+        if number < 1 or normalized_key in seen_keys:
+            raise MeasurementError(f"{normalized_key} mal formada")
+        previous = seen_numbers.get(number)
+        if previous is not None and previous != identity:
+            raise MeasurementError(f"{normalized_key} mal formada")
+        seen_keys.add(normalized_key)
+        seen_numbers[number] = identity
+        lenses.append((number, parts[0], parts[1], parts[2]))
+    if triador is None:
+        raise MeasurementError("falta triador_modelo")
+    lenses.sort(key=lambda item: item[0])
+    return {
+        "triador": triador,
+        "lentes": [(backend, model, verdict) for _, backend, model, verdict in lenses],
+    }
+
+
+def check_tr_lenses(ficha_text: str) -> tuple[int, list[str]]:
+    """Comprueba c-14: dos lentes registradas fuera de la familia del triador.
+
+    Before: `ficha_text` contiene las declaraciones planas de la ficha del TR.
+    During: parsea las declaraciones, resuelve familias mediante el mapa
+        canonico y compara cada veredicto registrado con el triador.
+    After: devuelve rc 0 conforme, rc 1 por insuficiencia/colision familiar o
+        rc 2 si la medicion no es posible; no escribe nada.
+    """
+    parsed = parse_ficha_lenses(ficha_text)
+    lenses = parsed["lentes"]
+    if not lenses:
+        return 2, ["MEDICION_FALLIDA: ficha sin veredictos"]
+    unique_lenses = {
+        (backend.casefold(), model.casefold()) for backend, model, _verdict in lenses
+    }
+    from scripts.check_loop_execution import FamilyResolutionError, model_family
+
+    try:
+        triador_family = model_family(*parsed["triador"])
+        resolved = [(*lens, model_family(lens[0], lens[1])) for lens in lenses]
+    except FamilyResolutionError as exc:
+        return 2, [f"MEDICION_FALLIDA: {exc}"]
+    violations = [
+        f"lente {backend}/{model} (familia {family}) comparte familia con el triador "
+        f"(familia {triador_family})"
+        for backend, model, _verdict, family in resolved
+        if family == triador_family
+    ]
+    if len(unique_lenses) < 2:
+        return 1, [
+            "VEREDICTO: LENTES_TR_NO_CONFORME",
+            "una sola lente declarada dos veces; se requieren dos lentes distintas",
+        ]
+    if violations:
+        return 1, ["VEREDICTO: LENTES_TR_NO_CONFORME", *violations]
+    return 0, [
+        "VEREDICTO: LENTES_TR_CONFORME",
+        f"veredictos registrados: {len(lenses)}; familia del triador: {triador_family}",
+    ]
+
+
+def _run_tr_lenses_cli(parser: argparse.ArgumentParser, ficha: Path | None) -> int:
+    """Ejecuta el modo CLI de c-14 y conserva su contrato de salida.
+
+    Before: `ficha` es la ruta pasada con `--ficha`, posiblemente ausente.
+    During: valida la ruta, lee UTF-8 y delega en `check_tr_lenses`.
+    After: imprime el veredicto y devuelve rc 0/1/2; `parser.error` devuelve
+        rc 2 cuando falta la ruta.
+    """
+    if ficha is None:
+        parser.error("--check-tr-lenses exige --ficha <path>")
+    try:
+        code, lines = check_tr_lenses(ficha.read_text(encoding="utf-8"))
+    except (OSError, MeasurementError) as exc:
+        print(f"MEDICION_FALLIDA: {exc}")
+        return 2
+    print("\n".join(lines))
+    return code
+
+
 def git(repo: Path, *args: str) -> str:
     """Ejecuta git en `repo` y devuelve stdout; MeasurementError si falla."""
 
@@ -1504,8 +1613,22 @@ def main(argv: list[str] | None = None) -> int:
         help="SHA de corte grandfather: las altas anteriores a este SHA "
         "se degradan a WARN_GRANDFATHERED (nunca ERROR).",
     )
+    parser.add_argument(
+        "--check-tr-lenses",
+        action="store_true",
+        help="comprueba c-14 sobre la ficha de admision de un TR",
+    )
+    parser.add_argument(
+        "--ficha",
+        type=Path,
+        default=None,
+        help="ficha a medir con --check-tr-lenses",
+    )
     parser.add_argument("--json", action="store_true", help="Reporte JSON a stdout")
     args = parser.parse_args(argv)
+
+    if args.check_tr_lenses:
+        return _run_tr_lenses_cli(parser, args.ficha)
 
     repo = (args.git_root or Path.cwd()).resolve()
     surfaces = [args.backlog_file] + (args.archive_file or list(DEFAULT_ARCHIVES))

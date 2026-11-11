@@ -131,6 +131,130 @@ def _run(w: World, *extra: str, cwd: Path | None = None):
     )
 
 
+def _write_family_evidence(
+    destino: Path, sha: str, lenses: list[tuple[str, str]]
+) -> None:
+    ensemble = destino / ".agent" / "runtime" / "ensemble"
+    ensemble.mkdir(parents=True, exist_ok=True)
+    rows = [
+        {
+            "event": "ronda",
+            "commit_sha": sha,
+            "backend_key": f"BA{index:02d}",
+            "backend": backend,
+            "model": model,
+            "challenge_nonce": "N-FAMILY",
+            "ts": _TS_ROUND,
+            "output_chars": 100,
+            "evidencia": "veredicto",
+        }
+        for index, (backend, model) in enumerate(lenses, 3)
+    ]
+    (ensemble / "scorecard.jsonl").write_text(
+        "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
+    )
+    (ensemble / "emitted_nonces.jsonl").write_text(
+        json.dumps(
+            {
+                "ts": _TS_EMIT,
+                "issued_before_ts": _TS_EMIT,
+                "commit_sha": sha,
+                "loop_id": "L-FAMILY",
+                "challenge_nonce": "N-FAMILY",
+                "issuer_backend_key": "BA01",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _family_world(tmp_path: Path, lenses: list[tuple[str, str]]) -> World:
+    w = _world(tmp_path, evidence=False)
+    canon = (
+        "| Pilar | Regla | Estado |\n|---|---|---|\n| P33 | familias | RATIFICADA |\n"
+    )
+    _commit(w.motor, ".agent/rules/common/vuelo_pilares.md", canon, "canon P33")
+    (w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md").write_text(
+        "autor_modelo: codex|gpt-5.6-luna\nrevisor_modelo: claude|sonnet\n",
+        encoding="utf-8",
+    )
+    _write_family_evidence(w.destino, w.tip, lenses)
+    return w
+
+
+def test_check_family_cli_accepts_distinct_families_and_rejects_author_mutant(
+    tmp_path, capsys
+):
+    w = _family_world(
+        tmp_path,
+        [("nan_api", "deepseek-v4-flash"), ("kilo", "nan/glm5.3-flash")],
+    )
+    rc = it.main(
+        [
+            "--ticket",
+            TICKET,
+            "--candidate",
+            "candidate",
+            "--project-root",
+            str(w.destino),
+            "--motor-root",
+            str(w.motor),
+            "--check-family",
+        ]
+    )
+    assert rc == 0
+    assert capsys.readouterr().out.startswith(f"OK familia {TICKET}")
+
+    _write_family_evidence(
+        w.destino, w.tip, [("codex", "gpt-5.6-luna"), ("kilo", "nan/glm5.3-flash")]
+    )
+    rc = it.main(
+        [
+            "--ticket",
+            TICKET,
+            "--candidate",
+            "candidate",
+            "--project-root",
+            str(w.destino),
+            "--motor-root",
+            str(w.motor),
+            "--check-family",
+        ]
+    )
+    assert rc == 1
+    assert "autor" in capsys.readouterr().out
+
+
+def test_family_contract_parser_and_canon_boundaries():
+    with pytest.raises(it.FamilyCheckError):
+        it.parse_ficha_models("autor_modelo: codex|gpt-5.6-luna\n")
+    with pytest.raises(it.FamilyCheckError):
+        it.parse_ficha_models("autor_modelo: codex\nrevisor_modelo: claude|sonnet\n")
+    assert it.canon_p33_status("| P33 | regla | NO RATIFICADA |\n") == "NO RATIFICADA"
+    assert it.canon_p33_status("| P32 | regla | RATIFICADA |\n") is None
+
+
+def test_check_family_reviewer_and_canon_mutants_are_not_green(tmp_path):
+    w = _family_world(
+        tmp_path,
+        [("anthropic_api", "claude-sonnet-5-5"), ("kilo", "nan/glm5.3-flash")],
+    )
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 1
+    assert any("revisor" in line for line in lines)
+
+    _commit(
+        w.motor,
+        ".agent/rules/common/vuelo_pilares.md",
+        "| Pilar | Regla | Estado |\n|---|---|---|\n| P33 | familias | NO RATIFICADA |\n",
+        "canon P33 no ratificado",
+    )
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 2
+    assert "P33 no RATIFICADA" in lines[0]
+
+
 # integrar - positivo
 def test_integrate_ff_merges_the_audited_tip_and_writes_the_receipt(tmp_path):
     w = _world(tmp_path)

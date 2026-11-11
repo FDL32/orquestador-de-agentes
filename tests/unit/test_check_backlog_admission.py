@@ -31,6 +31,88 @@ from scripts import check_backlog_admission as cba
 from scripts.prepush_check import run_backlog_admission_check
 
 
+def test_check_tr_lenses_requires_two_families_distinct_from_triador():
+    ficha = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/glm5.3-flash|APPROVE\n"
+    )
+    rc, lines = cba.check_tr_lenses(ficha)
+    assert rc == 0
+    assert lines[0] == "VEREDICTO: LENTES_TR_CONFORME"
+
+
+def test_check_tr_lenses_mutants_and_boundaries_fail_closed():
+    same_family = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/gemma4|APPROVE\n"
+    )
+    assert cba.check_tr_lenses(same_family)[0] == 1
+    assert cba.check_tr_lenses("triador_modelo: kilo|nan/gemma4\n")[0] == 2
+    assert (
+        cba.check_tr_lenses(
+            "triador_modelo: kilo|nan/gemma4\n"
+            "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        )[0]
+        == 1
+    )
+    with pytest.raises(cba.MeasurementError):
+        cba.parse_ficha_lenses(
+            "triador_modelo: kilo|nan/gemma4\nlente_1: kilo|APPROVE\n"
+        )
+    with pytest.raises(cba.MeasurementError):
+        cba.parse_ficha_lenses("lente_1: kilo|nan/gemma4|APPROVE\n")
+
+
+def test_check_tr_lenses_deduplicates_same_declared_lens():
+    same_pair = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: nan_api|deepseek-v4-flash|APPROVE\n"
+    )
+    assert cba.check_tr_lenses(same_pair)[0] == 1
+
+    padded_index = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_01: nan_api|deepseek-v4-flash|APPROVE\n"
+    )
+    assert cba.check_tr_lenses(padded_index)[0] == 1
+
+    with pytest.raises(cba.MeasurementError):
+        cba.parse_ficha_lenses(
+            "triador_modelo: kilo|nan/gemma4\n"
+            "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+            "lente_1: kilo|nan/glm5.3-flash|APPROVE\n"
+        )
+
+
+def test_check_tr_lenses_cli_is_wired(tmp_path, capsys):
+    ficha = tmp_path / "FICHA_X.md"
+    ficha.write_text(
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/glm5.3-flash|APPROVE\n",
+        encoding="utf-8",
+    )
+    assert cba.main(["--check-tr-lenses", "--ficha", str(ficha)]) == 0
+    assert capsys.readouterr().out.splitlines()[0] == "VEREDICTO: LENTES_TR_CONFORME"
+
+    ficha.write_text(
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/gemma4|APPROVE\n",
+        encoding="utf-8",
+    )
+    assert cba.main(["--check-tr-lenses", "--ficha", str(ficha)]) == 1
+    assert capsys.readouterr().out.splitlines()[0] == "VEREDICTO: LENTES_TR_NO_CONFORME"
+
+    with pytest.raises(SystemExit) as exc:
+        cba.main(["--check-tr-lenses"])
+    assert exc.value.code == 2
+
+
 GUARD = Path(__file__).resolve().parents[2] / "scripts" / "check_backlog_admission.py"
 
 BACKLOG_REL = ".agent/collaboration/backlog.md"

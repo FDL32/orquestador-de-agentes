@@ -120,6 +120,76 @@ DEFAULT_MIN_DISTINCT_BACKENDS = {
 FALLBACK_MIN_DISTINCT = 4
 
 
+class FamilyResolutionError(ValueError):
+    """Before: se recibe una pareja backend/modelo y un mapa de familias.
+
+    During: resuelve la familia con las reglas exacta, mono-modelo y modelo
+    normalizado, rechazando coincidencias ausentes o ambiguas.
+    After: la familia queda determinada o se lanza este error fail-closed.
+    """
+
+
+def model_family(
+    backend: str | None,
+    model: str | None,
+    family_map: dict[tuple[str, str | None], str] | None = None,
+) -> str:
+    """Resuelve una familia sin usar coincidencias parciales.
+
+    Before: `backend` y `model` son los valores declarados por una lente;
+        `family_map` opcional contiene claves `(backend, model)`.
+    During: prueba la pareja exacta, la entrada mono-modelo del backend y un
+        indice de modelos normalizados, detectando ambiguedad entre familias.
+    After: devuelve una familia no vacia o lanza `FamilyResolutionError`.
+    """
+    if family_map is None:
+        from ensemble_dispatch import MODEL_FAMILY_MAP
+
+        family_map = MODEL_FAMILY_MAP
+    if not isinstance(backend, str) or not backend:
+        raise FamilyResolutionError(f"backend invalido: {backend!r}")
+    exact = family_map.get((backend, model))
+    if exact:
+        return exact
+    mono = family_map.get((backend, None))
+    if mono:
+        return mono
+    if not isinstance(model, str) or not model:
+        raise FamilyResolutionError(
+            f"sin familia para backend/modelo {backend!r}/{model!r}"
+        )
+    normalized = model.split("/", 1)[-1].casefold()
+    matches = _normalized_family_matches(model, family_map)
+    if len(matches) > 1:
+        raise FamilyResolutionError(
+            f"modelo normalizado ambiguo {normalized!r}: {sorted(matches)}"
+        )
+    if matches:
+        return next(iter(matches))
+    raise FamilyResolutionError(
+        f"sin familia para backend/modelo {backend!r}/{model!r}"
+    )
+
+
+def _normalized_family_matches(
+    model: str, family_map: dict[tuple[str, str | None], str]
+) -> set[str]:
+    """Busca familias por modelo normalizado con igualdad exacta.
+
+    Before: `model` es un modelo no vacio y `family_map` es el mapa de familias.
+    During: elimina solo el prefijo de transporte y compara en `casefold`.
+    After: devuelve todas las familias que casan exactamente; no hace I/O.
+    """
+    normalized = model.split("/", 1)[-1].casefold()
+    return {
+        family
+        for (_mapped_backend, mapped_model), family in family_map.items()
+        if isinstance(mapped_model, str)
+        and family
+        and mapped_model.split("/", 1)[-1].casefold() == normalized
+    }
+
+
 def min_distinct_for(deliverable_type: str | None) -> int:
     """N minimo de backend_key distintos para un deliverable_type.
 
@@ -813,6 +883,57 @@ def distinct_execution_backends(
         )
         if is_substantive(row)
     }
+
+
+def counted_lens_records(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    loop_id: str | None = None,
+) -> list[dict]:
+    """Proyecta las lentes sustantivas y estructuralmente validas de un commit.
+
+    Before: `scorecard_rows` y `emitted` son las lecturas del scorecard y del
+        ledger; `commit_sha` identifica el candidato que se mide.
+    During: reutiliza los filtros canonicos, conserva backend/model/backend_key,
+        deduplica por terna y ordena de forma determinista.
+    After: devuelve las lentes contadas; no escribe ni altera las entradas.
+    """
+    records = {
+        (row.get("backend"), row.get("model"), row.get("backend_key"))
+        for row in structurally_valid_rounds(
+            scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+        )
+        if is_substantive(row)
+    }
+    return [
+        {"backend": backend, "model": model, "backend_key": backend_key}
+        for backend, model, backend_key in sorted(
+            records,
+            key=lambda item: tuple(
+                (value is not None, value if isinstance(value, str) else "")
+                for value in item
+            ),
+        )
+    ]
+
+
+def counted_lenses_for_commit(
+    project_root: Path, commit_sha: str, loop_id: str | None = None
+) -> list[dict]:
+    """Lee el scorecard real y devuelve las lentes contadas del commit.
+
+    Before: `project_root` contiene los artefactos `.agent/runtime/ensemble`.
+    During: lee scorecard y nonces con sus helpers estrictos y delega en el
+        mismo recuento que usa la barrera de ejecucion.
+    After: devuelve una lista deduplicada de registros de lentes sin escribir.
+    """
+    scorecard_rows, _sha = _read_scorecard(project_root)
+    emitted = read_emitted_nonces(project_root)
+    return counted_lens_records(
+        scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+    )
 
 
 def structurally_valid_rounds(
