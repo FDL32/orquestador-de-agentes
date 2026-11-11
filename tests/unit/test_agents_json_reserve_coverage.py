@@ -157,6 +157,57 @@ def test_ba03_and_ba09_cover_without_ba07_or_ba02(monkeypatch):
     assert v["min_aplicado"] == 2
 
 
+def test_ba03_and_ba02_cover_without_ba07(monkeypatch):
+    """c-04d: BA03 y BA02 respondidas cubren sin BA07."""
+    rows = [_rs_row("BA03"), _rs_row("BA02", sec=6)]
+    v = audit_real(monkeypatch, rows)
+    assert all(r["backend_key"] != "BA07" for r in rows)
+    assert v["ok"] is True
+    assert sorted(v["distinct_backends"]) == ["BA02", "BA03"]
+    assert v["min_aplicado"] == 2
+
+
+def test_ba02_alone_does_not_cover(monkeypatch):
+    """c-04e: BA02 sola no cubre min_distinct 2."""
+    rows = [_rs_row("BA02")]
+    v = audit_real(monkeypatch, rows)
+    assert v["ok"] is False
+    assert v["distinct_backends"] == ["BA02"]
+    assert v["min_aplicado"] == 2
+
+
+def test_hung_ba02_does_not_count(monkeypatch):
+    """c-04f: BA02 colgada no cuenta y no activa claves de reserva."""
+    rows = [
+        _rs_row("BA03"),
+        _rs_row("BA02", hang=_RS_WATCHDOG_MODE, answered=False, sec=12),
+    ]
+    v = audit_real(monkeypatch, rows)
+    assert v["ok"] is False
+    assert v["distinct_backends"] == ["BA03"]
+    assert "BA02" not in v["distinct_backends"]
+    assert "reserve_substitutions" not in v
+    assert "reserve_exhausted" not in v
+
+
+def test_ba03_and_ba04_cover_without_ba07_or_ba02(monkeypatch):
+    """c-04g: BA03 y BA04 respondidas cubren sin BA07 ni BA02."""
+    rows = [_rs_row("BA03"), _rs_row("BA04", sec=6)]
+    v = audit_real(monkeypatch, rows)
+    assert v["ok"] is True
+    assert sorted(v["distinct_backends"]) == ["BA03", "BA04"]
+    assert v["min_aplicado"] == 2
+
+
+def test_ba03_and_ba08_answered_counts(monkeypatch):
+    """c-04h: BA08 respondida cuenta junto a BA03."""
+    rows = [_rs_row("BA03"), _rs_row("BA08", sec=6)]
+    v = audit_real(monkeypatch, rows)
+    assert v["ok"] is True
+    assert sorted(v["distinct_backends"]) == ["BA03", "BA08"]
+    assert v["min_aplicado"] == 2
+
+
 def test_ba06_alone_does_not_cover(monkeypatch):
     """c-04b: BA06 sola no cubre min_distinct 2."""
     rows = [_rs_row("BA06")]
@@ -187,11 +238,18 @@ def test_note_documents_extra_lenses_and_family_rule():
         "MANAGER_REVIEW:repo_motor"
     ]
     note = entry["note"]
-    for backend_key in ("BA04", "BA06", "BA08", "BA09"):
-        assert backend_key in note
+    for text in (
+        "BA02",
+        "2026-11-10",
+        "elegible",
+        "n=122",
+        "84",
+        "opcional",
+        "BA254",
+        "T1",
+    ):
+        assert text in note
+    assert "BA04, BA06, BA08 y BA09 quedan elegibles" in note
     assert "2026-11-11" in note
-    assert "coordinadora" in note
-    assert "familia" in note
-    assert "BA05" in note
-    assert "129r" in note
-    assert "sigue sin tocar" in note
+    assert "La independencia por familia la aplica la coordinadora" in note
+    assert "BA05/129r sigue sin tocar" in note
