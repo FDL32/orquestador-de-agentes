@@ -231,8 +231,36 @@ def test_family_contract_parser_and_canon_boundaries():
         it.parse_ficha_models("autor_modelo: codex|gpt-5.6-luna\n")
     with pytest.raises(it.FamilyCheckError):
         it.parse_ficha_models("autor_modelo: codex\nrevisor_modelo: claude|sonnet\n")
+    with pytest.raises(it.FamilyCheckError, match="repetida"):
+        it.parse_ficha_models(
+            "autor_modelo: codex|gpt-5.6-luna\n"
+            "autor_modelo: claude|sonnet\n"
+            "revisor_modelo: claude|sonnet\n"
+        )
+    with pytest.raises(it.FamilyCheckError, match="repetida"):
+        it.parse_ficha_models(
+            "autor_modelo: codex|gpt-5.6-luna\n"
+            "revisor_modelo: claude|sonnet\n"
+            "revisor_modelo: kilo|nan/gemma4\n"
+        )
+    with pytest.raises(it.FamilyCheckError, match="mal formada"):
+        it.parse_ficha_models("autor_modelo: codex|\nrevisor_modelo: claude|sonnet\n")
     assert it.canon_p33_status("| P33 | regla | NO RATIFICADA |\n") == "NO RATIFICADA"
     assert it.canon_p33_status("| P32 | regla | RATIFICADA |\n") is None
+
+
+def test_check_family_unresolvable_declaration_is_rc2(tmp_path):
+    w = _family_world(
+        tmp_path,
+        [("kilo", "nan/glm5.3-flash"), ("kilo", "nan/gemma4")],
+    )
+    (w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md").write_text(
+        "autor_modelo: nano|desconocido\nrevisor_modelo: claude|sonnet\n",
+        encoding="utf-8",
+    )
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 2
+    assert "sin familia para backend/modelo" in lines[0]
 
 
 def test_check_family_reviewer_and_canon_mutants_are_not_green(tmp_path):

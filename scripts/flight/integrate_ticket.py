@@ -321,8 +321,9 @@ def parse_ficha_models(text: str) -> dict[str, tuple[str, str]]:
 
     Before: `text` contiene una ficha con `autor_modelo:` y
         `revisor_modelo:` en formato `backend|model`.
-    During: busca claves al inicio de linea sin aceptar valores incompletos ni
-        partes adicionales.
+    During: recorre la ficha ENTERA linea a linea (la clave se lee en cualquier
+        seccion, tipicamente la 1 Metadatos); rechaza valor vacio, partes
+        adicionales y clave REPETIDA.
     After: devuelve `{"autor": (backend, model), "revisor": (...)}` o lanza
         `FamilyCheckError` nombrando la clave defectuosa.
     """
@@ -336,7 +337,10 @@ def parse_ficha_models(text: str) -> dict[str, tuple[str, str]]:
         parts = [part.strip() for part in value.split("|")]
         if not separator or len(parts) != 2 or any(not part for part in parts):
             raise FamilyCheckError(f"clave {normalized_key} mal formada")
-        found[keys[normalized_key]] = (parts[0], parts[1])
+        result_key = keys[normalized_key]
+        if result_key in found:
+            raise FamilyCheckError(f"clave {normalized_key} repetida")
+        found[result_key] = (parts[0], parts[1])
     for raw_key, result_key in keys.items():
         if result_key not in found:
             raise FamilyCheckError(f"falta la clave {raw_key}")
