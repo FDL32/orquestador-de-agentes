@@ -57,6 +57,16 @@
     quien lo mantiene: no lo escribes directamente. Aplica también P24
     (RATIFICADA, vinculante) y P26 (RATIFICADA, vinculante).
 
+12b. Solo supervisora: a los 6-7 minutos desde el ACTIVO, realiza una sola
+    comprobacion, sin esperar un tick y sin cambiar la cadencia
+    {{CADENCIA_MIN}} ni ningun umbral. Lee la ultima entrada de la OPERACION
+    de {{ID_COORDINADORA}} y verifica si la primera accion de la cola declarada
+    en el ACK se lanzo (un IM, TR o lente, con su id).
+
+    Si todavia no se lanzo: envia un solo mensaje por `t3_thread_send`
+    (prefijo `mcp:`, modo queue) a {{HILO_COORDINADORA}} y, tras el siguiente
+    aviso, notifica al usuario; nunca la relevas sola.
+
 13. Decide si releer el latido entero aplicando P27 (RATIFICADA, vinculante).
 
 Reporte final: 1-3 líneas con lo medido, incluido el rc del guard y el estado

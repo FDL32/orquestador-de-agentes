@@ -611,3 +611,91 @@ def test_real_templates_cite_p8_p9_with_its_real_state(pillar: str) -> None:
     state = read_pillar_state(canon_text, pillar)
     for path in TEMPLATE_PATHS:
         assert_pillar_cited_with_state(path.read_text(encoding="utf-8"), pillar, state)
+
+
+def extract_latido_supervisora_block(text: str) -> str:
+    """Extract LATIDO step 12b between steps 12 and 13.
+
+    Before: ``text`` is a complete LATIDO template with its marker header.
+    During: remove the header and locate the 12b block boundaries in the body.
+    After: return the raw 12b block, or raise an explanatory ``ValueError``.
+    """
+    header = HEADER_RE.search(text)
+    if header is None:
+        raise ValueError("template is missing marker header")
+    body = text[header.end() :]
+    start = body.find("\n12b.")
+    if start < 0:
+        raise ValueError("LATIDO supervisora block 12b is missing")
+    end = body.find("\n13.", start)
+    if end < 0:
+        raise ValueError("LATIDO supervisora block has no step 13 boundary")
+    return body[start:end]
+
+
+def assert_latido_supervisora_unica_comprobacion(text: str) -> None:
+    """Require the single 12b supervisora check in its strict step order.
+
+    Before: ``text`` is a complete LATIDO template with its marker header.
+    During: locate steps 12, 12b and 13, then normalize the 12b block and
+    check the required timing, operation, and single-check literals.
+    After: return silently only for the corrected supervisora block; otherwise
+    raise ``ValueError`` naming the violated invariant.
+    """
+    header = HEADER_RE.search(text)
+    if header is None:
+        raise ValueError("template is missing marker header")
+    body = text[header.end() :]
+    pos_twelve = body.find("\n12.")
+    pos_twelve_b = body.find("\n12b.")
+    pos_thirteen = body.find("\n13.")
+    if min(pos_twelve, pos_twelve_b, pos_thirteen) < 0:
+        raise ValueError("LATIDO steps 12, 12b and 13 must all be present")
+    if not pos_twelve < pos_twelve_b < pos_thirteen:
+        raise ValueError("LATIDO step 12b must sit after 12 and before 13")
+    normalized = " ".join(extract_latido_supervisora_block(text).split())
+    for literal in (
+        "12b.",
+        "6-7 minutos",
+        "una sola",
+        "OPERACION de {{ID_COORDINADORA}}",
+    ):
+        if literal not in normalized:
+            raise ValueError(f"LATIDO 12b is missing literal: {literal}")
+
+
+def test_latido_supervisora_unica_comprobacion() -> None:
+    """Pin one timed supervisora check between LATIDO steps 12 and 13.
+
+    Before: the real LATIDO template is present on disk.
+    During: read it and validate the 12b ordering and required literals.
+    After: the single-check contract is accepted only when all invariants hold.
+    """
+    assert_latido_supervisora_unica_comprobacion(
+        TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    )
+
+
+def assert_latido_supervisora_escalado(text: str) -> None:
+    """Require the one-message escalation clauses in LATIDO step 12b.
+
+    Before: ``text`` is a complete LATIDO template with a valid 12b block.
+    During: reuse the strict 12b extractor and normalize its contents.
+    After: return silently only when one queued thread message and user notice
+    are specified; otherwise raise ``ValueError`` naming the missing literal.
+    """
+    assert_latido_supervisora_unica_comprobacion(text)
+    normalized = " ".join(extract_latido_supervisora_block(text).split())
+    for literal in ("un solo mensaje", "t3_thread_send", "usuario"):
+        if literal not in normalized:
+            raise ValueError(f"LATIDO 12b is missing literal: {literal}")
+
+
+def test_latido_supervisora_escalado_after_un_mensaje() -> None:
+    """Pin one queued escalation followed by notification of the user.
+
+    Before: the real LATIDO template is present on disk.
+    During: read it and validate the 12b escalation literals.
+    After: the one-message escalation contract is accepted.
+    """
+    assert_latido_supervisora_escalado(TEMPLATE_PATHS[0].read_text(encoding="utf-8"))
