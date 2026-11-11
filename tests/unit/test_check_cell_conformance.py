@@ -349,6 +349,37 @@ def test_check_tr_campos_no_textuales_rc2(fixtures, campo, valor):
     assert _run(registry, store, "--check-tr") == 2
 
 
+@pytest.mark.parametrize(
+    ("triador", "revisor", "expected"),
+    [
+        ("antigemma4", "glm5.3-flash", 2),
+        ("gemma4", "antiglm5.3-flash", 2),
+        ("gemma4", "nan/glm5.3-flash", 0),
+        ("gemma4 (kilo)", "glm5.3-flash", 0),
+        ("gemma4", "glm5.3-flash", 0),
+    ],
+    ids=[
+        "antigemma4-rc2",
+        "antiglm-flash-rc2",
+        "glm-con-prefijo-rc0",
+        "gemma-con-sufijo-rc0",
+        "par-exacto-rc0",
+    ],
+)
+def test_check_tr_modelos_con_frontera(fixtures, triador, revisor, expected):
+    """CO-69 ronda 9: el par TR exige frontera, como codex/sol.
+
+    ``"gemma4" in triador`` aceptaba "antigemma4" y ``"glm5.3-flash" in
+    revisor`` aceptaba "antiglm5.3-flash"; ambos deben ser violacion.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [_session("TR-1", "triaje", celda={"triador": triador, "revisor": revisor})],
+    )
+    assert _run(registry, store, "--check-tr") == expected
+
+
 def test_check_lenses_dos_rc0(fixtures):
     registry, store = fixtures
     _write_registry(registry, [_session("IM-1", celda=_cell())])
@@ -596,6 +627,59 @@ def test_check_pairing_builder_dict_thread_no_textual_no_medido(fixtures):
         ],
     )
     assert _run(registry, store, "--check-pairing") == 3
+
+
+def test_im_vivos_settled_at_entero_no_medido(fixtures):
+    """CO-69 ronda 9: ``settledAt`` entero no puede ocultar un IM vivo.
+
+    ``str(20261110)`` es ISO basico (aceptado desde 3.11) y ``settled()`` daba
+    True; con 3 IM ACTIVA y uno "asentado" por ese dato el tope daba rc 0. Ahora
+    el dato no textual es NO MEDIDO (rc 3), nunca verde.
+    """
+    registry, store = fixtures
+    _three_ims(registry)
+    _write_store(
+        store,
+        [
+            {
+                "thread_id": "mcp:IM-0",
+                "payload": {"settledAt": 20261110},
+            }
+        ],
+    )
+    assert _run(registry, store, "--check-im-vivos") == 3
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"settledAt": 20261110},
+        {"settledAt": date(2026, 11, 10)},
+        {"settledAt": "2026-11-10T10:00:00Z", "unsettledAt": 20261110},
+        {"settledAt": "2026-11-10T10:00:00Z", "unsettledAt": date(2026, 11, 10)},
+    ],
+    ids=[
+        "settled-entero",
+        "settled-date",
+        "unsettled-entero",
+        "unsettled-date",
+    ],
+)
+def test_settled_fecha_no_textual_no_medido(fixtures, monkeypatch, payload):
+    """CO-69 ronda 9: fechas de asentamiento no textuales -> MeasurementError.
+
+    El ``date`` cubre la misma clase en Python 3.10 (su ``str`` ya es ISO valido),
+    donde el entero no llega a parsear.
+    """
+    _, store = fixtures
+    _write_store(store, [{"thread_id": "t", "payload": {}}])
+    connection, _, settled = checker._store_lookup(store)
+    try:
+        monkeypatch.setattr(checker, "_payload", lambda row: payload)
+        with pytest.raises(checker.MeasurementError):
+            settled("t")
+    finally:
+        connection.close()
 
 
 def test_store_lookup_settled_fechas_reales(fixtures):

@@ -42,6 +42,10 @@ class MeasurementError(Exception):
 
 RE_ACTIVA_PREFIX = re.compile(r"^ACTIVA(\s|$)")
 # Copia deliberada de scripts/check_roster_matches_acting_thread.py:77.
+# CO-69 ronda 9: el par del TR exige frontera de palabra, igual que codex/sol;
+# un modelo con prefijo ("antigemma4", "antiglm5.3-flash") no es el modelo.
+RE_TRIADOR = re.compile(r"(?<![a-z0-9])gemma4(?![a-z0-9])")
+RE_REVISOR_TR = re.compile(r"(?<![a-z0-9])glm5\.3-flash(?![a-z0-9])")
 
 
 def is_activa(status):
@@ -291,7 +295,15 @@ def check_im(sessions, cutoff):
 
 
 def check_tr(sessions, cutoff):
-    """Comprueba el par TR gemma4 y glm5.3-flash."""
+    """Comprueba el par TR gemma4 y glm5.3-flash.
+
+    Before: cada celda TR declara ``triador`` y ``revisor`` sin validar.
+    During: exige texto en ambos y el modelo con frontera de palabra, la misma
+        que se aplica a ``codex`` y ``sol``; la subcadena dejaba pasar
+        "antigemma4" y "antiglm5.3-flash" (CO-69 ronda 9).
+    After: 2 si alguna celda TR incumple el par, 0 si todas lo cumplen y 3 si no
+        hay celdas medibles.
+    """
     measured = [
         s for s in _sessions_for_measure(sessions, cutoff) if s.get("role") == "triaje"
     ]
@@ -303,9 +315,9 @@ def check_tr(sessions, cutoff):
         revisor = cell.get("revisor")
         if (
             not isinstance(triador, str)
-            or "gemma4" not in triador.casefold()
+            or not RE_TRIADOR.search(triador.casefold())
             or not isinstance(revisor, str)
-            or "glm5.3-flash" not in revisor.casefold()
+            or not RE_REVISOR_TR.search(revisor.casefold())
         ):
             return RC_VIOLATION
     return RC_OK
@@ -405,6 +417,33 @@ def _child_id(builder):
     return builder if builder.startswith("thread:delegated-task:") else None
 
 
+def _settlement(settled_at, unsettled_at):
+    """Valida y parsea las fechas de asentamiento del payload.
+
+    Before: ``settled_at`` y ``unsettled_at`` vienen del payload sin validar.
+    During: exige texto con contenido (``unsettled_at`` puede ser ``None``) y
+        parsea ISO; un valor no textual no puede decidir asentamiento.
+    After: devuelve ``(settled_date, unsettled_date|None)`` o eleva
+        ``MeasurementError`` (NO MEDIDO).
+    """
+    if not isinstance(settled_at, str) or not settled_at.strip():
+        raise MeasurementError("settledAt no textual")
+    if unsettled_at is not None and (
+        not isinstance(unsettled_at, str) or not unsettled_at.strip()
+    ):
+        raise MeasurementError("unsettledAt no textual")
+    try:
+        settled_date = datetime.fromisoformat(settled_at.strip().replace("Z", "+00:00"))
+        unsettled_date = (
+            None
+            if unsettled_at is None
+            else datetime.fromisoformat(unsettled_at.strip().replace("Z", "+00:00"))
+        )
+    except (TypeError, ValueError) as exc:
+        raise MeasurementError("fecha de asentamiento ilegible") from exc
+    return settled_date, unsettled_date
+
+
 def _store_lookup(path):
     """Construye lookups de asentamiento, pairing y cuenta sobre un almacen."""
     connection = _open_store(path)
@@ -435,18 +474,15 @@ def _store_lookup(path):
         settled_at = payload.get("settledAt")
         if settled_at is None:
             return False
-        try:
-            settled_date = datetime.fromisoformat(
-                str(settled_at).replace("Z", "+00:00")
-            )
-            unsettled_at = payload.get("unsettledAt")
-            if unsettled_at is None:
-                return True
-            unsettled_date = datetime.fromisoformat(
-                str(unsettled_at).replace("Z", "+00:00")
-            )
-        except (TypeError, ValueError) as exc:
-            raise MeasurementError("fecha de asentamiento ilegible") from exc
+        # CO-69 ronda 9: las fechas de asentamiento solo se interpretan si son
+        # texto; un valor no textual (p.ej. el entero 20261110, que stringifica
+        # a ISO basico desde 3.11) no puede decidir que un IM esta asentado: es
+        # NO MEDIDO, no un veredicto.
+        settled_date, unsettled_date = _settlement(
+            settled_at, payload.get("unsettledAt")
+        )
+        if unsettled_date is None:
+            return True
         try:
             return unsettled_date < settled_date
         except TypeError as exc:
