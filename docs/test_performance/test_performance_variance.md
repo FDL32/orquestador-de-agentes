@@ -124,7 +124,8 @@ y solo reporta la salida al completarse; el agente interpreta el tiempo de
 espera como duracion de pytest. El tiempo real de la suite es ~5m30s, como
 confirman las dos corridas de este ticket.
 
-Regla operacional documentada en `INTERACTION_MODES.md`:
-suites con duracion esperada menor de 10 minutos van en foreground;
-background solo se usa con progreso verificable (p.ej. Monitor task o
-archivo de salida explicito).
+Regla operacional documentada en `INTERACTION_MODES.md`: suites con duracion
+esperada menor de 10 minutos van en foreground SIN vuelo activo; en vuelo el
+tope de llamada lo administra la norma de espera
+(`.agent/rules/common/espera_trabajo_paralelo.md`). Background solo se usa con
+progreso verificable (p.ej. Monitor task o archivo de salida explicito).

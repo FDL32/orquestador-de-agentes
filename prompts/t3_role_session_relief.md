@@ -188,7 +188,7 @@ de la senal de progreso. Este modulo NO exige ni implementa 129v: 129v decide si
 ### Ubicacion
 
 El checkpoint continuo vive **FUERA del worktree de la sesion** (C7 de PROPUESTA v3).
-Ubicacion propuesta: carpeta del vuelo (`C:/tmp/vuelo-<vuelo-id>/` o ruta equivalente).
+Ubicacion: el repo_destino del vuelo activo, bajo `.agent/runtime/flight/<vuelo-id>/` (carpeta del vuelo).
 
 **Razon:** los artefactos del scorecard y checkpoint son por worktree (C7); si vivieran
 dentro del worktree, cada sesion sobre-escribiria el de las otras.
@@ -197,12 +197,10 @@ dentro del worktree, cada sesion sobre-escribiria el de las otras.
 
 Via declarada: **Bash/python append LF** (C13 de PROPUESTA v3).
 
-**Razon:** la carpeta del vuelo esta fuera del repo y `guard_paths` bloquea Write/Edit
-nativos ahi (incidencias.md:3, medido). La via de escritura debe ser compatible con
-guard_paths: Bash `>>` append o Python `open(path, 'a', encoding='utf-8')` con LF explicito.
-
-**Nunca Write/Edit nativo del agente:** `guard_paths` rechazaria la escritura a la carpeta
-del vuelo (C13).
+**Razon:** la via depende de `repo_root`: funciona Write/Edit nativo del agente SOLO
+cuando `repo_root=repo_destino` (guard_paths lo permite, medido 2026-11-11); con
+`repo_root=motor` la carpeta del vuelo del repo_destino esta fuera del repo y guard_paths
+la bloquea. La via Bash/python append LF (C13) sigue siendo valida en ambos casos.
 
 ### Cadencia
 
@@ -342,7 +340,7 @@ Las mediciones de tamano se hacen con Python, nunca con redireccion de PowerShel
 tamano = len(open(ruta, 'rb').read())
 
 # INCORRECTO: redireccion de PowerShell (escribe UTF-16, C9b de PROPUESTA v3)
-# $size = (Get-Item ruta).Length
+# Get-Item ruta > size.txt
 ```
 
 **Precedente medido:** dos fallos sin dueno el dia del diseno, uno de ellos la medicion con
@@ -394,6 +392,7 @@ El hogar normativo y el procedimiento ejecutable se remiten a
 `docs/protocol/flight_supervision.md` y
 `scripts/flight/rotate_coordinator.py`. Este prompt no duplica sus limites ni
 sus condiciones de parada (X-09).
+El utillaje exclusivo del vuelo activo (`rotate_coordinator_v2.py`, `ctx_acumulado.py`, `next_go_relevo.py`) vive en el repo_destino del vuelo, bajo `.agent/runtime/flight/<vuelo-id>/diseno/` (no en el motor; publicarlo es P5b, aplazado).
 
 ### Cuando aplica
 
@@ -449,8 +448,7 @@ el sucesor hereda el campo de operacion en curso.
 
 La alarma de contexto es un SINTOMA para preparar el relevo, no una regla de
 trabajo. Senales:
-- **Aviso a 350k de contexto:** senal para preparar el relevo.
-- **Aviso fuerte a 390-400k de contexto:** senal de alerta maxima.
+- **Aviso de contexto:** consultar "Umbrales de relevo por contexto" del protocolo de supervision.
 - **Segunda compactacion dentro de un bloque (intervalo entre dos merges integrados):**
   obliga a registrar continuar o relevar con motivo, y a relevar en el primer hito.
 

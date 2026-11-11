@@ -1,7 +1,7 @@
 #### Push por vuelo: UN solo push al final de TODOS los tickets (2026-10-19)
 
 - DECISION DE PROCESO: la publicacion se difiere al final del vuelo, nunca por ticket (2026-10-19).
-  BUSQUEDA-PREVIA: PROTOCOLO ENCONTRADO: `prompts/orchestrator_session_bootstrap.md:318-319` ("UN solo push al final de TODOS los tickets de la cola/vuelo, con OK humano explicito"), `prompts/orchestrator_pipeline_codeonly.md:203` ("Push AGRUPADO al final de TODOS los tickets del vuelo ... NO push por ticket") y la seccion 7 de `prompts/manager_orchestrator_loop_backlog.md` (informe antes del push). Esta seccion EXTIENDE esa regla a todo vuelo multi-ticket; no la inventa.
+  BUSQUEDA-PREVIA: PROTOCOLO ENCONTRADO: `prompts/orchestrator_session_bootstrap.md`, seccion "Modo ORQUESTADOR de pipeline multi-ticket (paso 0)", frase "UN solo push al final de TODOS los tickets de la cola/vuelo, con OK humano explicito"; `prompts/orchestrator_pipeline_codeonly.md:203` ("Push AGRUPADO al final de TODOS los tickets del vuelo ... NO push por ticket") y la seccion 7 de `prompts/manager_orchestrator_loop_backlog.md` (informe antes del push). Esta seccion EXTIENDE esa regla a todo vuelo multi-ticket; no la inventa.
 
 **La publicacion es una accion del VUELO, no del ticket.** Durante un vuelo (batch
 autonomo, pipeline code-only o cadena de cierres), cada ticket se cierra EN LOCAL con su

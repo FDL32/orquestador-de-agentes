@@ -95,7 +95,7 @@ Rules:
 
 ## Foreground vs background for long-running suite commands
 
-Suites with expected duration under 10 minutes must run in foreground (direct
+Suites with expected duration under 10 minutes must run in foreground (sin vuelo activo; en vuelo el tope de llamada en primer plano lo administra la norma de espera del vuelo: .agent/rules/common/espera_trabajo_paralelo.md) (direct
 `python scripts/run_pytest_safe.py ...`). Background mode (`run_in_background`)
 is reserved for operations where polling or progress verification is explicitly
 set up; without that, the agent sees only the total wait time, not the actual

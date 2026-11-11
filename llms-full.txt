@@ -812,7 +812,7 @@ Paso 0 (antes de tocar nada):
    **regla canonica de worktree-dev**, "Vocabulario canónico"): arranca con cwd =
    la worktree de desarrollo y usa su `.venv\Scripts\python.exe`. Verifica que esa
    worktree existe y lleva `main`; si no, crearla con
-   `scripts/setup_dev_worktree.ps1`. En ella: HEAD == origin/main, arbol limpio,
+   `scripts/setup_dev_worktree.ps1`. Hay dos modos: en desarrollo del motor (sin vuelo activo), el preflight exige las condiciones siguientes; en VUELO ACTIVO, la sesion opera en la rama de vuelo autorizada y el push queda diferido segun `.agent/rules/common/flight_push_policy.md`. En ella: HEAD == origin/main, arbol limpio,
    `--validate` en 0 errors. El checkout PRINCIPAL queda DETACHED en
    origin/main (fuente estable); NO se trabajan tickets alli. Reporta el estado
    real ANTES de elegir ticket (ver `QUICKSTART.md` "0d"). Ademas de este chequeo
@@ -866,7 +866,7 @@ Reglas duras del orquestador (verificadas en sesiones reales):
    - En un proyecto destino, el ID debe usar el namespace local definido en el contrato del repo (`AGENTS.md`/`CLAUDE.md` autocargado del destino); verificacion via `agent_controller --validate`. `WOT-` es prefijo SOLO del motor/dogfooding. El instalador puede escribir este prefijo con `--install --prefix XXX`.
 2. Builder implementa. El launcher envuelve el runner en try/finally: al salir (crash, fin normal o timeout), ejecuta automaticamente `--pre-handoff` y `--mark-ready --json --force`, que emiten `BUILDER_EXIT` y `STATE_CHANGED -> READY_FOR_REVIEW` al bus. El Builder no necesita ejecutar el cierre manualmente.
 3. Bridge dispara OpenCode review automaticamente. Si aprueba -> cascada hasta COMPLETED.
-4. Markdowns se sincronizan a COMPLETED. Commit + push.
+4. Markdowns se sincronizan a COMPLETED. Commit local; el push queda diferido segun `.agent/rules/common/flight_push_policy.md` cuando hay vuelo activo.
 
 ## Reflejos CEM v0
 

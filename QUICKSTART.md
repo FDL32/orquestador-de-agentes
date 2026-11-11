@@ -7,7 +7,7 @@ Use this file to start the template in a fresh project, relaunch the terminal-dr
 
 Namespace de tickets:
 - Cada `repo_destino` declara su prefijo en `PROJECT.md` como `Ticket prefix: XXX`.
-- Este repositorio usa `WT-YYYY-NNN[a]` en el dogfooding actual, pero es solo
+- Este repositorio usa `WOT-YYYY-NNNx` en el dogfooding actual, pero es solo
   una instancia de referencia; cualquier destino puede declarar su propio
   prefijo.
 - `WP-YYYY-NNN` aparece en historia legacy; no lo uses para tickets nuevos salvo repos antiguos que todavia declaren ese prefijo.
@@ -190,7 +190,7 @@ La suite canonica se corre desde la worktree, con su propio interprete:
 ```
 
 Ciclo de cierre de un ticket trabajado en la worktree-dev: el push es
-normal (`git push origin main`, sin cambios, porque `main` ya vive ahi).
+normal (`git push origin main`, sin cambios, porque `main` ya vive ahi) (desarrollo sin vuelo activo; con vuelo activo el push queda diferido: `.agent/rules/common/flight_push_policy.md`).
 Tras el push, el checkout principal se pone al dia SOLO con:
 
 ```powershell
@@ -435,7 +435,7 @@ evidencia de cierre. El `cierre canonico` de un ticket exige la suite canonica
 handoff o cierre. Politica canonica en `prompts/orchestrator_launch_builder.md`.
 
 **Duracion de `--level all` y timeout (WOT-2026-041h).** La suite canonica tarda
-**~906s medidos** (~15 min). Muchos harness imponen un timeout por defecto de
+**~906s medidos** (snapshot de fecha; mide la duracion real con la corrida del comando) (~15 min). Muchos harness imponen un timeout por defecto de
 **900s**, asi que la corrida muere **por 6 segundos** y deja `last-run.json` con
 `exit_code: None` + `finished_at: None` -- que significa **NO TERMINO**, no
 "fallo". Usa un timeout **>= 1800s**. Coste medido de no saberlo: ~1h de sesion.

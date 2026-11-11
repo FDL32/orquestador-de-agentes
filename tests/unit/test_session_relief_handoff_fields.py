@@ -622,9 +622,9 @@ def test_dod_8_alarma_contexto():
     section_ws = " ".join(section.split())
     section_lower = section.lower()
     # Debe contener los umbrales de alarma (case-insensitive)
-    assert "350k" in section, "DoD 8: seccion 9 no menciona el aviso a 350k."
-    assert "390-400k" in section, (
-        "DoD 8: seccion 9 no menciona el aviso fuerte a 390-400k."
+    assert "350k" not in section, "DoD 8: seccion 9 conserva el umbral retirado 350k."
+    assert "390-400k" not in section, (
+        "DoD 8: seccion 9 conserva el umbral retirado 390-400k."
     )
     # Regla de la segunda compactacion
     assert "segunda compactacion" in section_lower, (

@@ -161,6 +161,15 @@ vivo sigue siendo el roster. El censo de ocho nombres de campo (en el test) es
 un PROXY declarado de "esos literales", con UNA excepcion explicita: el fixture
 congelado de 136c bajo `tests/fixtures/`, que no se edita.
 
+### Umbrales de relevo por contexto (fuente de cifras: flight_roster.json)
+
+Este bloque distingue un aviso de preparacion de una alarma fuerte.
+PRECEDENCIA: las cifras operativas viven en `flight_roster.json` del vuelo vivo
+y el roster manda sobre toda prosa; este bloque fija semantica, no cifras.
+Hoy el roster no tiene claves de umbral de contexto (medido): este bloque y su
+remision en relief quedan condicionados a la deuda M-7 aceptada en s.1, con
+destino ticket E.
+
 ### Clauses de la regla
 
 Las clausulas P1 a P8 se aplican en este orden de precedencia.
