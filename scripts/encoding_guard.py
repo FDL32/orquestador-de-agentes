@@ -220,7 +220,6 @@ ALLOWLIST = {
     "scripts/create_worktree_pair.py",
     "scripts/destination_context.py",
     "scripts/diagnose_builder_orphans.py",
-    "scripts/discover_loops.py",
     "scripts/discover_skills.py",
     "scripts/get_launcher_state.py",
     "scripts/install_agent_system.py",

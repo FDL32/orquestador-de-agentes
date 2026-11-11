@@ -981,6 +981,46 @@
         "tier": "flash",
         "generation": 1
       },
+      "BA26": {
+        "backend": "nan_api",
+        "model": "glm5.3",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "full",
+        "generation": 1
+      },
+      "BA27": {
+        "backend": "nan_api",
+        "model": "deepseek-v4-pro",
+        "backend_version": null,
+        "status": "active",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "full",
+        "generation": 1
+      },
+      "BA28": {
+        "backend": "nan_api",
+        "model": "hy4",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Tencent",
+        "family": "hy",
+        "tier": "full",
+        "generation": 1
+      },
+      "BA29": {
+        "backend": "nan_api",
+        "model": "qwen3.8-max",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Alibaba",
+        "family": "qwen",
+        "tier": "full",
+        "generation": 2
+      },
       "BA30": {
         "backend": "groq_api",
         "model": "qwen/qwen3.8-27b",
@@ -1002,6 +1042,26 @@
         "tier": "full",
         "generation": 1,
         "variant": "120b"
+      },
+      "BA32": {
+        "backend": "nan_api",
+        "model": "kimi-k3.1-pro",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Moonshot",
+        "family": "kimi",
+        "tier": "full",
+        "generation": 2
+      },
+      "BA33": {
+        "backend": "nan_api",
+        "model": "minimax-h3",
+        "backend_version": null,
+        "status": "active",
+        "lab": "MiniMax",
+        "family": "minimax",
+        "tier": "full",
+        "generation": 1
       },
       "BA50": {
         "backend": "openrouter_api",
@@ -1269,7 +1329,9 @@
         "family": "codex",
         "tier": "full",
         "generation": 2,
-        "variant": "sol"
+        "variant": "sol",
+        "uso_restringido": true,
+        "uso_restringido_nota": "WOT-2026-161s: uso restringido (gpt-6.1-sol consume mucho); no veto"
       }
     },
     "loop_shapes": {
@@ -1415,6 +1477,7 @@
         "Moonshot",
         "NVIDIA",
         "OpenAI",
+        "Tencent",
         "Xiaomi",
         "Zhipu"
       ]

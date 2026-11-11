@@ -490,6 +490,13 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     ("nan_api", "mimo-v2.6-flash"): "mimo",
     ("nan_api", "qwen3.6"): "qwen",
     ("nan_api", "qwen3.8-flash"): "qwen",
+    # WOT-2026-161s: altas nan_api (familia tomada del registro).
+    ("nan_api", "glm5.3"): "glm",
+    ("nan_api", "deepseek-v4-pro"): "deepseek",
+    ("nan_api", "hy4"): "hy",
+    ("nan_api", "qwen3.8-max"): "qwen",
+    ("nan_api", "kimi-k3.1-pro"): "kimi",
+    ("nan_api", "minimax-h3"): "minimax",
     ("opencode", "opencode-go/glm-5.2"): "glm",
     # WOT-2026-082a: el perfil vivo paso a glm-5.3-flash en 055aba5. La
     # entrada de arriba se CONSERVA (384 filas historicas de scorecard, mismo

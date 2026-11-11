@@ -39,7 +39,7 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 
 | backend_key | backend | model | status |
 |-------------|---------|-------|--------|
-| BA01 | claude | — | active |
+| BA01 | claude | - | active |
 | BA02 | kilo | nan/qwen3.8-flash | active |
 | BA03 | kilo | nan/glm5.3-flash | active |
 | BA04 | kilo | nan/mimo-v2.6-flash | active |
@@ -81,8 +81,14 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA252 | claude | sonnet | active |
 | BA253 | claude | opus | active |
 | BA254 | codex | gpt-6.1-sol | active |
+| BA26 | nan_api | glm5.3 | active |
+| BA27 | nan_api | deepseek-v4-pro | active |
+| BA28 | nan_api | hy4 | active |
+| BA29 | nan_api | qwen3.8-max | active |
 | BA30 | groq_api | qwen/qwen3.8-27b | active |
 | BA31 | groq_api | openai/gpt-oss-120b | active |
+| BA32 | nan_api | kimi-k3.1-pro | active |
+| BA33 | nan_api | minimax-h3 | active |
 | BA50 | openrouter_api | cohere/north-mini-code:free | active |
 | BA51 | openrouter_api | nvidia/nemotron-3-ultra-550b-a55b:free | active |
 | BA52 | openrouter_api | stealth/space-bunny-alpha | archived |

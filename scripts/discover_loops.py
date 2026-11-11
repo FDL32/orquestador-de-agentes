@@ -175,7 +175,7 @@ def render_registry_md(result: dict[str, Any]) -> str:
     ]
     for key in sorted(result["backend_key_details"].keys()):
         entry = result["backend_key_details"][key]
-        model = entry.get("model") or "—"
+        model = entry.get("model") or "-"
         lines.append(
             f"| {key} | {entry.get('backend', '')} | {model} "
             f"| {entry.get('status', '')} |"
