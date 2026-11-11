@@ -86,6 +86,12 @@ def test_check_tr_lenses_deduplicates_same_declared_lens():
             "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
             "lente_1: kilo|nan/glm5.3-flash|APPROVE\n"
         )
+    with pytest.raises(cba.MeasurementError):
+        cba.parse_ficha_lenses(
+            "triador_modelo: kilo|nan/gemma4\n"
+            "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+            "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        )
 
 
 def test_check_tr_lenses_cli_is_wired(tmp_path, capsys):
@@ -111,6 +117,34 @@ def test_check_tr_lenses_cli_is_wired(tmp_path, capsys):
     with pytest.raises(SystemExit) as exc:
         cba.main(["--check-tr-lenses"])
     assert exc.value.code == 2
+
+
+def _write_ficha(repo: Path, ticket: str, text: str) -> None:
+    path = repo / ".agent" / "collaboration" / f"FICHA_{ticket}.md"
+    path.write_text(text, encoding="utf-8")
+
+
+def test_standalone_rejects_verdict_outside_set():
+    ficha = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|RECHAZO\n"
+        "lente_2: kilo|nan/glm5.3-flash|APPROVE\n"
+    )
+    rc, lines = cba.check_tr_lenses(ficha)
+    assert rc == 1
+    assert lines[0] == "VEREDICTO: LENTES_TR_NO_CONFORME"
+    assert "solo APPROVE cuenta" in "\n".join(lines)
+
+
+def test_standalone_rejects_same_family_pair():
+    ficha = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/deepseek-v4-flash|APPROVE\n"
+    )
+    rc, lines = cba.check_tr_lenses(ficha)
+    assert rc == 1
+    assert "comparten familia" in "\n".join(lines)
 
 
 GUARD = Path(__file__).resolve().parents[2] / "scripts" / "check_backlog_admission.py"
@@ -205,6 +239,410 @@ def run_guard(repo: Path, *args: str) -> tuple[int, str]:
         check=False,
     )
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+
+def test_closeout_requires_redactada_por_marker_after_cutoff(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    commit_alta(repo, row(ticket), "alta post corte")
+    _write_ficha(repo, ticket, "autor_modelo: codex|gpt-5.6-luna\n")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    code_bad, lines_bad, skipped_bad, findings_bad = cba._audit_closeout(
+        repo, cutoff_sha=cutoff
+    )
+    _write_ficha(repo, ticket, "redactada_por: co\n")
+    code_good, _lines_good, skipped_good, findings_good = cba._audit_closeout(
+        repo, cutoff_sha=cutoff
+    )
+
+    receipt_verdicts = {
+        cba.VER_COHERENTE,
+        cba.VER_SIN_RECIBO,
+        cba.VER_CONCURRENTE,
+    }
+    bad_receipts = sum(f.get("veredicto") in receipt_verdicts for f in findings_bad)
+    good_receipts = sum(f.get("veredicto") in receipt_verdicts for f in findings_good)
+    bad_lenses = sum(
+        f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings_bad
+    )
+    good_lenses = sum(
+        f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings_good
+    )
+    assert code_bad == 1 and not skipped_bad
+    assert code_good == 1 and not skipped_good
+    assert bad_receipts == good_receipts
+    assert bad_lenses >= 1 and good_lenses == 0
+    assert "LENTES_TR_NO_CONFORME" in "\n".join(lines_bad)
+    assert any(f.get("clave") == cba.LENTES_TR_CONFORME for f in findings_good)
+
+
+def test_closeout_lens_failure_is_rc1_with_coherent_receipt(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    candidate_row = row(ticket)
+    surface = backlog_surface(repo)
+    recibo = build_recibo(repo, ticket, candidate_row, [surface])
+    commit_alta(repo, candidate_row, msg_with_recibo("alta TR con recibo", recibo))
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+
+    _write_ficha(repo, ticket, "redactada_por: TR\ntriador_modelo: kilo|nan/gemma4\n")
+    bad_code, bad_lines, bad_skipped, bad_findings = cba._audit_closeout(
+        repo, cutoff_sha=cutoff
+    )
+    _write_ficha(repo, ticket, "redactada_por: co\n")
+    good_code, good_lines, good_skipped, good_findings = cba._audit_closeout(
+        repo, cutoff_sha=cutoff
+    )
+    receipt_verdicts = {
+        cba.VER_COHERENTE,
+        cba.VER_SIN_RECIBO,
+        cba.VER_CONCURRENTE,
+    }
+    bad_receipts = sum(f.get("veredicto") in receipt_verdicts for f in bad_findings)
+    good_receipts = sum(f.get("veredicto") in receipt_verdicts for f in good_findings)
+    bad_lenses = sum(
+        f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in bad_findings
+    )
+    good_lenses = sum(
+        f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in good_findings
+    )
+    assert bad_code == 1 and not bad_skipped
+    assert good_code == 0 and not good_skipped
+    bad_globals = [line for line in bad_lines if line.startswith("VEREDICTO GLOBAL")]
+    assert len(bad_globals) == 1
+    assert "FALLO" in bad_globals[0]
+    assert "VEREDICTO GLOBAL: RECIBO_COHERENTE" not in bad_globals
+    assert "VEREDICTO GLOBAL: FALLO" not in "\n".join(good_lines)
+    assert bad_receipts == good_receipts
+    assert bad_lenses >= 1 and good_lenses == 0
+    assert cba.LENTES_TR_NO_CONFORME in cba.FAIL_VERDICTS
+
+
+def test_closeout_lens_failure_keeps_single_existing_global_failure(
+    tmp_path, monkeypatch
+):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    commit_alta(repo, row(ticket), "alta TR sin recibo")
+    _write_ficha(repo, ticket, "redactada_por: TR\ntriador_modelo: kilo|nan/gemma4\n")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    globals_ = [line for line in lines if line.startswith("VEREDICTO GLOBAL")]
+    assert code == 1 and not skipped
+    assert len(globals_) == 1
+    assert "FALLO" in globals_[0]
+    assert "LENTES_TR_NO_CONFORME" in "\n".join(lines)
+    assert any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings)
+
+
+def test_closeout_lens_cutoff_sha_grandfather(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    ticket = "WOT-2026-161j"
+    alta = commit_alta(repo, row(ticket), "alta pre corte")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", alta)
+    code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=alta)
+    output = "\n".join(lines)
+    assert code == 0 and not skipped
+    assert "LENTES_TR_GRANDFATHERED" in output
+    assert any(f.get("veredicto") == cba.LENTES_TR_GRANDFATHERED for f in findings)
+
+
+def test_closeout_tr_ficha_without_lens_lines(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    commit_alta(repo, row(ticket), "alta TR sin lentes")
+    _write_ficha(repo, ticket, "redactada_por: Tr\ntriador_modelo: kilo|nan/gemma4\n")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    output = "\n".join(lines)
+    assert code == 1
+    assert "ficha sin veredictos" in output
+    assert "LENTES_TR_NO_CONFORME" in output
+
+
+def test_closeout_im_marker_is_conforme_without_lenses(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    candidate_row = row(ticket)
+    surface = backlog_surface(repo)
+    recibo = build_recibo(repo, ticket, candidate_row, [surface])
+    commit_alta(repo, candidate_row, msg_with_recibo("alta IM", recibo))
+    _write_ficha(repo, ticket, "redactada_por: im\n")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    output = "\n".join(lines)
+    assert code == 0 and not skipped
+    assert "LENTES_TR_CONFORME" in output
+    assert any(f.get("veredicto") == cba.LENTES_TR_CONFORME for f in findings)
+
+
+def test_closeout_duplicate_marker_is_not_conforme(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    candidate_row = row(ticket)
+    surface = backlog_surface(repo)
+    recibo = build_recibo(repo, ticket, candidate_row, [surface])
+    commit_alta(repo, candidate_row, msg_with_recibo("alta marcador duplicado", recibo))
+    _write_ficha(repo, ticket, "redactada_por: co\nredactada_por: co\n")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    output = "\n".join(lines)
+    assert code == 1 and not skipped
+    assert "LENTES_TR_NO_CONFORME" in output
+    assert any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings)
+
+
+def test_closeout_marker_without_separator_is_not_conforme(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    candidate_row = row(ticket)
+    surface = backlog_surface(repo)
+    recibo = build_recibo(repo, ticket, candidate_row, [surface])
+    commit_alta(
+        repo, candidate_row, msg_with_recibo("alta marcador sin separador", recibo)
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    body = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n"
+    )
+    _write_ficha(repo, ticket, "redactada_por\n" + body)
+    bad_code, bad_lines, bad_skipped, bad_findings = cba._audit_closeout(
+        repo, cutoff_sha=cutoff
+    )
+    _write_ficha(repo, ticket, "redactada_por: TR\n" + body)
+    good_code, good_lines, good_skipped, good_findings = cba._audit_closeout(
+        repo, cutoff_sha=cutoff
+    )
+    assert bad_code == 1 and not bad_skipped
+    assert "LENTES_TR_NO_CONFORME" in "\n".join(bad_lines)
+    assert any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in bad_findings)
+    assert good_code == 0 and not good_skipped
+    assert "LENTES_TR_CONFORME" in "\n".join(good_lines)
+    assert "VEREDICTO GLOBAL: FALLO" not in "\n".join(good_lines)
+    assert any(f.get("veredicto") == cba.LENTES_TR_CONFORME for f in good_findings)
+
+
+def test_closeout_malformed_tr_lens_is_captured_as_nonconforme(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    candidate_row = row(ticket)
+    surface = backlog_surface(repo)
+    recibo = build_recibo(repo, ticket, candidate_row, [surface])
+    commit_alta(repo, candidate_row, msg_with_recibo("alta lente mal formada", recibo))
+    _write_ficha(
+        repo,
+        ticket,
+        "redactada_por: TR\n"
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash\n",
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    output = "\n".join(lines)
+    assert code == 1 and not skipped
+    assert "LENTES_TR_NO_CONFORME" in output
+    assert any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings)
+
+
+def test_closeout_rejects_redactada_por_outside_allowed_values(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    commit_alta(repo, row(ticket), "alta marcador invalido")
+    _write_ficha(
+        repo,
+        ticket,
+        "redactada_por: foo\n"
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n",
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    output = "\n".join(lines)
+    assert code == 1 and not skipped
+    assert "redactada_por ausente o fuera" in output
+    assert any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings)
+
+
+def test_closeout_tr_conforme_is_positive_admission_control(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    candidate_row = row(ticket)
+    surface = backlog_surface(repo)
+    recibo = build_recibo(repo, ticket, candidate_row, [surface])
+    commit_alta(repo, candidate_row, msg_with_recibo("alta TR conforme", recibo))
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    assert frozenset({"APPROVE"}) == cba.LENSES_VERDICTS
+
+    for marker in ("Tr", "TR", "tR"):
+        _write_ficha(
+            repo,
+            ticket,
+            f"redactada_por: {marker}\n"
+            "triador_modelo: kilo|nan/gemma4\n"
+            "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+            "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n",
+        )
+        code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+        output = "\n".join(lines)
+        assert code == 0 and not skipped
+        assert "LENTES_TR_CONFORME" in output
+        assert "VEREDICTO GLOBAL: FALLO" not in output
+        assert any(f.get("veredicto") == cba.LENTES_TR_CONFORME for f in findings)
+
+
+def test_closeout_tr_lens_verdict_set_and_pairwise_families(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    candidate_row = row(ticket)
+    surface = backlog_surface(repo)
+    recibo = build_recibo(repo, ticket, candidate_row, [surface])
+    commit_alta(repo, candidate_row, msg_with_recibo("alta TR lentes", recibo))
+    _write_ficha(
+        repo,
+        ticket,
+        "redactada_por: TR\n"
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|RECHAZO\n"
+        "lente_2: opencode|glm5.3-flash|APPROVE\n",
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    output = "\n".join(lines)
+    assert code == 1
+    assert "solo APPROVE cuenta" in output
+
+    _write_ficha(
+        repo,
+        ticket,
+        "redactada_por: TR\n"
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/deepseek-v4-flash|APPROVE\n",
+    )
+    code, lines, _skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    output = "\n".join(lines)
+    globals_ = [line for line in lines if line.startswith("VEREDICTO GLOBAL")]
+    assert code == 1
+    assert "comparten familia" in output
+    assert any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings)
+    assert len(globals_) == 1 and "FALLO" in globals_[0]
+
+
+def test_closeout_tr_lens_verdict_set_and_pairwise_families_triador_control(
+    tmp_path, monkeypatch
+):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161v"
+    candidate_row = row(ticket)
+    surface = backlog_surface(repo)
+    recibo = build_recibo(repo, ticket, candidate_row, [surface])
+    commit_alta(repo, candidate_row, msg_with_recibo("alta TR control", recibo))
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+
+    _write_ficha(
+        repo,
+        ticket,
+        "redactada_por: TR\n"
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: kilo|nan/gemma4|APPROVE\n"
+        "lente_2: nan_api|deepseek-v4-flash|APPROVE\n",
+    )
+    code_bad, lines_bad, _skipped, findings_bad = cba._audit_closeout(
+        repo, cutoff_sha=cutoff
+    )
+    output_bad = "\n".join(lines_bad)
+    globals_bad = [line for line in lines_bad if line.startswith("VEREDICTO GLOBAL")]
+    assert code_bad == 1
+    assert "comparte familia con el triador" in output_bad
+    assert any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings_bad)
+    assert len(globals_bad) == 1 and "FALLO" in globals_bad[0]
+
+    _write_ficha(
+        repo,
+        ticket,
+        "redactada_por: TR\n"
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n",
+    )
+    code_good, lines_good, skipped_good, findings_good = cba._audit_closeout(
+        repo, cutoff_sha=cutoff
+    )
+    output_good = "\n".join(lines_good)
+    assert code_good == 0 and not skipped_good
+    assert "LENTES_TR_CONFORME" in output_good
+    assert "VEREDICTO GLOBAL: FALLO" not in output_good
+    assert any(f.get("veredicto") == cba.LENTES_TR_CONFORME for f in findings_good)
+
+
+def test_check_tr_lenses_dedup_pins_pairwise_over_unique_resolved():
+    ficha = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_3: kilo|nan/qwen3.8-flash|APPROVE\n"
+    )
+    rc, lines = cba.check_tr_lenses(ficha)
+    assert rc == 0
+    assert lines[0] == "VEREDICTO: LENTES_TR_CONFORME"
+
+
+def test_closeout_missing_ficha_cutoff_semantics(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    commit_alta(repo, row("WOT-2026-161v"), "alta sin ficha")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    output = "\n".join(lines)
+    assert code == 1
+    assert "ficha no localizable" in output
+    assert "LENTES_TR_NO_CONFORME" in output
+
+
+def test_closeout_lens_cutoff_unresolvable_skip(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row("WOT-2026-161v"), "alta con corte no resoluble")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", "does-not-exist")
+    code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha="")
+    output = "\n".join(lines)
+    assert code == 1 and not skipped
+    assert output.count("SKIP: corte no resoluble o no ancestro; c-14 no aplicado") == 1
+    assert "SIN_RECIBO" in output
+    assert not any(f.get("clave", "").startswith("LENTES_") for f in findings)
+
+
+def test_closeout_lens_cutoff_existing_non_ancestor_skip(tmp_path, monkeypatch):
+    repo = init_repo(tmp_path)
+    git(repo, "switch", "-c", "sibling")
+    (repo / "sibling.txt").write_text("sibling\n", encoding="utf-8")
+    git(repo, "add", "sibling.txt")
+    git(repo, "commit", "-m", "sibling cutoff")
+    sibling_cutoff = git(repo, "rev-parse", "HEAD").strip()
+    git(repo, "switch", "main")
+    commit_alta(repo, row("WOT-2026-161v"), "alta con corte hermano")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", sibling_cutoff)
+    code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha="")
+    output = "\n".join(lines)
+    marker = "SKIP: corte no resoluble o no ancestro; c-14 no aplicado"
+    assert code == 1 and not skipped
+    assert output.count(marker) == 1
+    assert "SIN_RECIBO" in output
+    assert not any(f.get("clave", "").startswith("LENTES_") for f in findings)
 
 
 # Seccion D1: CLI, exit codes, denominadores y modos directos.

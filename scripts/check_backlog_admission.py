@@ -122,6 +122,12 @@ DEFAULT_ARCHIVES = (".agent/collaboration/_archive/backlog_done.md",)
 # de 6d341ff pasan a WARN_GRANDFATHERED; cualquier alta post-cutoff sin
 # recibo real sigue fallando SIN_RECIBO (no relaja el gate para nada nuevo).
 GRANDFATHER_CUTOFF_SHA_DEFAULT = "6d341ff3d40dfbeb468859f0ccba312f10f5f1cc"
+# WOT-2026-161v: c-14 cutoff is the post-admission commit named by the ficha.
+LENSES_CUTOFF_SHA = "3411db5f2fb130dcc39fd537eaefaf9370be6a10"
+LENSES_VERDICTS = frozenset({"APPROVE"})
+LENTES_TR_CONFORME = "LENTES_TR_CONFORME"
+LENTES_TR_NO_CONFORME = "LENTES_TR_NO_CONFORME"
+LENTES_TR_GRANDFATHERED = "LENTES_TR_GRANDFATHERED"
 # Forma canonica de id del contrato (requisito F2.1): acepta legacy WP-/WT-.
 ID_RE = re.compile(r"\b[A-Z]{2,6}-\d{4}-\d{2,3}[a-z]?\b")
 
@@ -131,7 +137,13 @@ VER_INCOHERENTE = "RECIBO_INCOHERENTE"
 VER_CONCURRENTE = "ALTA_CONCURRENTE"
 VER_COHERENTE = "RECIBO_COHERENTE"
 VER_OTRA_RAMA = "ID_EN_OTRA_RAMA"
-FAIL_VERDICTS = (VER_SIN_RECIBO, VER_INCOHERENTE, VER_CONCURRENTE, VER_OTRA_RAMA)
+FAIL_VERDICTS = (
+    VER_SIN_RECIBO,
+    VER_INCOHERENTE,
+    VER_CONCURRENTE,
+    VER_OTRA_RAMA,
+    LENTES_TR_NO_CONFORME,
+)
 SEMI_FAIL_VERDICTS = (VER_WARN_GRANDFATHERED,)
 SEMANTIC_TIPOS = {"DUPLICADO_DE", "ABSORBE_A", "VINCULADA_A"}
 VALID_PROPUESTA_TIPOS = SEMANTIC_TIPOS | {"NUEVA"}
@@ -223,6 +235,18 @@ def check_tr_lenses(ficha_text: str) -> tuple[int, list[str]]:
         resolved = [(*lens, model_family(lens[0], lens[1])) for lens in lenses]
     except FamilyResolutionError as exc:
         return 2, [f"MEDICION_FALLIDA: {exc}"]
+    unique_resolved = []
+    seen_resolved: set[tuple[str, str]] = set()
+    for lens in resolved:
+        identity = (lens[0].casefold(), lens[1].casefold())
+        if identity not in seen_resolved:
+            seen_resolved.add(identity)
+            unique_resolved.append(lens)
+    verdict_violations = [
+        f"lente {backend}/{model} declara veredicto {verdict!r}; solo APPROVE cuenta"
+        for backend, model, verdict, _family in resolved
+        if verdict not in LENSES_VERDICTS
+    ]
     violations = [
         f"lente {backend}/{model} (familia {family}) comparte familia con el triador "
         f"(familia {triador_family})"
@@ -234,12 +258,101 @@ def check_tr_lenses(ficha_text: str) -> tuple[int, list[str]]:
             "VEREDICTO: LENTES_TR_NO_CONFORME",
             "una sola lente declarada dos veces; se requieren dos lentes distintas",
         ]
-    if violations:
-        return 1, ["VEREDICTO: LENTES_TR_NO_CONFORME", *violations]
+    pairwise = [
+        f"lentes {left[0]}/{left[1]} y {right[0]}/{right[1]} "
+        f"comparten familia {left[3]}"
+        for index, left in enumerate(unique_resolved)
+        for right in unique_resolved[index + 1 :]
+        if left[3] == right[3]
+    ]
+    if verdict_violations or violations or pairwise:
+        return 1, [
+            "VEREDICTO: LENTES_TR_NO_CONFORME",
+            *verdict_violations,
+            *violations,
+            *pairwise,
+        ]
     return 0, [
         "VEREDICTO: LENTES_TR_CONFORME",
         f"veredictos registrados: {len(lenses)}; familia del triador: {triador_family}",
     ]
+
+
+def _c14_finding(repo: Path, alta: dict, cutoff_sha: str, lines: list[str]) -> dict:
+    """Mide c-14 para una alta post-corte y devuelve un hallazgo ortogonal.
+
+    Before: ``alta`` contiene ``id`` y ``commit`` producidos por ``audit_range``;
+        ``cutoff_sha`` resuelve y es ancestro del HEAD.
+    During: localiza la ficha, valida ``redactada_por`` y, para TR, reutiliza
+        ``check_tr_lenses``; solo lee el repositorio y la ficha.
+    After: devuelve un hallazgo con una clave ``LENTES_*`` propia; nunca cambia
+        los contadores ni el veredicto del recibo.
+    """
+    candidate_id = alta["id"]
+    commit = alta["commit"]
+    if _is_ancestor(repo, commit, cutoff_sha):
+        verdict = LENTES_TR_GRANDFATHERED
+        reason = f"alta {candidate_id} es ancestro o igual del corte {cutoff_sha[:12]}"
+        lines.append(
+            f"ALTA {candidate_id} en {commit[:12]} -> VEREDICTO: {verdict} ({reason})"
+        )
+        return {
+            "commit": commit[:12],
+            "candidato_id": candidate_id,
+            "clave": verdict,
+            "veredicto": verdict,
+            "motivos": [reason],
+        }
+
+    ficha_path = repo / ".agent" / "collaboration" / f"FICHA_{candidate_id}.md"
+    try:
+        ficha_text = ficha_path.read_text(encoding="utf-8")
+    except OSError:
+        reason = f"ficha no localizable: {ficha_path.name}"
+        verdict = LENTES_TR_NO_CONFORME
+        lines.append(
+            f"ALTA {candidate_id} en {commit[:12]} -> VEREDICTO: {verdict}: {reason}"
+        )
+        return {
+            "commit": commit[:12],
+            "candidato_id": candidate_id,
+            "clave": verdict,
+            "veredicto": verdict,
+            "motivos": [reason],
+        }
+
+    markers = []
+    for raw in ficha_text.splitlines():
+        key, separator, value = raw.partition(":")
+        if key.strip().casefold() == "redactada_por":
+            markers.append(value.strip().casefold() if separator else "")
+    if len(markers) != 1 or markers[0] not in {"tr", "co", "im"}:
+        reason = "redactada_por ausente o fuera de {tr, co, im}"
+        verdict = LENTES_TR_NO_CONFORME
+    elif markers[0] in {"co", "im"}:
+        verdict = LENTES_TR_CONFORME
+        reason = f"redactada_por={markers[0]} no exige lineas de lentes"
+    else:
+        try:
+            lens_rc, lens_lines = check_tr_lenses(ficha_text)
+        except MeasurementError as exc:
+            lens_rc, lens_lines = 2, [f"MEDICION_FALLIDA: {exc}"]
+        if lens_rc == 0:
+            verdict = LENTES_TR_CONFORME
+            reason = "ficha TR conforme"
+        else:
+            verdict = LENTES_TR_NO_CONFORME
+            reason = "; ".join(lens_lines)
+    lines.append(
+        f"ALTA {candidate_id} en {commit[:12]} -> VEREDICTO: {verdict}: {reason}"
+    )
+    return {
+        "commit": commit[:12],
+        "candidato_id": candidate_id,
+        "clave": verdict,
+        "veredicto": verdict,
+        "motivos": [reason],
+    }
 
 
 def _run_tr_lenses_cli(parser: argparse.ArgumentParser, ficha: Path | None) -> int:
@@ -1418,6 +1531,7 @@ def audit_range(
     extra_recibos: list[dict] | None = None,
     revalidate: dict | None = None,
     cutoff_sha: str | None = None,
+    altas_out: list[dict] | None = None,
 ) -> tuple[int, list[str], list[dict]]:
     """Auditoria del rango (o revalidacion single-recibo si revalidate).
 
@@ -1482,6 +1596,8 @@ def audit_range(
     ref_index.report(lines, findings)
     for offset, summary in enumerate(ref_index.summary_lines()):
         lines.insert(4 + offset, summary)
+    if altas_out is not None:
+        altas_out.extend(altas_procesadas)
     fails = [f for f in findings if f.get("veredicto") in FAIL_VERDICTS]
     grandfathered = [
         f for f in findings if f.get("veredicto") == VER_WARN_GRANDFATHERED
@@ -1557,9 +1673,46 @@ def _audit_closeout(
             False,
             [],
         )
+    altas: list[dict] = []
     code, lines, findings = audit_range(
-        repo, base, head, surfaces, extra_recibos=extra_recibos, cutoff_sha=cutoff_sha
+        repo,
+        base,
+        head,
+        surfaces,
+        extra_recibos=extra_recibos,
+        cutoff_sha=cutoff_sha,
+        altas_out=altas,
     )
+    if not _is_ancestor(repo, LENSES_CUTOFF_SHA, head):
+        lines.append("SKIP: corte no resoluble o no ancestro; c-14 no aplicado")
+    else:
+        lens_findings = [
+            _c14_finding(repo, alta, LENSES_CUTOFF_SHA, lines) for alta in altas
+        ]
+        findings.extend(lens_findings)
+        lens_failures = [
+            finding
+            for finding in lens_findings
+            if finding["veredicto"] == LENTES_TR_NO_CONFORME
+        ]
+        if lens_failures:
+            failure_line = (
+                f"VEREDICTO GLOBAL: FALLO ({len(lens_failures)} alta(s) "
+                "no conformes a c-14)"
+            )
+            coherent_index = next(
+                (
+                    index
+                    for index, line in enumerate(lines)
+                    if line == "VEREDICTO GLOBAL: RECIBO_COHERENTE"
+                ),
+                None,
+            )
+            if coherent_index is not None:
+                lines[coherent_index] = failure_line
+            elif not any("VEREDICTO GLOBAL: FALLO" in line for line in lines):
+                lines.append(failure_line)
+            code = 1
     return code, lines, False, findings
 
 

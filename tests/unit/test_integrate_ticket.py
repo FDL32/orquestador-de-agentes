@@ -96,6 +96,12 @@ def _world(tmp_path: Path, *, evidence: bool = True) -> World:
     _git(motor, "config", "user.email", "t@e.com")
     _git(motor, "config", "user.name", "T")
     base = _commit(motor, "README.md", "# vuelo", "init")
+    base = _commit(
+        motor,
+        ".agent/rules/common/vuelo_pilares.md",
+        "| Pilar | Regla | Estado |\n|---|---|---|\n| P33 | familias | RATIFICADA |\n",
+        "canon P33",
+    )
     cand = tmp_path / "cand"
     _git(motor, "worktree", "add", "-q", "-b", "candidate", str(cand))
     _commit(cand, "src/a.py", "x = 1", f"{TICKET}: paso 1")
@@ -107,8 +113,16 @@ def _world(tmp_path: Path, *, evidence: bool = True) -> World:
         "- **delivery_authority:** repo_motor\n",
         encoding="utf-8",
     )
+    (destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md").write_text(
+        "autor_modelo: codex|gpt-5.6-luna\nrevisor_modelo: claude|sonnet\n",
+        encoding="utf-8",
+    )
     if evidence:
-        _write_evidence(destino, tip)
+        _write_family_evidence(
+            destino,
+            tip,
+            [("nan_api", "deepseek-v4-flash"), ("kilo", "nan/glm5.3-flash")],
+        )
     return World(motor, cand, destino, base, tip)
 
 
@@ -171,10 +185,6 @@ def _write_family_evidence(
 
 def _family_world(tmp_path: Path, lenses: list[tuple[str, str]]) -> World:
     w = _world(tmp_path, evidence=False)
-    canon = (
-        "| Pilar | Regla | Estado |\n|---|---|---|\n| P33 | familias | RATIFICADA |\n"
-    )
-    _commit(w.motor, ".agent/rules/common/vuelo_pilares.md", canon, "canon P33")
     (w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md").write_text(
         "autor_modelo: codex|gpt-5.6-luna\nrevisor_modelo: claude|sonnet\n",
         encoding="utf-8",
@@ -281,6 +291,188 @@ def test_check_family_reviewer_and_canon_mutants_are_not_green(tmp_path):
     rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
     assert rc == 2
     assert "P33 no RATIFICADA" in lines[0]
+
+
+def test_integrate_default_closure_invokes_family_check(tmp_path, monkeypatch):
+    w = _world(tmp_path)
+    calls = []
+
+    def fail_family(*args):
+        calls.append(args)
+        return 1, ["FAIL familia cierre"]
+
+    monkeypatch.setattr(it, "check_family", fail_family)
+    rc, _lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 1
+    assert calls
+    assert _git(w.motor, "rev-parse", "HEAD") == w.base
+    assert not (w.destino / ".agent" / "runtime" / "integration_receipts").exists()
+    calls.clear()
+    _git(w.motor, "merge", "--ff-only", "candidate")
+    attest_rc, attest_lines = it.integrate(
+        TICKET, w.tip, w.destino, w.motor, attest=True
+    )
+    assert attest_rc == 0, attest_lines
+    assert not calls
+
+
+def test_integrate_family_rc2_stops_merge_and_receipt(tmp_path, monkeypatch):
+    w = _world(tmp_path)
+    monkeypatch.setattr(
+        it, "check_family", lambda *args: (2, ["NO VERIFICABLE familia"])
+    )
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 2
+    assert lines == ["NO VERIFICABLE familia"]
+    assert _git(w.motor, "rev-parse", "HEAD") == w.base
+    assert not it.receipt_path(w.destino, w.tip).exists()
+
+
+def test_integrate_grandfather_warning_is_reported(tmp_path, monkeypatch):
+    w = _world(tmp_path)
+    (w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md").write_text(
+        f"titulo: {TICKET}\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(it, "FROZEN_FAMILY_GRANDFATHER_IDS", (TICKET,))
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 0
+    output = "\n".join(lines)
+    assert "WARN grandfathered" in output
+    assert TICKET in output
+    assert any(line.startswith("OK integrate") for line in lines)
+    assert "OK integrate" in output
+
+
+def test_integrate_default_closure_enforces_real_family_violation(tmp_path):
+    w = _family_world(
+        tmp_path,
+        [("codex", "gpt-5.6-luna"), ("kilo", "nan/glm5.3-flash")],
+    )
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 1, lines
+    assert any("autor" in line for line in lines)
+    assert _git(w.motor, "rev-parse", "HEAD") == w.base
+    assert not it.receipt_path(w.destino, w.tip).exists()
+
+
+def test_family_grandfather_warn_frozen_list(tmp_path, monkeypatch, capsys):
+    w = _family_world(tmp_path, [])
+    ficha = w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md"
+    ficha.unlink()
+    monkeypatch.setattr(it, "FROZEN_FAMILY_GRANDFATHER_IDS", (TICKET,))
+    rc = it.main(
+        [
+            "--ticket",
+            TICKET,
+            "--candidate",
+            "candidate",
+            "--project-root",
+            str(w.destino),
+            "--motor-root",
+            str(w.motor),
+            "--check-family",
+        ]
+    )
+    assert rc == 0
+    output = capsys.readouterr().out
+    assert "WARN grandfathered" in output
+    assert TICKET in output
+
+
+def test_pre_corte_frozen_list_pins_ten_full_ids():
+    assert it.FROZEN_FAMILY_GRANDFATHER_IDS == (
+        "WOT-2026-161j",
+        "WOT-2026-161k",
+        "WOT-2026-161l",
+        "WOT-2026-161m",
+        "WOT-2026-161n",
+        "WOT-2026-161o",
+        "WOT-2026-161q",
+        "WOT-2026-161r",
+        "WOT-2026-161s",
+        "WOT-2026-161t",
+    )
+
+
+def test_family_missing_declaration_outside_frozen_list(tmp_path, monkeypatch):
+    w = _family_world(tmp_path, [])
+    (w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md").unlink()
+    monkeypatch.setattr(it, "FROZEN_FAMILY_GRANDFATHER_IDS", ())
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 2
+    assert "ficha ausente" in lines[0]
+
+
+def test_family_missing_declaration_existing_ficha_is_grandfathered(
+    tmp_path, monkeypatch
+):
+    w = _family_world(tmp_path, [])
+    ficha = w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md"
+    ficha.write_text(f"titulo: {TICKET}\n", encoding="utf-8")
+    monkeypatch.setattr(it, "FROZEN_FAMILY_GRANDFATHER_IDS", (TICKET,))
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 0
+    assert "WARN grandfathered" in lines[0]
+    assert TICKET in lines[0]
+
+    monkeypatch.setattr(it, "FROZEN_FAMILY_GRANDFATHER_IDS", ())
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 2
+    assert "falta la clave" in lines[0]
+
+
+def test_family_frozen_declared_without_canon_is_rc2(tmp_path, monkeypatch):
+    w = _family_world(tmp_path, [])
+    canon = ".agent/rules/common/vuelo_pilares.md"
+    _git(w.motor, "rm", "--", canon)
+    _git(w.motor, "commit", "-q", "-m", "remove canon for regression")
+    monkeypatch.setattr(it, "FROZEN_FAMILY_GRANDFATHER_IDS", (TICKET,))
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 2
+    assert "WARN grandfathered" not in "\n".join(lines)
+
+
+def test_family_frozen_malformed_declaration_is_rc2(tmp_path, monkeypatch):
+    w = _family_world(tmp_path, [])
+    (w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md").write_text(
+        "autor_modelo: codex|gpt-5.6-luna\n"
+        "autor_modelo: codex|gpt-5.6-luna\n"
+        "revisor_modelo: claude|sonnet\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(it, "FROZEN_FAMILY_GRANDFATHER_IDS", (TICKET,))
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 2
+    assert "repetida" in lines[0]
+    assert "WARN grandfathered" not in "\n".join(lines)
+
+
+def test_family_duplicate_keys_rc2(tmp_path):
+    w = _family_world(tmp_path, [])
+    (w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md").write_text(
+        "autor_modelo: codex|gpt-5.6-luna\n"
+        "autor_modelo: codex|gpt-5.6-luna\n"
+        "revisor_modelo: claude|sonnet\n",
+        encoding="utf-8",
+    )
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 2
+    assert "repetida" in lines[0]
+
+
+def test_family_duplicate_keys_control_positive(tmp_path):
+    w = _family_world(
+        tmp_path,
+        [("nan_api", "deepseek-v4-flash"), ("kilo", "nan/glm5.3-flash")],
+    )
+    ficha = w.destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md"
+    ficha.write_text(
+        "autor_modelo: codex|gpt-5.6-luna\nrevisor_modelo: claude|sonnet\n",
+        encoding="utf-8",
+    )
+    rc, lines = it.check_family(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 0
+    assert "repetida" not in "\n".join(lines)
 
 
 # integrar - positivo

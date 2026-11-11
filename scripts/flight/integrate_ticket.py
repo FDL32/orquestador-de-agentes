@@ -51,6 +51,20 @@ RECEIPT_MODES = ("integrate", "attest")
 RECEIPTS_REL = Path(".agent") / "runtime" / "integration_receipts"
 _WRAPPER_AUTHORITY = "repo_motor"
 
+# c-13: debt grandfathering is deliberately an exact, full-ID allowlist.
+FROZEN_FAMILY_GRANDFATHER_IDS = (
+    "WOT-2026-161j",
+    "WOT-2026-161k",
+    "WOT-2026-161l",
+    "WOT-2026-161m",
+    "WOT-2026-161n",
+    "WOT-2026-161o",
+    "WOT-2026-161q",
+    "WOT-2026-161r",
+    "WOT-2026-161s",
+    "WOT-2026-161t",
+)
+
 
 class FamilyCheckError(ValueError):
     """Before: se recibe una ficha, canon o registro de familia declarativo.
@@ -311,9 +325,15 @@ def integrate(
             for v in failures
         ]
         return 1, [f"FAIL audit del bucle en rojo para {ticket}", *detail]
-    return _finish(
+    family_lines: list[str] = []
+    if not attest:
+        family_rc, family_lines = check_family(ticket, tip, project_root, motor_root)
+        if family_rc != 0:
+            return family_rc, family_lines
+    finish_rc, finish_lines = _finish(
         ticket, tip, "attest" if attest else "integrate", project_root, motor_root, head
     )
+    return finish_rc, [*finish_lines, *family_lines]
 
 
 def parse_ficha_models(text: str) -> dict[str, tuple[str, str]]:
@@ -389,7 +409,7 @@ def family_violations(
     return violations
 
 
-def check_family(
+def check_family(  # noqa: C901
     ticket: str,
     candidate: str,
     project_root: Path | None,
@@ -422,8 +442,27 @@ def check_family(
         model_family,
     )
 
+    if not ficha_path.is_file():
+        if ticket in FROZEN_FAMILY_GRANDFATHER_IDS:
+            return 0, [
+                f"WARN grandfathered familia {ticket}: ficha ausente "
+                f"(id completo {ticket})"
+            ]
+        return 2, [
+            f"NO VERIFICABLE familia {ticket}: ficha ausente (id completo {ticket})"
+        ]
     try:
-        declarations = parse_ficha_models(ficha_path.read_text(encoding="utf-8"))
+        ficha_text = ficha_path.read_text(encoding="utf-8")
+        try:
+            declarations = parse_ficha_models(ficha_text)
+        except FamilyCheckError as exc:
+            missing = str(exc).startswith("falta la clave ")
+            if missing and ticket in FROZEN_FAMILY_GRANDFATHER_IDS:
+                return 0, [
+                    f"WARN grandfathered familia {ticket}: ficha sin declaracion "
+                    f"(id completo {ticket})"
+                ]
+            raise
         status = canon_p33_status(canon_path.read_text(encoding="utf-8"))
         if status != "RATIFICADA":
             reason = (
