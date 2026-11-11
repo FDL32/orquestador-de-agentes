@@ -24,6 +24,13 @@ saliente coordinator in its paquete de relevo; the lifecycle of scheduled tasks
 (creating its own and deleting the predecessor's) is not part of this
 specification.
 
+After rendering, the post-derivacion check emits lines inside the DIFERENCIAS
+block with the literal ``CHECK POST-DERIVACION: ``. Its ``rc 4`` means that the
+check failed and ``--out`` was not written. Rule (a) runs in both modes, while
+rule (b) runs only in ``--out`` mode. This is distinct from the ``rc 4`` of
+``CERRAR_Y_SALTAR`` in ``ctx_acumulado`` (another CLI that prints ESTADO): the
+literal ``CHECK POST-DERIVACION: `` identifies this command's source.
+
 R7: the ``para el salto {own_new} -> {own_new}`` correction is applied only to
 unprotected source pieces, never to protected cascade, postcompaction, or
 judgement spans.
@@ -621,6 +628,119 @@ def _failure(text: str, problems: list[str]) -> str:
     return text.rstrip("\n") + "\n\nDIFERENCIAS:\n" + "\n".join(problems) + "\n"
 
 
+def _post_derivacion_paragraph_problems(text: str) -> list[str]:
+    fragments = [
+        re.sub(r"\s+", " ", fragment).strip()
+        for fragment in re.split(r"(?<=\.)\s+|\r?\n", text)
+    ]
+    sentences = [fragment for fragment in fragments if fragment]
+    problems: list[str] = []
+    run_start: int | None = None
+    run_count = 0
+
+    def emit_run() -> None:
+        nonlocal run_start, run_count
+        if run_start is not None and run_count >= 2:
+            prefix = sentences[run_start][:40]
+            problems.append(
+                f"parrafo repetido: {run_count} apariciones consecutivas de la frase '{prefix}'"
+            )
+        run_start = None
+        run_count = 0
+
+    for index in range(len(sentences) - 1):
+        first = sentences[index]
+        second = sentences[index + 1]
+        matching = (
+            len(first) >= 20
+            and len(second) >= 20
+            and (first == second or first.endswith(second))
+        )
+        if matching:
+            if run_start is None:
+                run_start = index
+                run_count = 2
+            else:
+                run_count += 1
+        else:
+            emit_run()
+    emit_run()
+    return problems
+
+
+def _post_derivacion_citation_token(text: str, start: int, end: int) -> str:
+    delimiters = set(" \t\n,;()[]{}\"'=|")
+    token_start = start
+    while token_start > 0 and text[token_start - 1] not in delimiters:
+        token_start -= 1
+    return text[token_start:end]
+
+
+def _post_derivacion_exempt_names(
+    self_name: str | None, predecessor_name: str | None
+) -> set[str]:
+    pattern = r"LATIDO_CO-(\d+)_.*_(\d{8})\.md"
+    if self_name is None or predecessor_name is None:
+        return set()
+    self_match = re.fullmatch(pattern, self_name)
+    predecessor_match = re.fullmatch(pattern, predecessor_name)
+    if self_match is None or predecessor_match is None:
+        return set()
+    pair_name = (
+        f"LATIDO_SUPERVISORA_CO-{predecessor_match.group(1)}_sobre_"
+        f"CO-{self_match.group(1)}_{self_match.group(2)}.md"
+    )
+    return {self_name, pair_name}
+
+
+def _post_derivacion_citation_problems(
+    text: str,
+    resolve_dir: Path,
+    self_name: str | None,
+    predecessor_name: str | None,
+) -> list[str]:
+    exempt_names = _post_derivacion_exempt_names(self_name, predecessor_name)
+    problems: list[str] = []
+    for match in re.finditer(r"LATIDO_[A-Za-z0-9_.-]*\.md", text):
+        token = _post_derivacion_citation_token(text, match.start(), match.end())
+        basename = re.split(r"[\\/]", token)[-1]
+        if basename in exempt_names:
+            continue
+        absolute = bool(
+            re.match(r"^[A-Za-z]:[\\/]", token) or token.startswith(("\\\\", "//"))
+        )
+        candidate = Path(token) if absolute else Path(resolve_dir) / basename
+        if not candidate.is_file():
+            problems.append(f"cita LATIDO inexistente: {token}")
+    return problems
+
+
+def check_post_derivacion(
+    text: str,
+    resolve_dir: Path,
+    self_name: str | None = None,
+    predecessor_name: str | None = None,
+) -> list[str]:
+    """Check repeated paragraphs and staged heartbeat citations.
+
+    Before: ``text`` is the rendered heartbeat and ``resolve_dir`` is the
+    directory used to resolve non-absolute citations.
+
+    During: the always-on repeated-paragraph rule runs first; citation checks
+    run only when ``self_name`` is supplied, using the validated pair exemption.
+
+    After: return problem messages without presentation prefixes, in rule order.
+    """
+    problems = _post_derivacion_paragraph_problems(text)
+    if self_name is not None:
+        problems.extend(
+            _post_derivacion_citation_problems(
+                text, resolve_dir, self_name, predecessor_name
+            )
+        )
+    return problems
+
+
 def _next_session_code(code: str) -> str:
     match = re.fullmatch(r"(.*?)(\d+)", code)
     if match is None:
@@ -635,6 +755,7 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901
     parser.add_argument("--go-index", required=True, type=int)
     parser.add_argument("--juicio", action="append", default=[])
     parser.add_argument("--out", type=Path)
+    parser.add_argument("--resolve-dir", type=Path, default=None)
     args = parser.parse_args(argv)
     try:
         roster = json.loads(args.roster.read_text(encoding="utf-8"))
@@ -678,6 +799,26 @@ def _main(argv: list[str] | None = None) -> int:  # noqa: C901
         )
         return 2
     rc, output = render_latido(args.predecessor, roster, args.go_index, juicios)
+    if rc == 0:
+        resolve_dir = (
+            args.resolve_dir
+            if args.resolve_dir is not None
+            else (args.out.parent if args.out is not None else Path.cwd())
+        )
+        problems = check_post_derivacion(
+            output,
+            resolve_dir,
+            self_name=args.out.name if args.out is not None else None,
+            predecessor_name=args.predecessor.name,
+        )
+        if problems:
+            sys.stdout.write(
+                _failure(
+                    output,
+                    [f"CHECK POST-DERIVACION: {problem}" for problem in problems],
+                )
+            )
+            return 4
     if args.out is None:
         sys.stdout.buffer.write(output.encode("utf-8"))
     else:

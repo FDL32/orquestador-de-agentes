@@ -9,6 +9,7 @@ import pytest
 import scripts.flight.render_latido as render_latido_module
 from scripts.flight.render_latido import (
     _main,
+    check_post_derivacion,
     predecessor_sha12,
     reduce_roster,
     render_latido,
@@ -19,6 +20,8 @@ ROOT = Path(__file__).parents[2]
 PREDECESSOR = ROOT / "tests/fixtures/render_latido/latido_predecesor.md"
 SUCCESSOR = ROOT / "tests/fixtures/render_latido/latido_sucesor.md"
 ROSTER = ROOT / "tests/fixtures/render_latido/flight_roster.json"
+_REAL_STEP9_CO_72 = "Procedimiento: ARRANQUE_CO-72 s.1 y PROTOCOLO_POSTCOMPACTACION_CO-54.md s.2 y PROTOCOLO_POSTCOMPACTACION_CO-55.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-56.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-57.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-58.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-59.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-60.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-61.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-62.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-63.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-64.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-65.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-66.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-67.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-68.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-69.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-70.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-71.md s.3 y s.4 (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor."
+_REAL_STEP9_CO_67 = "Procedimiento: ARRANQUE_CO-67 s.1 y PROTOCOLO_POSTCOMPACTACION_CO-54.md s.2 y PROTOCOLO_POSTCOMPACTACION_CO-55.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-56.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-57.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-58.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-59.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-60.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-61.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-62.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-63.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-64.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-65.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-66.md s.3 y s.4 (procedimiento de ticket; el ARRANQUE de CO-67 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-67 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor."
 
 
 def _juicios_sucesor() -> dict[str, str]:
@@ -1062,6 +1065,12 @@ def test_cli_success_propagates_render_rc_and_writes_out(tmp_path: Path) -> None
         path.write_text(value, encoding="utf-8")
         paths.append((name, path))
     out = tmp_path / "rendered.md"
+    for name in (
+        "LATIDO_CO-55_v7.1_20261108.md",
+        "LATIDO_CO-56_v7.1_20261108.md",
+        "LATIDO_SUPERVISORA_CO-55_sobre_CO-56_20261108.md",
+    ):
+        (tmp_path / name).write_text("staged", encoding="utf-8")
     args = [
         "--predecessor",
         str(PREDECESSOR),
@@ -1071,6 +1080,8 @@ def test_cli_success_propagates_render_rc_and_writes_out(tmp_path: Path) -> None
         "2",
         "--out",
         str(out),
+        "--resolve-dir",
+        str(tmp_path),
     ]
     for name, path in paths:
         args.extend(["--juicio", f"{name}=@{path}"])
@@ -1081,6 +1092,332 @@ def test_cli_success_propagates_render_rc_and_writes_out(tmp_path: Path) -> None
 
     assert actual_rc == expected_rc == 0
     assert out.read_text(encoding="utf-8") == expected_output
+
+
+def test_post_derivacion_flags_adjacent_duplicate_sentences(tmp_path: Path) -> None:
+    unit_match = re.search(
+        r"\(procedimiento de ticket; el ARRANQUE de CO-72.*?actor\.",
+        _REAL_STEP9_CO_72,
+    )
+    assert unit_match is not None
+    unit = unit_match.group(0)
+    esperado = _REAL_STEP9_CO_72.count(unit)
+    problemas = check_post_derivacion(_REAL_STEP9_CO_72, tmp_path)
+
+    assert esperado >= 2
+    assert len(problemas) == 1
+    assert str(esperado) in problemas[0]
+    assert "parrafo repetido:" in problemas[0]
+    assert "Procedimiento: ARRANQUE_CO-72" in problemas[0]
+
+
+def test_post_derivacion_flags_minimal_two_repetitions(tmp_path: Path) -> None:
+    unit_match = re.search(
+        r"\(procedimiento de ticket; el ARRANQUE de CO-67.*?actor\.",
+        _REAL_STEP9_CO_67,
+    )
+    assert unit_match is not None
+    esperado = _REAL_STEP9_CO_67.count(unit_match.group(0))
+    problemas = check_post_derivacion(_REAL_STEP9_CO_67, tmp_path)
+
+    assert esperado >= 2
+    assert len(problemas) == 1
+    assert str(esperado) in problemas[0]
+
+
+def test_post_derivacion_control_dedup_clean(tmp_path: Path) -> None:
+    unit_match = re.search(
+        r"\(procedimiento de ticket; el ARRANQUE de CO-72.*?actor\.",
+        _REAL_STEP9_CO_72,
+    )
+    assert unit_match is not None
+    unica = _REAL_STEP9_CO_72.split(unit_match.group(0))[0] + unit_match.group(0)
+
+    assert check_post_derivacion(unica, tmp_path) == []
+    assert unica.count(unit_match.group(0)) == 1
+
+    unit_match = re.search(
+        r"\(procedimiento de ticket; el ARRANQUE de CO-67.*?actor\.",
+        _REAL_STEP9_CO_67,
+    )
+    assert unit_match is not None
+    unidad = unit_match.group(0)
+
+    # Falso negativo medido: mayusculas/minusculas usan igualdad exacta.
+    assert check_post_derivacion(f"{unidad} {unidad.upper()}", tmp_path) == []
+
+    # Falsos negativos medidos: ? y ! no crean fronteras de frase.
+    interrogacion = (
+        "Frase larga de prueba que termina con interrogacion? "
+        "Frase larga de prueba que termina con interrogacion?"
+    )
+    exclamacion = (
+        "Frase larga de prueba que termina con exclamacion! "
+        "Frase larga de prueba que termina con exclamacion!"
+    )
+    assert check_post_derivacion(interrogacion, tmp_path) == []
+    assert check_post_derivacion(exclamacion, tmp_path) == []
+
+    # Falso negativo medido: quitar el punto final rompe el sufijo exacto.
+    assert check_post_derivacion(_REAL_STEP9_CO_67[:-1], tmp_path) == []
+
+    # Falso negativo medido: la repeticion intercalada ABAB no es adyacente.
+    relleno = "Relleno distinto con mas de veinte caracteres para separar frases."
+    assert (
+        check_post_derivacion(f"{unidad} {relleno} {unidad} {relleno}", tmp_path) == []
+    )
+
+    # Falsos negativos medidos x3: NBSP, tabuladores y doble espacio se colapsan.
+    for separador in ("\u00a0", "\t", "  "):
+        problemas = check_post_derivacion(
+            f"{unidad} {unidad.replace(' ', separador)}", tmp_path
+        )
+        assert len(problemas) == 1
+        assert "parrafo repetido:" in problemas[0]
+
+
+def test_post_derivacion_threshold_applies_to_both_sentences(tmp_path: Path) -> None:
+    larga = "Esta frase de control supera el umbral de veinte caracteres y termina en corta."
+    corta = "corta."
+    assert larga.endswith(corta)
+    assert len(larga) >= 20
+    assert len(corta) < 20
+    assert check_post_derivacion(f"{larga} {corta}", tmp_path) == []
+
+    larga_b = "Prefijo distinto de relleno mas largo y luego la cola compartida que supera veinte."
+    corta_b = "la cola compartida que supera veinte."
+    assert len(corta_b) >= 20
+    assert larga_b.endswith(corta_b)
+    assert len(check_post_derivacion(f"{larga_b} {corta_b}", tmp_path)) == 1
+
+
+def test_post_derivacion_flags_missing_latido_citation_and_control(
+    tmp_path: Path,
+) -> None:
+    texto = "Referencia: LATIDO_CO-70_v7.1_20261109.md"
+    kwargs = {
+        "self_name": "LATIDO_CO-72_v7.1_20261111.md",
+        "predecessor_name": "LATIDO_CO-71_v7.1_20261111.md",
+    }
+    problemas = check_post_derivacion(texto, tmp_path, **kwargs)
+
+    assert len(problemas) == 1
+    assert "cita LATIDO inexistente" in problemas[0]
+    assert "LATIDO_CO-70_v7.1_20261109.md" in problemas[0]
+    (tmp_path / "LATIDO_CO-70_v7.1_20261109.md").write_text("x", encoding="utf-8")
+    assert check_post_derivacion(texto, tmp_path, **kwargs) == []
+    assert check_post_derivacion(texto, tmp_path) == []
+
+
+def test_post_derivacion_resolves_dates_and_absolute_paths(tmp_path: Path) -> None:
+    old = tmp_path / "LATIDO_CO-70_v7.1_20261109.md"
+    old.write_text("old", encoding="utf-8")
+    kwargs = {
+        "self_name": "LATIDO_CO-72_v7.1_20261111.md",
+        "predecessor_name": "LATIDO_CO-71_v7.1_20261111.md",
+    }
+    assert (
+        check_post_derivacion(
+            ".../diseno/LATIDO_CO-70_v7.1_20261109.md", tmp_path, **kwargs
+        )
+        == []
+    )
+    assert check_post_derivacion(str(old.resolve()), tmp_path, **kwargs) == []
+    missing = str(tmp_path / "no-existe" / "LATIDO_CO-71_v7.1_20261109.md")
+    problemas = check_post_derivacion(missing, tmp_path, **kwargs)
+    assert len(problemas) == 1
+    assert missing in problemas[0]
+
+
+def test_post_derivacion_pair_exemption_scenarios(tmp_path: Path) -> None:
+    kwargs = {
+        "self_name": "LATIDO_CO-72_v7.1_20261111.md",
+        "predecessor_name": "LATIDO_CO-71_v7.1_20261111.md",
+    }
+    tokens = [
+        "LATIDO_CO-70_v7.1_20261109.md",
+        "LATIDO_CO-71_v7.1_20261109.md",
+        "LATIDO_SUPERVISORA_CO-71_sobre_CO-72_20261111.md",
+        "LATIDO_SUPERVISORA_CO-99_sobre_CO-72_20261111.md",
+        "LATIDO_SUPERVISORA_CO-71_sobre_CO-72_20261109.md",
+        "C:/Temp/directorio-que-no-existe/LATIDO_SUPERVISORA_CO-71_sobre_CO-72_20261111.md",
+    ]
+    problemas = check_post_derivacion(" ".join(tokens), tmp_path, **kwargs)
+    assert len(problemas) == 4
+    assert all(
+        token in " ".join(problemas)
+        for token in (tokens[0], tokens[1], tokens[3], tokens[4])
+    )
+    assert all(token not in " ".join(problemas) for token in (tokens[2], tokens[5]))
+
+
+def test_post_derivacion_pair_exemption_fail_closed_pattern(tmp_path: Path) -> None:
+    citation = "LATIDO_CO-72_v7.1_20261111.md"
+    assert (
+        len(
+            check_post_derivacion(
+                citation,
+                tmp_path,
+                self_name="LATIDO_CO-72_v7.1_20261111.md",
+                predecessor_name="sin-patron.md",
+            )
+        )
+        == 1
+    )
+    assert (
+        len(
+            check_post_derivacion(
+                citation,
+                tmp_path,
+                self_name="rendered.md",
+                predecessor_name="LATIDO_CO-71_v7.1_20261111.md",
+            )
+        )
+        == 1
+    )
+    assert (
+        check_post_derivacion(
+            citation,
+            tmp_path,
+            self_name="LATIDO_CO-72_v7.1_20261111.md",
+            predecessor_name="LATIDO_CO-71_v7.1_20261111.md",
+        )
+        == []
+    )
+
+
+def test_cli_post_derivacion_wiring_rc4_blocks_out_write(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    juicios = _juicios_sucesor()
+    args = [
+        "--predecessor",
+        str(PREDECESSOR),
+        "--roster",
+        str(ROSTER),
+        "--go-index",
+        "2",
+        "--out",
+        str(tmp_path / "clean.md"),
+        "--resolve-dir",
+        str(tmp_path),
+    ]
+    for name, value in juicios.items():
+        path = tmp_path / f"{name}.txt"
+        path.write_text(value, encoding="utf-8")
+        args.extend(["--juicio", f"{name}=@{path}"])
+    for name in (
+        "LATIDO_CO-55_v7.1_20261108.md",
+        "LATIDO_CO-56_v7.1_20261108.md",
+        "LATIDO_SUPERVISORA_CO-55_sobre_CO-56_20261108.md",
+    ):
+        (tmp_path / name).write_text("staged", encoding="utf-8")
+    juicio_args = []
+    for name in juicios:
+        juicio_args.extend(["--juicio", f"{name}=@{tmp_path / name}.txt"])
+    assert _main(args) == 0
+    assert (tmp_path / "clean.md").is_file()
+    assert (tmp_path / "clean.md").read_text(encoding="utf-8")
+
+    calls = []
+    monkeypatch.setattr(
+        render_latido_module,
+        "check_post_derivacion",
+        lambda *args, **kwargs: calls.append(args) or [],
+    )
+    rc = _main(
+        [
+            "--predecessor",
+            str(PREDECESSOR),
+            "--roster",
+            str(tmp_path / "missing.json"),
+            "--go-index",
+            "2",
+        ]
+    )
+    assert rc == 2
+    assert calls == []
+    rc = _main(
+        [
+            "--predecessor",
+            str(PREDECESSOR),
+            "--roster",
+            str(ROSTER),
+            "--go-index",
+            "2",
+        ]
+    )
+    assert rc == 3
+    assert calls == []
+    monkeypatch.undo()
+
+    repeated = tmp_path / "repeated.md"
+    repeated.write_text(
+        PREDECESSOR.read_text(encoding="utf-8")
+        + "\nFrase repetida de control con mas de veinte caracteres. Frase repetida de control con mas de veinte caracteres.\n",
+        encoding="utf-8",
+    )
+    rc = _main(
+        [
+            "--predecessor",
+            str(repeated),
+            "--roster",
+            str(ROSTER),
+            "--go-index",
+            "2",
+            "--out",
+            str(tmp_path / "rc4.md"),
+            "--resolve-dir",
+            str(tmp_path),
+            *juicio_args,
+        ]
+    )
+    captured = capsys.readouterr()
+    assert rc == 4
+    assert not (tmp_path / "rc4.md").exists()
+    assert "CHECK POST-DERIVACION: " in captured.out
+    assert "DIFERENCIAS:" in captured.out
+    rc = _main(
+        [
+            "--predecessor",
+            str(repeated),
+            "--roster",
+            str(ROSTER),
+            "--go-index",
+            "2",
+            *juicio_args,
+        ]
+    )
+    assert rc == 4
+    assert "CHECK POST-DERIVACION: " in capsys.readouterr().out
+    ghost = tmp_path / "ghost.md"
+    ghost.write_text(
+        PREDECESSOR.read_text(encoding="utf-8") + "\nLATIDO_FANTASMA_20261111.md\n",
+        encoding="utf-8",
+    )
+    assert (
+        _main(
+            [
+                "--predecessor",
+                str(ghost),
+                "--roster",
+                str(ROSTER),
+                "--go-index",
+                "2",
+                *juicio_args,
+            ]
+        )
+        == 0
+    )
+
+
+def test_module_docstring_declares_post_derivacion_and_rc4() -> None:
+    doc = render_latido_module.__doc__
+    assert "rc 4" in doc
+    assert "CHECK POST-DERIVACION" in doc
+    assert "CERRAR_Y_SALTAR" in doc
+    assert "ctx_acumulado" in doc
+    assert "--out" in doc
 
 
 @pytest.mark.parametrize("thread_id", [[], {}, None])
