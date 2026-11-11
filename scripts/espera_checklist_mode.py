@@ -8,7 +8,11 @@ During: `on` escribe solo el modo y una fecha UTC, `off` borra el centinela y
 `status` informa incluso ante JSON ilegible, siempre en modo fail-open.
 After: el estado queda en el centinela de espera bajo `.agent/runtime/`; este
 script no se cablea en bootstrap ni en cierre de sesion porque su armado es
-manual durante el periodo de observacion.
+manual durante el periodo de observacion. El arranque avisa ante centinela
+EXPIRADO o ILEGIBLE con `CENTINELA-ESPERA-EXPIRADO` o
+`CENTINELA-ESPERA-ILEGIBLE`, en fail-open y solo lectura. No avisa ante fichero
+ausente, vacio/{} ni `{"mode":"off"}`. `{mode:off}` solo existe escrito a mano:
+`turn_on` solo admite `observe|block` y `turn_off` borra el fichero.
 """
 
 from __future__ import annotations
@@ -102,6 +106,9 @@ def show_status(root: Path) -> int:
         return 0
     if not isinstance(data, dict):
         print("espera_checklist_mode: ON pero ILEGIBLE")
+        return 0
+    if data.get("mode") == "off":
+        print("espera_checklist_mode: OFF (mode=off)")
         return 0
     expiry = _sentinel_expiry(data)
     if expiry:

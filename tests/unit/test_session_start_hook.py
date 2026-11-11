@@ -1765,3 +1765,187 @@ def test_ruta_del_centinela_una_sola_fuente_en_el_arranque() -> None:
     assert neighbour_source.count(_SENTINEL_LITERAL) == 1, (
         "control positivo: el censo debe ver el literal donde existe"
     )
+
+
+def test_session_start_warns_on_expired_sentinel(monkeypatch, tmp_path, capsys) -> None:
+    """Before: hay un observe caducado; During: arranca y lee sin escribir.
+
+    After: ambos canales avisan y el control fresco permanece silencioso.
+    MUTACION: rearmar o silenciar la caducidad deja el test en rojo.
+    """
+    old = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    root = _project_root(tmp_path, "caducado")
+    sentinel = _sentinel(root)
+    sentinel.write_text(json.dumps({"mode": "observe", "activated_at": old}))
+    before = sentinel.read_bytes()
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    out = json.loads(capsys.readouterr().out)
+    ctx = _ctx(out)
+    assert "CENTINELA-ESPERA-EXPIRADO" in ctx
+    assert "CENTINELA-ESPERA-EXPIRADO" in out["systemMessage"]
+    assert sentinel.read_bytes() == before
+
+    fresh_root = _project_root(tmp_path, "fresco")
+    fresh = _sentinel(fresh_root)
+    fresh.write_text(
+        json.dumps(
+            {"mode": "observe", "activated_at": datetime.now(timezone.utc).isoformat()}
+        )
+    )
+    fresh_before = fresh.read_bytes()
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.chdir(fresh_root)
+    assert hook.main() == 0
+    fresh_out = json.loads(capsys.readouterr().out)
+    assert "CENTINELA-ESPERA-" not in _ctx(fresh_out)
+    assert "CENTINELA-ESPERA-" not in fresh_out.get("systemMessage", "")
+    assert fresh.read_bytes() == fresh_before
+
+
+def test_session_start_warns_on_unreadable_sentinel(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Before: cada centinela no es legible; During: se valida en bytes.
+
+    After: ambos canales contienen ILEGIBLE y no se propaga ninguna excepcion.
+    MUTACION: aceptar no-dict o fecha ausente como fresco deja un caso verde.
+    """
+    casos = [b"\xff\xfe\x00", b"{roto", b"[1,2,3]", b'{"mode":"observe"}']
+    hook = _hook_module()
+    for index, raw in enumerate(casos):
+        root = _project_root(tmp_path, f"ilegible_{index}")
+        sentinel = _sentinel(root)
+        sentinel.write_bytes(raw)
+        _prepare_main(monkeypatch, hook)
+        monkeypatch.chdir(root)
+        assert hook.main() == 0
+        out = json.loads(capsys.readouterr().out)
+        assert "CENTINELA-ESPERA-ILEGIBLE" in _ctx(out)
+        assert "CENTINELA-ESPERA-ILEGIBLE" in out["systemMessage"]
+
+
+def test_session_start_silent_when_sentinel_absent_or_off_or_empty(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Before: hay estados silenciosos y un control roto; During: se arranca.
+
+    After: solo el control roto avisa; ausente, vacio, {} y off no lo hacen.
+    MUTACION: evaluar off despues de caducidad o tratar vacio como ilegible cae.
+    """
+    old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    casos = [
+        None,
+        b"",
+        b"{}",
+        b'{"mode":"off"}',
+        json.dumps({"mode": "off", "activated_at": old}).encode(),
+    ]
+    hook = _hook_module()
+    for index, raw in enumerate(casos):
+        root = _project_root(tmp_path, f"silencio_{index}")
+        if raw is not None:
+            _sentinel(root).write_bytes(raw)
+        _prepare_main(monkeypatch, hook)
+        monkeypatch.chdir(root)
+        assert hook.main() == 0
+        out = json.loads(capsys.readouterr().out)
+        assert "CENTINELA-ESPERA-" not in _ctx(out)
+        assert "CENTINELA-ESPERA-" not in out.get("systemMessage", "")
+
+    root = _project_root(tmp_path, "control_roto")
+    _sentinel(root).write_bytes(b"{roto")
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.chdir(root)
+    assert hook.main() == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "CENTINELA-ESPERA-ILEGIBLE" in _ctx(out)
+    assert "CENTINELA-ESPERA-ILEGIBLE" in out["systemMessage"]
+
+
+def test_session_start_expired_warning_respects_the_session_cap(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Before: el contexto ensamblado llena el tope y el centinela caduca.
+
+    During: se anade el aviso entero, recortando solo la cola del contexto.
+    After: el payload cabe en 9000, conserva la pista inicial y el aviso.
+    MUTACION: quitar el recorte del helper hace que len(ctx) supere 9000.
+    """
+    old = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    root = _project_root(tmp_path, "tope")
+    _sentinel(root).write_text(
+        json.dumps({"mode": "observe", "activated_at": old}), encoding="utf-8"
+    )
+    hook = _hook_module()
+    import bus.memory_loader as ml
+
+    monkeypatch.setattr(ml, "get_session_index", lambda budget=0: "X" * 50_000)
+    _quiet_sections(monkeypatch, hook)
+    _set_stdin_bytes(monkeypatch, b'{"source":"startup"}')
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    out = json.loads(capsys.readouterr().out)
+    ctx = _ctx(out)
+    assert len(ctx) <= ml.SESSION_CONTEXT_MAX_CHARS
+    assert "CENTINELA-ESPERA-EXPIRADO" in ctx
+    assert ctx.startswith("**Memoria: cuando expandir")
+
+
+def test_session_start_failed_memory_and_expired_warning_share_system_message(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Before: falla la memoria y el centinela esta caducado.
+
+    During: main construye el systemMessage combinado de fallo y aviso.
+    After: ambos textos aparecen en el mismo mensaje para el usuario.
+    MUTACION: quitar el aviso de la rama failed del systemMessage hace caer
+    esta prueba.
+    """
+    old = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    root = _project_root(tmp_path, "fallo_y_aviso")
+    _sentinel(root).write_text(
+        json.dumps({"mode": "observe", "activated_at": old}), encoding="utf-8"
+    )
+    hook = _hook_module()
+    import bus.memory_loader as ml
+
+    def _boom(budget=0):
+        raise RuntimeError("loader roto")
+
+    monkeypatch.setattr(ml, "get_session_index", _boom)
+    _quiet_sections(monkeypatch, hook)
+    _set_stdin_bytes(monkeypatch, b'{"source":"startup"}')
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    system_message = json.loads(capsys.readouterr().out)["systemMessage"]
+    assert "memory_context.py --bootstrap" in system_message
+    assert "CENTINELA-ESPERA-EXPIRADO" in system_message
+
+
+def test_session_start_expired_warning_states_the_remedy(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    """Before: existe un centinela observe caducado.
+
+    During: el hook emite el aviso de espera con su comando de reparacion.
+    After: el contexto contiene el remedio operativo.
+    MUTACION: quitar el remedio del texto del aviso hace caer esta prueba.
+    """
+    old = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+    root = _project_root(tmp_path, "remedio")
+    _sentinel(root).write_text(
+        json.dumps({"mode": "observe", "activated_at": old}), encoding="utf-8"
+    )
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    ctx = _ctx(json.loads(capsys.readouterr().out))
+    assert "espera_checklist_mode.py on" in ctx

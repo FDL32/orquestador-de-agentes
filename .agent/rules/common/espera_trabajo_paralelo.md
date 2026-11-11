@@ -34,3 +34,11 @@ ESTATUS: NORMA (no barrera). Ficha WOT-2026-160o (2026-11-08). Origen: P9 (vuelo
    refresca.
    Las dos formas exactas son `[ESPERA:HECHO: avance realizado]` y
    `[ESPERA:NADA: no habia trabajo avanzable]`.
+
+   El arranque de sesion avisa en `additionalContext` y `systemMessage` ante
+   `CENTINELA-ESPERA-EXPIRADO` o `CENTINELA-ESPERA-ILEGIBLE`; el aviso es
+   fail-open, solo lectura y no rearma el centinela. Hay silencio comprobable
+   para centinela ausente, vacio/{}, y `{"mode":"off"}` (este ultimo se
+   evalua antes de la caducidad). `{mode:off}` solo se escribe a mano. El
+   remedio es `python scripts/espera_checklist_mode.py on [--mode observe|block]`.
+   El mapeo del Stop hook es `EXPIRADO` o `SIN-FECHA-LEGIBLE`.

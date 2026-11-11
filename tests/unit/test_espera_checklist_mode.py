@@ -131,3 +131,34 @@ def test_turn_on_ante_oserror_devuelve_rc1(tmp_path: Path, monkeypatch, capsys) 
     monkeypatch.setattr(Path, "write_text", _boom)
     assert mode.main(["on", "--root", str(tmp_path)]) == 1
     assert "no se pudo encender" in capsys.readouterr().err
+
+
+def test_status_off_mode_is_coherent_not_on(tmp_path: Path, capsys) -> None:
+    """Before: el centinela declara off, incluso con fecha antigua.
+
+    During: status evalua off antes de la caducidad. After: imprime OFF sin ON.
+    MUTACION: quitar la rama off devuelve ON pero INACTIVO y cae.
+    """
+    target = tmp_path / mode.SENTINEL_RELPATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"mode": "off"}), encoding="utf-8")
+    assert mode.main(["status", "--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("espera_checklist_mode: OFF")
+    assert "ON" not in out
+
+    old = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+    target.write_text(
+        json.dumps({"mode": "off", "activated_at": old}), encoding="utf-8"
+    )
+    assert mode.main(["status", "--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("espera_checklist_mode: OFF")
+    assert "ON" not in out
+
+    assert mode.main(["on", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert mode.main(["status", "--root", str(tmp_path)]) == 0
+    out = capsys.readouterr().out
+    assert "ON (mode=observe" in out
+    assert "INACTIVO" not in out

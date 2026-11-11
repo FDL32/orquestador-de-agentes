@@ -174,6 +174,26 @@ def _resolve_root() -> Path:
 
 
 _NEIGHBOUR_HOOK_FILENAME = "native_stop_hook.py"
+_ESPERA_WARNING_EXPIRED = "CENTINELA-ESPERA-EXPIRADO"
+_ESPERA_WARNING_UNREADABLE = "CENTINELA-ESPERA-ILEGIBLE"
+
+
+def _neighbour_hook_module():
+    """Carga el modulo vecino que contiene la definicion del centinela.
+
+    Before: el fichero ``native_stop_hook.py`` debe estar junto a este hook.
+    During: lo importa con un nombre privado y sin modificar el ``sys.path``.
+    After: devuelve el modulo cargado o propaga la excepcion de importacion.
+    """
+    neighbour = Path(__file__).with_name(_NEIGHBOUR_HOOK_FILENAME)
+    spec = importlib.util.spec_from_file_location(
+        "_session_start_neighbour_hook", neighbour
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"no se pudo cargar el gancho vecino: {neighbour}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _espera_sentinel_relpath() -> Path:
@@ -186,15 +206,66 @@ def _espera_sentinel_relpath() -> Path:
     vecino no se puede cargar, la excepcion sube al llamante, que la trata como
     fail-open. No duplicar el literal (a-04 de 161g).
     """
-    neighbour = Path(__file__).with_name(_NEIGHBOUR_HOOK_FILENAME)
-    spec = importlib.util.spec_from_file_location(
-        "_session_start_neighbour_hook", neighbour
-    )
-    if spec is None or spec.loader is None:
-        raise ImportError(f"no se pudo cargar el gancho vecino: {neighbour}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module.ESPERA_SENTINEL_RELPATH
+    return _neighbour_hook_module().ESPERA_SENTINEL_RELPATH
+
+
+def _espera_sentinel_warning(root: Path) -> str:
+    """Describe un centinela inactivo sin tocarlo.
+
+    Before: ``root`` es la raiz del proyecto y el centinela puede faltar o ser
+        ilegible.
+    During: lee bytes propios, valida el JSON y consulta la caducidad del hook
+        vecino; toda excepcion se degrada a silencio.
+    After: devuelve un aviso breve para caducidad o ilegibilidad, o ``""``;
+        nunca escribe, rearma ni crea ficheros.
+    """
+    try:
+        target = root / _espera_sentinel_relpath()
+        if not target.is_file():
+            return ""
+        raw = target.read_bytes()
+        if not raw.strip():
+            return ""
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return (
+                f"{_ESPERA_WARNING_UNREADABLE}: el Stop hook lo trata como "
+                "INACTIVO; repara con `python scripts/espera_checklist_mode.py "
+                "on --mode observe`."
+            )
+        try:
+            data = json.loads(text)
+        except ValueError:
+            return (
+                f"{_ESPERA_WARNING_UNREADABLE}: el Stop hook lo trata como "
+                "INACTIVO; repara con `python scripts/espera_checklist_mode.py "
+                "on --mode observe`."
+            )
+        if not isinstance(data, dict):
+            return (
+                f"{_ESPERA_WARNING_UNREADABLE}: el Stop hook lo trata como "
+                "INACTIVO; repara con `python scripts/espera_checklist_mode.py "
+                "on --mode observe`."
+            )
+        if not data or data.get("mode") == "off":
+            return ""
+        expiry = _neighbour_hook_module().sentinel_expiry(data)
+        if expiry.startswith("EXPIRADO"):
+            return (
+                f"{_ESPERA_WARNING_EXPIRED}: el Stop hook lo trata como INACTIVO "
+                "(EXPIRADO); repara con `python scripts/espera_checklist_mode.py "
+                "on --mode observe`."
+            )
+        if expiry:
+            return (
+                f"{_ESPERA_WARNING_UNREADABLE}: el Stop hook lo trata como INACTIVO "
+                "(SIN-FECHA-LEGIBLE); repara con `python "
+                "scripts/espera_checklist_mode.py on --mode observe`."
+            )
+        return ""
+    except Exception:
+        return ""
 
 
 def _arm_espera_observe(root: Path) -> None:
@@ -600,6 +671,49 @@ def _cap(text: str, limit: int, label: str) -> str:
     return text[: limit - len(note)].rstrip() + note
 
 
+def _session_context_cap() -> int:
+    """Tope del payload de arranque (mismo que usa el ensamblador).
+
+    Before: nada. During: importa ``bus.memory_loader`` desde la raiz del
+        motor con el mismo patron que ``assemble_session_context`` y lee
+        ``SESSION_CONTEXT_MAX_CHARS``. After: devuelve el tope; si no se puede
+        importar, 9000 (el fallback del ensamblador). Nunca lanza.
+    """
+    try:
+        motor = str(_motor_root(_resolve_root()))
+        if motor not in sys.path:
+            sys.path.insert(0, motor)
+        from bus.memory_loader import SESSION_CONTEXT_MAX_CHARS
+
+        return SESSION_CONTEXT_MAX_CHARS
+    except Exception:
+        return 9000
+
+
+def _with_espera_warning(context: str, warning: str) -> str:
+    """Anade el aviso de espera sin romper el tope del payload de arranque.
+
+    Before: ``context`` ya acotado por ``assemble_session_context``; ``warning``
+        no vacio. During: reserva ``len("\\n\\n") + len(warning)`` del tope
+        y recorta SOLO LA COLA de ``context`` con ``_cap(context, room,
+        "Contexto de arranque")`` (declara el corte) para que el total quepa;
+        la pista inicial "Memoria: cuando expandir" va primero y sobrevive; el
+        aviso se conserva ENTERO. After: devuelve ``context + "\\n\\n" +
+        warning`` con ``len(resultado) <= _session_context_cap()``; si el aviso
+        solo ya excediera el tope, devuelve ``warning[:tope]``. Nunca lanza.
+    """
+    sep = "\n\n"
+    limit = _session_context_cap()
+    room = limit - len(sep) - len(warning)
+    if room <= 0:
+        return warning[:limit]
+    if len(context) > room:
+        context = _cap(context, room, "Contexto de arranque")
+    if not context:
+        return warning
+    return context + sep + warning
+
+
 def assemble_session_context(  # noqa: C901 - degradacion por prioridad + 3 estados de memoria: ramas inherentes
     root: Path,
     index_for_budget,
@@ -783,12 +897,25 @@ def main() -> int:
     # 161g (F1/3): arma `observe` si no habia centinela. Va DESPUES del
     # ensamblado y ANTES del print: fail-open, no toca el return ni el payload.
     _arm_espera_observe(root)
+    warning = _espera_sentinel_warning(root)
+    if warning:
+        context = _with_espera_warning(context, warning)
+        system_message = (
+            "Memoria del proyecto no cargada en el arranque: ejecuta "
+            "`python scripts/memory_context.py --bootstrap`.\n\n" + warning
+            if failed
+            else warning
+        )
+    else:
+        system_message = (
+            "Memoria del proyecto no cargada en el arranque: ejecuta "
+            "`python scripts/memory_context.py --bootstrap`."
+            if failed
+            else None
+        )
     _print_context_safely(
         context,
-        "Memoria del proyecto no cargada en el arranque: ejecuta "
-        "`python scripts/memory_context.py --bootstrap`."
-        if failed
-        else None,
+        system_message,
     )
     return 0
 
