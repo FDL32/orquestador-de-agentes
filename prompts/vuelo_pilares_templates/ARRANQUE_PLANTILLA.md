@@ -17,15 +17,21 @@
 
 3. Objetivo propio: {{OBJETIVO_TEXTO}}.
 
+3b. PRIMERA ACCION tras el ACTIVO: avanza el objetivo propio o lanza la
+   primera accion de cola ANTES de crear el latido; el latido es red de
+   seguridad y NO es disparador. Aplica P9 (RATIFICADA, vinculante) y P8
+   (RATIFICADA, vinculante).
+
 4. Procedimiento de ticket: sigue la referencia vigente del vuelo; no
    re-declares aquí el procedimiento completo. Para cupo, usa
    {{COMANDO_CUPO_OPCIONAL}}; si no hay proveedor configurado, declara «NO
    MEDIDO» con aviso, nunca verde silencioso. El reparto de verificación del
    DoD sigue P28 (RATIFICADA, vinculante) y P29 (RATIFICADA, vinculante).
 
-5. PRIMEROS PASOS: aplica P24 (RATIFICADA, vinculante) y verifica con
-   `t3_thread_list`. Para el GO de relevo, cita {{GO_MENSAJE_ID}} si aplica y
-   verifica P6 (RATIFICADA, vinculante).
+5. PRIMEROS PASOS en este orden: objetivo con C0 y P medidos, primera accion,
+   y despues el latido propio. Aplica P24 (RATIFICADA, vinculante) y verifica
+   con `t3_thread_list`. Para el GO de relevo, cita {{GO_MENSAJE_ID}} si aplica
+   y verifica P6 (RATIFICADA, vinculante).
 
 6. Errores a no repetir y lecciones: consulta la referencia vigente del
    vuelo; las lecciones completas viven en el ARRANQUE real derivado, no en

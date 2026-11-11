@@ -510,3 +510,104 @@ def test_p25_fragment_fixture_fails_explicitly(
     candidate = mutate_once(fixture_template, "# Plantilla", f"# Plantilla\n{fragment}")
     with pytest.raises(ValueError, match="criterion fragment copied"):
         assert_no_criterion_fragments(candidate)
+
+
+def extract_primera_accion_block(text: str) -> str:
+    """Extract ARRANQUE step 3b without accepting evidence from other steps.
+
+    Before: ``text`` is a complete ARRANQUE template with its marker header.
+    During: cut the body from the ``3b.`` header up to the next ``4.`` step.
+    After: return the raw 3b block, or an empty string when it is absent.
+    """
+    header = HEADER_RE.search(text)
+    if header is None:
+        raise ValueError("template is missing marker header")
+    body = text[header.end() :]
+    start = body.find("3b. PRIMERA ACCION tras el ACTIVO:")
+    if start < 0:
+        return ""
+    end = body.find("\n4.", start)
+    return body[start:] if end < 0 else body[start:end]
+
+
+def assert_primera_accion_before_latido(text: str) -> None:
+    """Require the imperative first action between ARRANQUE steps 3 and 4.
+
+    Before: ``text`` is a complete ARRANQUE template with its marker header.
+    During: locate steps 3, 3b and 4 in the raw body, then normalize the 3b
+    block by whitespace and check its three literals.
+    After: return silently only when 3b sits strictly between steps 3 and 4 and
+    keeps the first-action, before-the-heartbeat and not-a-trigger clauses;
+    otherwise raise ``ValueError`` naming the violated invariant.
+    """
+    header = HEADER_RE.search(text)
+    if header is None:
+        raise ValueError("template is missing marker header")
+    body = text[header.end() :]
+    start_three = body.find("3. Objetivo propio:")
+    start_three_b = body.find("3b. PRIMERA ACCION tras el ACTIVO:")
+    start_four = body.find("\n4. Procedimiento de ticket:")
+    if min(start_three, start_three_b, start_four) < 0:
+        raise ValueError("arranque steps 3, 3b and 4 must all be present")
+    if not start_three < start_three_b < start_four:
+        raise ValueError("step 3b must sit after step 3 and before step 4")
+    normalized = " ".join(extract_primera_accion_block(text).split())
+    for literal in (
+        "PRIMERA ACCION tras el ACTIVO",
+        "ANTES de crear el latido",
+        "NO es disparador",
+    ):
+        if literal not in normalized:
+            raise ValueError(f"step 3b is missing literal: {literal}")
+
+
+def test_real_arranque_primera_accion_before_latido() -> None:
+    """Pin the imperative first action between steps 3 and 4 of ARRANQUE."""
+    assert_primera_accion_before_latido(TEMPLATE_PATHS[1].read_text(encoding="utf-8"))
+
+
+def assert_first_steps_order_objetivo_accion_latido(text: str) -> None:
+    """Require the declared first-steps order in ARRANQUE step 5.
+
+    Before: ``text`` is a complete ARRANQUE template with its marker header.
+    During: normalize the body by whitespace and look for the declared order
+    literal, keeping the P24, P6 and go-message requirements of the step.
+    After: return silently when the order and every preserved element appear;
+    otherwise raise ``ValueError`` naming the missing element.
+    """
+    header = HEADER_RE.search(text)
+    if header is None:
+        raise ValueError("template is missing marker header")
+    normalized = " ".join(text[header.end() :].split())
+    required = (
+        "objetivo con C0 y P medidos, primera accion, y despues el latido propio",
+        "P24 (RATIFICADA, vinculante)",
+        "P6 (RATIFICADA, vinculante)",
+        "{{GO_MENSAJE_ID}}",
+    )
+    for fragment in required:
+        if fragment not in normalized:
+            raise ValueError(f"step 5 is missing element: {fragment}")
+
+
+def test_real_arranque_first_steps_order_objetivo_accion_latido() -> None:
+    """Pin the declared objetivo/accion/latido order in ARRANQUE step 5."""
+    assert_first_steps_order_objetivo_accion_latido(
+        TEMPLATE_PATHS[1].read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize("pillar", ["P8", "P9"])
+def test_real_templates_cite_p8_p9_with_its_real_state(pillar: str) -> None:
+    """Require P8 and P9 cited with their real canon state in both templates.
+
+    Before: both real templates and the real canon index exist on disk.
+    During: read the pillar state from the canon and demand exactly one
+    citation of that pillar with that state in each template body.
+    After: return silently for the matching state; otherwise propagate the
+    ``ValueError`` from the shared citation helper.
+    """
+    canon_text = CANON_PATH.read_text(encoding="utf-8")
+    state = read_pillar_state(canon_text, pillar)
+    for path in TEMPLATE_PATHS:
+        assert_pillar_cited_with_state(path.read_text(encoding="utf-8"), pillar, state)
