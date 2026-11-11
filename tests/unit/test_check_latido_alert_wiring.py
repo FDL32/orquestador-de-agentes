@@ -1775,6 +1775,63 @@ def test_r7_argparse_subparsers_falla_cerrado():
         chk._actions_from_parser(parser)
 
 
+@pytest.mark.parametrize("valor", [None, "todos"])
+def test_wot_2026_161u_latido_normal_acepta_test_detector_opcional(box, capsys, valor):
+    """WOT-2026-161u mutantes M1/M2: la orden normal acepta --test-detector con y sin valor."""
+    orders = box.coord_orders()
+    detector = "--test-detector" if valor is None else f"--test-detector {valor}"
+    orders[2] = (
+        f"{box.py} {box.s('flight_stall_check.py')} {detector} --ops-dir {box.ops}"
+    )
+    coord = box.latido("test-detector.md", orders)
+    sup = box.latido("test-detector-s.md", box.sup_orders())
+
+    rc, out = run(box.argv(coord, sup), capsys)
+
+    assert rc == 0, out
+    assert out.startswith("latido-check: OK")
+
+
+def test_wot_2026_161u_metadata_desconocida_sigue_ilegible(box, capsys, monkeypatch):
+    """WOT-2026-161u mutante M3: metadata desconocida mantiene rc 2 y cierre fail-closed."""
+    original = chk._SCRIPT_OPTION_META["flight_stall_check.py"]
+    try:
+        chk._SCRIPT_OPTION_META["flight_stall_check.py"] = {
+            "--test-detector": chk._OptionSpec(True, False, False, "+")
+        }
+        coord, sup = box.good()
+        rc = chk.main(box.argv(coord, sup))
+        out = capsys.readouterr().out
+    finally:
+        chk._SCRIPT_OPTION_META["flight_stall_check.py"] = original
+
+    assert rc == 2
+    assert "metadata no modelada" in out
+
+
+@pytest.mark.parametrize(
+    "nargs, esperado",
+    [("?", ()), ("+", ("nargs",))],
+)
+def test_wot_2026_161u_unsupported_nargs_solo_opcional_modelado(nargs, esperado):
+    """WOT-2026-161u mutante M4: solo nargs=? queda modelado en el detalle de spec."""
+    assert (
+        chk._unsupported_spec_details(chk._OptionSpec(True, False, False, nargs))
+        == esperado
+    )
+
+
+@pytest.mark.parametrize("nargs, modelado", [("?", True), ("+", False)])
+def test_wot_2026_161u_actions_parser_modela_nargs_opcional(nargs, modelado):
+    """WOT-2026-161u mutante M5: actions_from_parser refleja el soporte de nargs=? sin drift."""
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--opt", nargs=nargs)
+
+    spec = chk._actions_from_parser(parser)["--opt"]
+
+    assert ("nargs" not in spec.unsupported) is modelado
+
+
 @pytest.mark.parametrize(
     "attribute, marker",
     [

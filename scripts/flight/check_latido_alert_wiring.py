@@ -206,7 +206,7 @@ def _unsupported_spec_details(spec: _OptionSpec) -> tuple[str, ...]:
         details.add("type")
     if spec.mutex is not None:
         details.add("mutex")
-    if spec.nargs not in (None, 0):
+    if spec.nargs not in (None, 0, "?"):
         details.add("nargs")
     return tuple(sorted(details))
 
@@ -865,7 +865,7 @@ class _Checker:
             if spec.required and name not in seen:
                 order.bad(f"falta el parametro obligatorio de {script}: {name}")
 
-    def _check_script_argument(
+    def _check_script_argument(  # noqa: C901
         self,
         order: _Order,
         args: list[str],
@@ -895,6 +895,10 @@ class _Checker:
                 order.bad(f"{name}: valor ausente o con apariencia de flag")
             else:
                 self._check_tick_trace_value(order, script, name, inline)
+            return index + 1
+        if spec.nargs == "?" and (
+            index + 1 >= len(args) or args[index + 1].startswith("-")
+        ):
             return index + 1
         if index + 1 >= len(args) or args[index + 1].startswith("-"):
             order.bad(f"{name}: falta el valor o parece otra opcion")
@@ -1458,7 +1462,7 @@ def _actions_from_parser(
                             ),
                             (
                                 "nargs",
-                                action.nargs not in (None, 0),
+                                action.nargs not in (None, 0, "?"),
                             ),
                         )
                         if present
