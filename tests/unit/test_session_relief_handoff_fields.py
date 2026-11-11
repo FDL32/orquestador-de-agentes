@@ -2102,3 +2102,67 @@ def test_dod_136h_protocolo_codigos_del_helper_real(tmp_path):
     )
 
     assert 3 not in rcs and set(rcs) == {0, 1, 2}, rcs
+
+
+def test_relief_ack_declares_first_queued_action_launched() -> None:
+    """Before: the relief prompt is the source for the planned handoff ACK.
+    During: normalize the exception section and check the a-01 launch pointer.
+    After: the ACK names the first queued action, its thread or commit id, and old pins remain.
+    """
+    text = T3_RELIEF.read_text(encoding="utf-8")
+    section = _extract_section(text, "Excepcion: relevo planificado o self-hop")
+    assert len(section) > 0, "a-01: la seccion de excepcion debe existir"
+    normalized = _normalizar(section)
+
+    assert "ACTIVO + lanzado" in normalized, "a-01: falta el ACK de accion lanzada"
+    assert "<id de hilo o commit>" in normalized, "a-01: falta el id del ACK"
+    assert "primera accion pendiente de la cola del HANDOFF" in normalized, (
+        "a-01: falta la procedencia de la primera accion"
+    )
+    assert "id de hilo o commit" in normalized, "a-01: falta el tipo de id"
+    for literal in (
+        "PENDIENTE_ACK",
+        "SALIENTE_MUERTO",
+        "15 minutos",
+        "active_roles.<rol>.estado",
+    ):
+        assert literal in normalized, f"a-01: falta el literal preexistente {literal}"
+
+
+def test_relief_confirmation_gives_ordered_pointer() -> None:
+    """Before: the successor template defines ordered handoff requirements.
+    During: normalize section 7 and verify the a-03 pointer and requirement order.
+    After: the prompt cites the queued action, source, sha12, and atomicity limits.
+    """
+    text = T3_RELIEF.read_text(encoding="utf-8")
+    section7 = _extract_section(text, "Plantilla del sucesor")
+    if not section7:
+        section7 = _extract_section(text, "7. Plantilla del sucesor")
+    assert len(section7) > 0, "a-03: la seccion 7 debe existir"
+    normalized = _normalizar(section7)
+
+    assert "Sub-requisito 6" in normalized, "a-03: falta el Sub-requisito 6"
+    assert "confirmacion con puntero ordenado" in normalized, (
+        "a-03: falta el titulo del Sub-requisito 6"
+    )
+    assert "primera accion pendiente de la cola del HANDOFF" in normalized, (
+        "a-03: falta la primera accion pendiente"
+    )
+    assert "documento, punto N y sha12" in normalized, (
+        "a-03: falta documento, punto N y sha12"
+    )
+    assert "nunca una lista copiada" in normalized, (
+        "a-03: falta el rechazo de lista copiada"
+    )
+    for literal in (
+        "sin cambiar el rotador",
+        "envio dentro de una fase atomica",
+        "validacion de solo lectura como maximo",
+    ):
+        assert literal in normalized, f"a-03: falta el literal {literal}"
+
+    positions = [normalized.index(f"Sub-requisito {number}") for number in range(1, 7)]
+    positions.append(normalized.index("PIDs propios del sucesor"))
+    assert positions == sorted(positions) and len(set(positions)) == len(positions), (
+        "a-03: los sub-requisitos deben conservar el orden 1..6 antes de PIDs"
+    )

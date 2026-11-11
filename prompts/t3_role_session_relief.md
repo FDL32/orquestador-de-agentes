@@ -278,7 +278,10 @@ estado de la sesion saliente y permite las tres transiciones siguientes:
 - `ACTIVO -> PENDIENTE_ACK`: el saliente congela su actividad mientras el
   entrante se autentica.
 - `PENDIENTE_ACK -> ACTIVO(entrante)` con ACK via el primer mensaje con
-  HEAD/hilos/latidos re-medidos de la seccion 7.
+  HEAD/hilos/latidos re-medidos de la seccion 7, que declara ademas el literal
+  `ACTIVO + lanzado <X> (<id de hilo o commit>)`, donde X es la primera accion
+  pendiente de la cola del HANDOFF (primer IM, TR o lente): el ACK nombra esa
+  accion y su id, nunca una lista.
 - `PENDIENTE_ACK -> SALIENTE_MUERTO` sin ACK en 15 minutos -- umbral NUEVO
   de este modulo -- o sin `>= 2` senales de progreso VERIFICADAS de la
   seccion 4 dentro de ese mismo plazo (misma vara que la seccion 4 exige
@@ -345,6 +348,15 @@ tamano = len(open(ruta, 'rb').read())
 
 **Precedente medido:** dos fallos sin dueno el dia del diseno, uno de ellos la medicion con
 redireccion de PowerShell que escribe UTF-16 (C9b de PROPUESTA v3).
+
+### Sub-requisito 6: confirmacion con puntero ordenado
+
+La confirmacion de la saliente entrega UN puntero ordenado a la primera accion
+pendiente de la cola del HANDOFF -- documento, punto N y sha12 del documento,
+citados con fuente, nunca una lista copiada --, coherente con el Sub-requisito 1
+(estado CITADO con fuente). Este sub-requisito no cambia el orden de la cola y se
+declara sin cambiar el rotador: no hay envio dentro de una fase atomica
+(validacion de solo lectura como maximo).
 
 ### PIDs propios del sucesor
 
