@@ -3888,6 +3888,9 @@ def test_155a_link_match_resolves_directory_links_and_rejects_sibling(tmp_path, 
     assert "P10" in ias._source_repoint_problem(alias, dest, False)
 
 
+@pytest.mark.skipif(
+    os.name != "nt", reason="UNC \\\\localhost\\c$ solo existe en Windows"
+)
 def test_155a_link_match_normalizes_unc_paths_with_negative_control(tmp_path):
     """UNC paths use the same normalized equality rule without touching the share."""
     dest = tmp_path / "dest"

@@ -239,7 +239,14 @@ def test_dod_a_roster_snapshot_collision_rejected(tmp_path):
 @pytest.mark.parametrize(
     "path_style",
     [
-        lambda path: str(path).upper(),
+        pytest.param(
+            lambda path: str(path).upper(),
+            marks=pytest.mark.skipif(
+                os.name != "nt",
+                reason="equivalencia case-insensitive de rutas es de Windows",
+            ),
+            id="<lambda>0",
+        ),
         lambda path: str(path).replace("\\", "/"),
         lambda path: str(path.parent / "nested" / ".." / path.name),
         lambda path: path.name,
@@ -263,6 +270,7 @@ def test_dod_a_equivalent_ledger_roster_paths_rejected(tmp_path, path_style):
     assert "--ledger=" in result.stderr and "--roster=" in result.stderr
 
 
+@pytest.mark.skipif(os.name != "nt", reason="casefold de rutas es semantica de Windows")
 def test_dod_a_nonexistent_case_variant_ledger_roster_rejected(tmp_path):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "shared.jsonl"
@@ -1363,6 +1371,7 @@ def test_lock_open_failure_leaves_inputs_untouched(tmp_path):
     assert list(tmp_path.glob("registry.json.bak*")) == []
 
 
+@pytest.mark.skipif(os.name != "nt", reason="driver lock_release_fail importa msvcrt")
 def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "ledger.jsonl"
@@ -1428,6 +1437,7 @@ def test_lock_release_failure_reports_error_after_successful_mutation(tmp_path):
     assert row["by"] == "lock-test"
 
 
+@pytest.mark.skipif(os.name != "nt", reason="driver lock_release_fail importa msvcrt")
 def test_release_failure_before_mutation_keeps_current_rc(tmp_path):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "ledger.jsonl"
@@ -2778,7 +2788,15 @@ def test_real_rotator_roster_shape_blocks_pending_ack(tmp_path):
 # y-05: current_value se llama UNA vez por campo (contador real).
 # y-06: el handshake senala adquisicion REAL y no da falso rojo en maquina lenta.
 
-_POST_COMMIT_STEPS = ("ledger_close", "lock_release")
+_POST_COMMIT_STEPS = (
+    "ledger_close",
+    pytest.param(
+        "lock_release",
+        marks=pytest.mark.skipif(
+            os.name != "nt", reason="driver lock_release_fail importa msvcrt"
+        ),
+    ),
+)
 _COMMANDS = ("alta", "asiento", "nota", "reconcile")
 _BAK_SENTINEL = object()
 
@@ -2964,6 +2982,7 @@ def test_m1_post_commit_ledger_close_non_oserror_returns_rc6(tmp_path, exc_name)
 
 
 @pytest.mark.parametrize("exc_name", ["ValueError", "TypeError", "RuntimeError"])
+@pytest.mark.skipif(os.name != "nt", reason="driver lock_release_fail importa msvcrt")
 def test_m3_post_commit_lock_release_non_oserror_returns_rc6(tmp_path, exc_name):
     registry, ledger, roster, _snapshot = _write_reconcile_fixtures(tmp_path)
     before = registry.read_bytes()
@@ -3029,6 +3048,7 @@ def test_m1_guard_precommit_double_failure_keeps_original_rc2(tmp_path):
     assert registry.read_bytes() == before
 
 
+@pytest.mark.skipif(os.name != "nt", reason="driver lock_release_fail importa msvcrt")
 def test_m2_lock_release_error_names_type_when_message_empty(tmp_path):
     registry, ledger, roster, _snapshot = _write_reconcile_fixtures(tmp_path)
     driver = write_driver(tmp_path, "lock_release_fail")

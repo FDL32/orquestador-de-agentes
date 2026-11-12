@@ -894,6 +894,10 @@ def test_fila45_ledger_append_repara_final_sin_salto_de_linea(ca):
 
 
 # ---- filas 47, 48, 50: notify
+@pytest.mark.skipif(
+    not WINDOWS,
+    reason="construccion de ruta de powershell.exe con separadores Windows",
+)
 def test_fila47_forma_de_la_orden_absoluta_sin_bypass_sin_ventana(
     tmp_path, monkeypatch
 ):

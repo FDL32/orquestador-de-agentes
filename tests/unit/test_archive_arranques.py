@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -492,6 +493,7 @@ def test_validate_proposal_rejects_empty_and_missing_sha256(tmp_path):
         aa.validate_proposal([{"rel": "x.md"}], tmp_path)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="cmd mklink /J (junction) solo en Windows")
 def test_validate_proposal_rejects_junction_ancestor(tmp_path):
     """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
     target = tmp_path / "target"

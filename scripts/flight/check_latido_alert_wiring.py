@@ -1512,18 +1512,26 @@ def _python_parser_actions(
 
 def _powershell_parser_actions(path: Path) -> dict[str, _OptionSpec]:  # noqa: C901
     """Introspecciona ``param()`` mediante el AST de PowerShell real."""
-    root = next((v for k, v in os.environ.items() if k.lower() == "systemroot"), None)
-    if not root:
-        raise RuntimeError("SystemRoot ausente para introspeccion PowerShell")
     override = next(
         (v for k, v in os.environ.items() if k.lower() == "flight_powershell_exe"),
         None,
     )
-    executable = (
-        Path(override)
-        if override
-        else (Path(root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
-    )
+    if override:
+        executable = Path(override)
+    elif os.name == "nt":
+        root = next(
+            (v for k, v in os.environ.items() if k.lower() == "systemroot"), None
+        )
+        if not root:
+            raise RuntimeError("SystemRoot ausente para introspeccion PowerShell")
+        executable = (
+            Path(root) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        )
+    else:
+        found = shutil.which("pwsh")
+        if not found:
+            raise RuntimeError("SystemRoot ausente para introspeccion PowerShell")
+        executable = Path(found)
     ps_path = "'" + str(path).replace("'", "''") + "'"
     command = (
         "$t=$null;$e=$null;"

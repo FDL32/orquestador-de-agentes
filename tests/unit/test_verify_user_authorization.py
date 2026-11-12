@@ -398,6 +398,10 @@ def test_locked_store_is_named_infra(tmp_path):
         holder.close()
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="sqlite sobre directorio: store-permission es de Windows (POSIX da store-unavailable)",
+)
 def test_existing_unopenable_path_is_store_permission(tmp_path):
     path = tmp_path / "directory.sqlite"
     path.mkdir()

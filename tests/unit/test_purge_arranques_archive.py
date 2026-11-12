@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from datetime import date, timedelta
@@ -428,6 +429,7 @@ def test_purge_proposal_has_exact_p7_shape(tmp_path):
     assert all(set(entry) == {"rel", "sha256"} for entry in report.proposal)
 
 
+@pytest.mark.skipif(os.name != "nt", reason="junction de Windows")
 def test_purge_validate_proposal_rejects_contract_boundaries(tmp_path):
     """[NON-REVERSE-CLASSICAL: redireccion de contrato a p7_retire]."""
     with pytest.raises(pa.ArchiveError):

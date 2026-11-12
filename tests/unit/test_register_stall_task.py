@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
 from xml.etree import ElementTree
 
 import pytest
+
+
+pytestmark = pytest.mark.skipif(
+    os.name != "nt",
+    reason=(
+        "WindowsIdentity::GetCurrent in register_stall_task.ps1 l.71 and the "
+        "python.exe leaf in l.199-201 require Windows Task Scheduler semantics"
+    ),
+)
 
 
 ROOT = Path(__file__).parents[2]

@@ -341,7 +341,15 @@ VALUE_TABLE = [
     ("checkpoint", _NUL, _MOTOR),
     ("template", 5, _NO_LINK),
     ("template", "", _NO_LINK),
-    ("template", _SPACES, _AT_CWD),  # unchanged: resolves to the cwd, then no module
+    pytest.param(
+        "template",
+        _SPACES,
+        _AT_CWD,
+        marks=pytest.mark.skipif(
+            os.name != "nt",
+            reason="Windows elimina espacios finales de componentes de ruta; POSIX no",
+        ),
+    ),  # unchanged: resolves to the cwd, then no module
     ("template", _NUL, _NO_LINK),
 ]
 
@@ -349,7 +357,11 @@ VALUE_TABLE = [
 @pytest.mark.parametrize(
     ("which", "value", "expected"),
     VALUE_TABLE,
-    ids=[f"{w}-{type(v).__name__}-{len(str(v))}" for w, v, _ in VALUE_TABLE],
+    ids=[
+        f"{w}-{type(v).__name__}-{len(str(v))}"
+        for row in VALUE_TABLE
+        for w, v, _ in [row.values if hasattr(row, "values") else row]
+    ],
 )
 def test_value_table_per_reader(world, mc, which, value, expected):
     """Pins what each reader REALLY does with a non-string, empty, blank or NUL value.
@@ -369,6 +381,9 @@ def test_value_table_per_reader(world, mc, which, value, expected):
         assert result == (world.motor if expected == _MOTOR else expected)
 
 
+@pytest.mark.skipif(
+    os.name != "nt", reason="Windows elimina espacios finales de componentes de ruta"
+)
 def test_hook_rejects_a_whitespace_only_destination_root(world):
     """O7: whitespace-only is truthy, and Path of blanks resolves to the process cwd."""
     _write_link(world.repo / LINK_REL, "plain", {"destination_root": _SPACES})
