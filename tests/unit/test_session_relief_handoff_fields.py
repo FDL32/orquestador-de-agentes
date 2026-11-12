@@ -2166,3 +2166,53 @@ def test_relief_confirmation_gives_ordered_pointer() -> None:
     assert positions == sorted(positions) and len(set(positions)) == len(positions), (
         "a-03: los sub-requisitos deben conservar el orden 1..6 antes de PIDs"
     )
+
+
+ACK_BULLET_HEADER = "- `PENDIENTE_ACK -> ACTIVO(entrante)`"
+ACK_LAUNCH_LITERAL = "ACTIVO + lanzado <X> (<id de hilo o commit>)"
+
+
+def _extract_bullet_by_header(section: str, header: str) -> str:
+    """Before: ``section`` is one Markdown section body.
+    During: find the line starting with ``header``, keep it plus its indented or blank continuation lines, and stop at the next top-level bullet or at any non-indented non-blank line (preserving line breaks).
+    After: return the raw bullet, or an empty string when the header is absent.
+    """
+    lines = section.splitlines()
+    start = None
+    for index, line in enumerate(lines):
+        if line.lstrip().startswith(header):
+            start = index
+            break
+    if start is None:
+        return ""
+    end = len(lines)
+    for index in range(start + 1, len(lines)):
+        line = lines[index]
+        if line.startswith("- "):
+            end = index
+            break
+        if line.strip() and not line[0].isspace():
+            end = index
+            break
+    return "\n".join(lines[start:end]).strip()
+
+
+def test_relief_ack_pin_anclado() -> None:
+    """Before: the relief prompt carries the planned self-hop exception section.
+    During: extract that section, isolate the a-01 bullet by its header BEFORE
+    normalizing, and check the launch pointer inside that bullet.
+    After: the literal sits inside the bullet and appears exactly once in the section.
+    """
+    text = T3_RELIEF.read_text(encoding="utf-8")
+    section = _extract_section(text, "Excepcion: relevo planificado o self-hop")
+    assert len(section) > 0, "co-2c: la seccion de excepcion debe existir"
+    bullet = _extract_bullet_by_header(section, ACK_BULLET_HEADER)
+    assert bullet, "co-2c: falta el bullet PENDIENTE_ACK -> ACTIVO(entrante)"
+    normalized_bullet = _normalizar(bullet)
+    assert ACK_LAUNCH_LITERAL in normalized_bullet, (
+        "co-2c: el literal de lanzamiento debe vivir DENTRO del bullet del ACK"
+    )
+    normalized_section = _normalizar(section)
+    assert normalized_section.count("ACTIVO + lanzado") == 1, (
+        "co-2c: el ACK de accion lanzada debe aparecer UNA sola vez en la seccion"
+    )

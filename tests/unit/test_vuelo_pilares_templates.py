@@ -699,3 +699,67 @@ def test_latido_supervisora_escalado_after_un_mensaje() -> None:
     After: the one-message escalation contract is accepted.
     """
     assert_latido_supervisora_escalado(TEMPLATE_PATHS[0].read_text(encoding="utf-8"))
+
+
+SUPERVISORA_SEMANTIC_PINS = (
+    "12b. Solo supervisora",
+    "nunca la relevas sola",
+    "sin cambiar la cadencia {{CADENCIA_MIN}} ni ningun umbral",
+    "Lee la ultima entrada de la OPERACION",
+    "a {{HILO_COORDINADORA}} y,",
+    "(prefijo `mcp:`, modo queue)",
+    "verifica si la primera accion de la cola declarada en el ACK se lanzo",
+)
+
+
+def assert_latido_supervisora_semantic_pin(normalized: str, literal: str) -> None:
+    """Require one pinned 12b phrase in the normalized block.
+
+    Before: ``normalized`` is the whitespace-collapsed LATIDO step 12b block and
+    ``literal`` is one of the seven separately pinned phrases.
+    During: look for exactly that phrase inside the normalized block.
+    After: return silently when the pin is present; otherwise raise
+    ``ValueError`` naming the missing pin.
+    """
+    if literal not in normalized:
+        raise ValueError(f"LATIDO 12b is missing semantic pin: {literal}")
+
+
+def assert_latido_supervisora_semantic_pins(normalized: str) -> None:
+    """Require the seven semantic pins inside the normalized 12b block.
+
+    Before: ``normalized`` is the whitespace-collapsed LATIDO step 12b block.
+    During: check each of the seven pinned phrases with its own single-pin check.
+    After: return silently when every pin is present; otherwise raise the
+    ``ValueError`` of the first missing pin.
+    """
+    for literal in SUPERVISORA_SEMANTIC_PINS:
+        assert_latido_supervisora_semantic_pin(normalized, literal)
+
+
+def test_latido_supervisora_semantic_pins() -> None:
+    """Pin the seven central 12b phrases on the real LATIDO template.
+
+    Before: the real LATIDO template is present on disk.
+    During: extract step 12b, normalize it, and require all seven pins.
+    After: the semantic contract is accepted only when every pin is present.
+    """
+    text = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    normalized = " ".join(extract_latido_supervisora_block(text).split())
+    assert_latido_supervisora_semantic_pins(normalized)
+
+
+@pytest.mark.parametrize("literal", SUPERVISORA_SEMANTIC_PINS)
+def test_latido_supervisora_semantic_pins_mutant(literal: str) -> None:
+    """Drop one 12b pin from the normalized block and require a named failure.
+
+    Before: the real LATIDO template yields a normalized 12b block.
+    During: remove exactly one pinned phrase with :func:`mutate_once`.
+    After: the assertion raises ``ValueError`` citing the removed pin.
+    """
+    text = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    normalized = " ".join(extract_latido_supervisora_block(text).split())
+    candidate = mutate_once(normalized, literal, "")
+    with pytest.raises(ValueError) as excinfo:
+        assert_latido_supervisora_semantic_pin(candidate, literal)
+    assert literal in str(excinfo.value)
