@@ -8,6 +8,12 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUS_DIR = PROJECT_ROOT / "bus"
 ALLOWED_SCRIPTS_IMPORTS = {
+    # WOT-2026-162i/162k: bus/supervisor.py::_materialize_ticket_projection
+    # (reproyector, gate g-2a) importa check_backlog_contract de forma perezosa
+    # en l.953 para _ticket_has_row; ese import es load-bearing (fail-open en
+    # el call-site). Sin ciclo/dependencia inversa: scripts.check_backlog_contract
+    # solo importa stdlib + bus.state_machine (hoja stdlib), sin ciclo hacia bus/.
+    "scripts.check_backlog_contract",
     "scripts.discover_skills",
     # WOT-2026-098b/113a: review_bridge.py invoca el gate
     # role_models.BUILDER != role_models.REVISOR justo antes de la revision de
