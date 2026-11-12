@@ -6,7 +6,6 @@ import json
 import os
 import subprocess
 import sys
-from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -271,32 +270,3 @@ def test_archive_arranques_reusa_p7_common_sin_retirada_duplicada() -> None:
         and __import__("re").match(r"^(retire|apply_|remove_|purge_)", node.name)
         for node in tree.body
     )
-
-
-def test_archive_arranques_index_conserva_eol_de_plataforma(tmp_path: Path) -> None:
-    archive_arranques = import_module("scripts.archive_arranques")
-    project = tmp_path / "project"
-    arranques = project / "orchestrator_pipeline" / "arranques"
-    arranques.mkdir(parents=True)
-    (arranques / "old.md").write_text("old\n", encoding="utf-8")
-    collaboration = project / ".agent" / "collaboration"
-    collaboration.mkdir(parents=True)
-    (collaboration / "backlog.md").write_text("", encoding="utf-8")
-    subprocess.run(["git", "-C", str(project), "init", "-q"], check=True)
-    subprocess.run(
-        ["git", "-C", str(project), "config", "user.email", "test@example.com"],
-        check=True,
-    )
-    subprocess.run(
-        ["git", "-C", str(project), "config", "user.name", "test"], check=True
-    )
-    subprocess.run(["git", "-C", str(project), "add", "."], check=True)
-    subprocess.run(
-        ["git", "-C", str(project), "commit", "-q", "-m", "fixture"], check=True
-    )
-    archive_arranques.archive(project, min_age_seconds=0)
-    raw = (arranques / "_archive" / "INDEX.md").read_bytes()
-    if os.linesep == "\r\n":
-        assert raw.count(b"\r\n") == raw.count(b"\n")
-    else:
-        assert b"\r\n" not in raw

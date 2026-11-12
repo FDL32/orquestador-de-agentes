@@ -600,3 +600,21 @@ def test_main_respeta_lock_vivo_y_corrupto(tmp_path: Path) -> None:
     assert lock.read_bytes() == b"not json"
     assert not list(archive.rglob("*.zip"))
     assert not (archive / "index.jsonl").exists()
+
+
+def test_markdown_index_conserva_eol_de_plataforma(tmp_path: Path) -> None:
+    """Before: an approved P7 list and an existing archive root under tmp_path.
+    During: run the real apply-archive path that writes archive/INDEX.md.
+    After: the markdown INDEX has content and the platform EOL semantics hold.
+    """
+    origin, archive, _, digest, approved = _fixture(tmp_path)
+    archive.mkdir()
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) == 0
+    )
+    raw = (archive / "INDEX.md").read_bytes()
+    assert raw.count(b"\n") > 0
+    if os.linesep == "\r\n":
+        assert raw.count(b"\r\n") == raw.count(b"\n")
+    else:
+        assert b"\r\n" not in raw
