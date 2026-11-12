@@ -84,7 +84,7 @@ def test_read_only_conforme_rc0(fixtures):
         "triaje",
         celda={
             "triador": "gemma4",
-            "revisor": "glm5.3-flash",
+            "revisor": "mimo-v2.6-flash",
             "lentes": ["glm", "deepseek"],
         },
     )
@@ -272,7 +272,9 @@ def test_check_tr_par_valido_rc0(fixtures):
         registry,
         [
             _session(
-                "TR-1", "triaje", celda={"triador": "gemma4", "revisor": "glm5.3-flash"}
+                "TR-1",
+                "triaje",
+                celda={"triador": "gemma4", "revisor": "mimo-v2.6-flash"},
             )
         ],
     )
@@ -293,7 +295,7 @@ def test_check_tr_triador_incorrecto_rc2(fixtures):
             _session(
                 "TR-1",
                 "triaje",
-                celda={"triador": "qwen3.8-flash", "revisor": "glm5.3-flash"},
+                celda={"triador": "qwen3.8-flash", "revisor": "mimo-v2.6-flash"},
             )
         ],
     )
@@ -325,7 +327,7 @@ def test_check_tr_revisor_incorrecto_rc2(fixtures):
     [
         ("triador", {"a": "gemma4"}),
         ("triador", 1),
-        ("revisor", {"a": "glm5.3-flash"}),
+        ("revisor", {"a": "mimo-v2.6-flash"}),
         ("revisor", 1),
     ],
     ids=[
@@ -340,10 +342,10 @@ def test_check_tr_campos_no_textuales_rc2(fixtures, campo, valor):
 
     Antes se aplicaba ``str(...)`` al valor, asi que un objeto cuyo repr
     contuviera el modelo esperado se colaba (dict con ``gemma4`` o
-    ``glm5.3-flash`` en el repr); ahora solo cuenta texto.
+    ``mimo-v2.6-flash`` en el repr); ahora solo cuenta texto.
     """
     registry, store = fixtures
-    celda = {"triador": "gemma4", "revisor": "glm5.3-flash"}
+    celda = {"triador": "gemma4", "revisor": "mimo-v2.6-flash"}
     celda[campo] = valor
     _write_registry(registry, [_session("TR-1", "triaje", celda=celda)])
     assert _run(registry, store, "--check-tr") == 2
@@ -352,16 +354,24 @@ def test_check_tr_campos_no_textuales_rc2(fixtures, campo, valor):
 @pytest.mark.parametrize(
     ("triador", "revisor", "expected"),
     [
-        ("antigemma4", "glm5.3-flash", 2),
-        ("gemma4", "antiglm5.3-flash", 2),
-        ("gemma4", "nan/glm5.3-flash", 0),
-        ("gemma4 (kilo)", "glm5.3-flash", 0),
-        ("gemma4", "glm5.3-flash", 0),
+        ("antigemma4", "mimo-v2.6-flash", 2),
+        ("gemma4", "antimimo-v2.6-flash", 2),
+        ("gemma4", "mimo-v2.6-flashfree", 2),
+        ("gemma4", "mimo-v2.5", 2),
+        ("gemma4", "glm5.3-flash", 2),
+        ("gemma4", "nan/glm5.3-flash", 2),
+        ("gemma4", "nan/mimo-v2.6-flash", 0),
+        ("gemma4 (kilo)", "mimo-v2.6-flash", 0),
+        ("gemma4", "mimo-v2.6-flash", 0),
     ],
     ids=[
         "antigemma4-rc2",
-        "antiglm-flash-rc2",
-        "glm-con-prefijo-rc0",
+        "antimimo-rc2",
+        "mimo-sufijo-largo-rc2",
+        "mimo-version-distinta-rc2",
+        "glm-antes-valido-rc2",
+        "glm-con-prefijo-rc2",
+        "mimo-con-prefijo-rc0",
         "gemma-con-sufijo-rc0",
         "par-exacto-rc0",
     ],
@@ -369,8 +379,10 @@ def test_check_tr_campos_no_textuales_rc2(fixtures, campo, valor):
 def test_check_tr_modelos_con_frontera(fixtures, triador, revisor, expected):
     """CO-69 ronda 9: el par TR exige frontera, como codex/sol.
 
-    ``"gemma4" in triador`` aceptaba "antigemma4" y ``"glm5.3-flash" in
-    revisor`` aceptaba "antiglm5.3-flash"; ambos deben ser violacion.
+    ``"gemma4" in triador`` aceptaba "antigemma4" y ``"mimo-v2.6-flash" in
+    revisor`` aceptaba "antimimo-v2.6-flash"; ambos deben ser violacion.
+    WOT-2026-163g: el literal del revisor paso de glm5.3-flash a
+    mimo-v2.6-flash y las filas glm pasan de rc 0 a rc 2.
     """
     registry, store = fixtures
     _write_registry(
@@ -378,6 +390,59 @@ def test_check_tr_modelos_con_frontera(fixtures, triador, revisor, expected):
         [_session("TR-1", "triaje", celda={"triador": triador, "revisor": revisor})],
     )
     assert _run(registry, store, "--check-tr") == expected
+
+
+@pytest.mark.parametrize(
+    "revisor",
+    ["mimo-v2.6-flash", "nan/mimo-v2.6-flash"],
+    ids=["mimo-plano", "mimo-con-prefijo-nan"],
+)
+def test_check_tr_revisor_mimo_rc0(fixtures, revisor):
+    """Verify the replacement reviewer model is accepted in both forms.
+
+    Before: the regex matched only ``glm5.3-flash`` and accepted its nan
+    prefixed form. During: the d99b0f8a order replaces glm with mimo and the
+    checker remains fail-closed for the new exact reviewer model. After: both
+    mimo forms return rc 0; with the old regex this test stays red.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "TR-1",
+                "triaje",
+                celda={"triador": "gemma4", "revisor": revisor},
+            )
+        ],
+    )
+    assert _run(registry, store, "--check-tr") == 0
+
+
+@pytest.mark.parametrize(
+    "revisor",
+    ["glm5.3-flash", "nan/glm5.3-flash"],
+    ids=["glm-antes-valido", "glm-con-prefijo-nan"],
+)
+def test_check_tr_revisor_glm_rc2(fixtures, revisor):
+    """Verify the superseded reviewer model is rejected fail-closed.
+
+    Before: the regex matched ``glm5.3-flash`` and its nan prefixed form with
+    rc 0. During: order d99b0f8a replaces glm with mimo, so both old forms
+    must return rc 2. After: with the old regex this test stays red.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "TR-1",
+                "triaje",
+                celda={"triador": "gemma4", "revisor": revisor},
+            )
+        ],
+    )
+    assert _run(registry, store, "--check-tr") == 2
 
 
 def test_check_lenses_dos_rc0(fixtures):

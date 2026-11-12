@@ -43,9 +43,9 @@ class MeasurementError(Exception):
 RE_ACTIVA_PREFIX = re.compile(r"^ACTIVA(\s|$)")
 # Copia deliberada de scripts/check_roster_matches_acting_thread.py:77.
 # CO-69 ronda 9: el par del TR exige frontera de palabra, igual que codex/sol;
-# un modelo con prefijo ("antigemma4", "antiglm5.3-flash") no es el modelo.
+# un modelo con prefijo ("antigemma4", "antimimo-v2.6-flash") no es el modelo.
 RE_TRIADOR = re.compile(r"(?<![a-z0-9])gemma4(?![a-z0-9])")
-RE_REVISOR_TR = re.compile(r"(?<![a-z0-9])glm5\.3-flash(?![a-z0-9])")
+RE_REVISOR_TR = re.compile(r"(?<![a-z0-9])mimo-v2\.6-flash(?![a-z0-9])")
 
 
 def is_activa(status):
@@ -295,12 +295,12 @@ def check_im(sessions, cutoff):
 
 
 def check_tr(sessions, cutoff):
-    """Comprueba el par TR gemma4 y glm5.3-flash.
+    """Comprueba el par TR gemma4 y mimo-v2.6-flash.
 
     Before: cada celda TR declara ``triador`` y ``revisor`` sin validar.
     During: exige texto en ambos y el modelo con frontera de palabra, la misma
         que se aplica a ``codex`` y ``sol``; la subcadena dejaba pasar
-        "antigemma4" y "antiglm5.3-flash" (CO-69 ronda 9).
+        "antigemma4" y "antimimo-v2.6-flash" (CO-69 ronda 9).
     After: 2 si alguna celda TR incumple el par, 0 si todas lo cumplen y 3 si no
         hay celdas medibles.
     """
