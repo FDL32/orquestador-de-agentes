@@ -1949,3 +1949,53 @@ def test_session_start_expired_warning_states_the_remedy(
     assert hook.main() == 0
     ctx = _ctx(json.loads(capsys.readouterr().out))
     assert "espera_checklist_mode.py on" in ctx
+
+
+def test_arranque_no_rearma_ni_reescribe_off_manual(monkeypatch, tmp_path, capsys):
+    """Before: hay un off manual y otro creado por la via real del ticket.
+
+    During: el arranque intenta armar observe sin tocar ninguno de los dos.
+    After: bytes y mtime permanecen identicos en ambos casos.
+    MUTANTE: borra el fichero si mode==off en _arm_espera_observe; open('x')
+    -> open('w') tambien debe caer.
+    """
+    root = _project_root(tmp_path, "manual")
+    sentinel = _sentinel(root)
+    sentinel.write_bytes(b'{"mode":"off"}')
+    antes_bytes = sentinel.read_bytes()
+    antes_mtime = sentinel.stat().st_mtime_ns
+    hook = _hook_module()
+    _prepare_main(monkeypatch, hook)
+    monkeypatch.chdir(root)
+
+    assert hook.main() == 0
+    capsys.readouterr()
+    assert sentinel.read_bytes() == antes_bytes
+    assert sentinel.stat().st_mtime_ns == antes_mtime
+
+    control_root = _project_root(tmp_path, "control")
+    from scripts import espera_checklist_mode as mode
+
+    assert (
+        mode.main(
+            [
+                "off",
+                "--reason",
+                "control p-56d",
+                "--root",
+                str(control_root),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    control_sentinel = _sentinel(control_root)
+    assert json.loads(control_sentinel.read_text(encoding="utf-8"))["mode"] == "off"
+    control_bytes = control_sentinel.read_bytes()
+    control_mtime = control_sentinel.stat().st_mtime_ns
+    monkeypatch.chdir(control_root)
+
+    assert hook.main() == 0
+    capsys.readouterr()
+    assert control_sentinel.read_bytes() == control_bytes
+    assert control_sentinel.stat().st_mtime_ns == control_mtime

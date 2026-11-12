@@ -4,15 +4,15 @@
 Before: el operador decide explicitamente si quiere medir o exigir el marcador
 de decision de espera; este centinela es independiente de verification_mode.py
 porque el DoD de 160p exige una segunda rama independiente de WOT-2026-044t.
-During: `on` escribe solo el modo y una fecha UTC, `off` borra el centinela y
-`status` informa incluso ante JSON ilegible, siempre en modo fail-open.
+During: `on` escribe solo el modo y una fecha UTC, `off` escribe un apagado
+durable y `status` informa incluso ante JSON ilegible, siempre en modo fail-open.
 After: el estado queda en el centinela de espera bajo `.agent/runtime/`; este
 script no se cablea en bootstrap ni en cierre de sesion porque su armado es
 manual durante el periodo de observacion. El arranque avisa ante centinela
 EXPIRADO o ILEGIBLE con `CENTINELA-ESPERA-EXPIRADO` o
 `CENTINELA-ESPERA-ILEGIBLE`, en fail-open y solo lectura. No avisa ante fichero
-ausente, vacio/{} ni `{"mode":"off"}`. `{mode:off}` solo existe escrito a mano:
-`turn_on` solo admite `observe|block` y `turn_off` borra el fichero.
+ausente, vacio/{} ni `{"mode":"off"}`. `{mode:off}` se escribe con apagado
+durable; `turn_on` solo admite `observe|block` y rearma explicitamente.
 """
 
 from __future__ import annotations
@@ -78,18 +78,34 @@ def turn_on(root: Path, mode: str) -> int:
     return 0
 
 
-def turn_off(root: Path) -> int:
-    """Borra el centinela; la operacion es idempotente."""
+def turn_off(root: Path, reason: str = "") -> int:
+    """Apaga el centinela de forma durable e idempotente.
+
+    Before: puede existir un estado ausente, ilegible, activo o ya apagado.
+    During: lee el estado y escribe un apagado fechado, con motivo opcional.
+    After: conserva un apagado legible sin reescribirlo y devuelve su resultado.
+    """
     target = root / SENTINEL_RELPATH
     try:
-        target.unlink()
-    except FileNotFoundError:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = None
+    if isinstance(data, dict) and data.get("mode") == "off":
         print("espera_checklist_mode ya estaba OFF")
         return 0
+    state = {
+        "mode": "off",
+        "activated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    if reason:
+        state["reason"] = reason
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(state), encoding="utf-8")
     except OSError as exc:
-        print(f"espera_checklist_mode: no se pudo borrar: {exc}", file=sys.stderr)
+        print(f"espera_checklist_mode: no se pudo apagar: {exc}", file=sys.stderr)
         return 1
-    print(f"espera_checklist_mode OFF ({target})")
+    print(f"espera_checklist_mode OFF (mode=off, {target})")
     return 0
 
 
@@ -128,13 +144,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("action", choices=["on", "off", "status"])
     parser.add_argument("--mode", choices=["observe", "block"], default="observe")
+    parser.add_argument("--reason", default="")
     parser.add_argument("--root", type=Path, default=None)
     args = parser.parse_args(argv)
     root = (args.root or REPO_ROOT).resolve()
     if args.action == "on":
         return turn_on(root, args.mode)
     if args.action == "off":
-        return turn_off(root)
+        return turn_off(root, args.reason)
     return show_status(root)
 
 

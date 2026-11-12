@@ -31,12 +31,39 @@ def test_on_block_escribe_modo_block(tmp_path: Path) -> None:
 
 
 def test_off_es_idempotente(tmp_path: Path, capsys) -> None:
+    """Before: la raiz no tiene estado de espera.
+
+    During: off escribe un estado durable y el segundo apagado es idempotente.
+    After: on rearma observe y el centinela sigue siendo legible.
+    MUTACION: reintroducir unlink, cambiar la salida del primer off, escribir una
+    fecha naive o exigir activated_at en el guard idempotente cae.
+    """
+    assert mode.main(["off", "--root", str(tmp_path)]) == 0
+    first = capsys.readouterr().out
+    target = tmp_path / mode.SENTINEL_RELPATH
+    assert first.startswith("espera_checklist_mode OFF (mode=off, ")
+    assert str(target) in first
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["mode"] == "off"
+    activated = datetime.fromisoformat(data["activated_at"])
+    assert activated.tzinfo is not None
+    assert activated.utcoffset() == timedelta(0)
+    first_bytes = target.read_bytes()
     assert mode.main(["off", "--root", str(tmp_path)]) == 0
     assert "ya estaba OFF" in capsys.readouterr().out
+    assert target.read_bytes() == first_bytes
     assert mode.main(["on", "--root", str(tmp_path)]) == 0
-    assert mode.main(["off", "--root", str(tmp_path)]) == 0
-    assert not (tmp_path / mode.SENTINEL_RELPATH).exists()
-    assert mode.main(["off", "--root", str(tmp_path)]) == 0
+    assert json.loads(target.read_text(encoding="utf-8"))["mode"] == "observe"
+    capsys.readouterr()
+
+    manual_root = tmp_path / "manual_sin_fecha"
+    manual = manual_root / mode.SENTINEL_RELPATH
+    manual.parent.mkdir(parents=True, exist_ok=True)
+    manual.write_bytes(b'{"mode":"off"}')
+    manual_bytes = manual.read_bytes()
+    assert mode.main(["off", "--root", str(manual_root)]) == 0
+    assert "ya estaba OFF" in capsys.readouterr().out
+    assert manual.read_bytes() == manual_bytes
 
 
 def test_status_off_legible_e_ilegible(tmp_path: Path, capsys) -> None:
@@ -162,3 +189,107 @@ def test_status_off_mode_is_coherent_not_on(tmp_path: Path, capsys) -> None:
     out = capsys.readouterr().out
     assert "ON (mode=observe" in out
     assert "INACTIVO" not in out
+
+
+def test_off_sobrescribe_ilegible_y_otros_modos(tmp_path: Path, capsys) -> None:
+    """Before: cada subdirectorio contiene un estado invalido o activo.
+
+    During: off reemplaza todos los estados que no sean off legible.
+    After: cada centinela existe y contiene off con fecha parseable.
+    MUTACION: conservar observe, block, JSON roto, no-dict, vacio o {} cae.
+    """
+    when = datetime.now(timezone.utc)
+    casos = {
+        "observe_fresco": {"mode": "observe", "activated_at": when.isoformat()},
+        "observe_caducado": {
+            "mode": "observe",
+            "activated_at": (when - timedelta(days=3)).isoformat(),
+        },
+        "block": {"mode": "block", "activated_at": when.isoformat()},
+        "roto": "{roto",
+        "no_dict": "[1,2,3]",
+        "vacio": "",
+        "sin_modo": "{}",
+    }
+    for nombre, previo in casos.items():
+        root = tmp_path / nombre
+        target = root / mode.SENTINEL_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            previo if isinstance(previo, str) else json.dumps(previo),
+            encoding="utf-8",
+        )
+        assert mode.main(["off", "--root", str(root)]) == 0
+        capsys.readouterr()
+        data = json.loads(target.read_text(encoding="utf-8"))
+        assert isinstance(data, dict)
+        assert data["mode"] == "off"
+        datetime.fromisoformat(data["activated_at"])
+
+
+def test_off_ante_oserror_devuelve_rc1(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Before: el filesystem simula un fallo al escribir.
+
+    During: off intenta persistir el estado durable.
+    After: devuelve rc 1 y explica el fallo en stderr.
+    MUTACION: ocultar el OSError o devolver rc 0 deja el test en rojo.
+    """
+
+    def _boom(self, *args, **kwargs):
+        raise OSError("disco lleno (simulado)")
+
+    monkeypatch.setattr(Path, "write_text", _boom)
+    assert mode.main(["off", "--root", str(tmp_path)]) == 1
+    assert "no se pudo apagar" in capsys.readouterr().err
+
+
+def test_off_durable_con_motivo(tmp_path: Path, capsys) -> None:
+    """Before: el centinela puede registrar una razon de apagado.
+
+    During: off conserva el motivo solo cuando se proporciona --reason.
+    After: on y status ignoran --reason y mantienen su contrato.
+    MUTACION: eliminar, inventar o consumir reason en on/status cae.
+    """
+    target = tmp_path / mode.SENTINEL_RELPATH
+    assert (
+        mode.main(["off", "--reason", "rotacion planificada", "--root", str(tmp_path)])
+        == 0
+    )
+    capsys.readouterr()
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["mode"] == "off"
+    assert data["reason"] == "rotacion planificada"
+    datetime.fromisoformat(data["activated_at"])
+
+    assert mode.main(["on", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert mode.main(["off", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert "reason" not in data
+
+    assert mode.main(["on", "--reason", "x", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    data = json.loads(target.read_text(encoding="utf-8"))
+    assert data["mode"] == "observe"
+    assert "reason" not in data
+    assert mode.main(["status", "--reason", "x", "--root", str(tmp_path)]) == 0
+
+
+def test_on_rearma_tras_off(tmp_path: Path, capsys) -> None:
+    """Before: off deja un centinela durable.
+
+    During: on vuelve a escribir observe y despues block de forma explicita.
+    After: ambos modos solicitados quedan persistidos.
+    MUTACION: hacer turn_on exclusivo y no sobrescribir off cae.
+    """
+    target = tmp_path / mode.SENTINEL_RELPATH
+    assert mode.main(["off", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert mode.main(["on", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert json.loads(target.read_text(encoding="utf-8"))["mode"] == "observe"
+    assert mode.main(["off", "--root", str(tmp_path)]) == 0
+    capsys.readouterr()
+    assert mode.main(["on", "--mode", "block", "--root", str(tmp_path)]) == 0
+    assert json.loads(target.read_text(encoding="utf-8"))["mode"] == "block"

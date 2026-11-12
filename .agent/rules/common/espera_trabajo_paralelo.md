@@ -39,6 +39,6 @@ ESTATUS: NORMA (no barrera). Ficha WOT-2026-160o (2026-11-08). Origen: P9 (vuelo
    `CENTINELA-ESPERA-EXPIRADO` o `CENTINELA-ESPERA-ILEGIBLE`; el aviso es
    fail-open, solo lectura y no rearma el centinela. Hay silencio comprobable
    para centinela ausente, vacio/{}, y `{"mode":"off"}` (este ultimo se
-   evalua antes de la caducidad). `{mode:off}` solo se escribe a mano. El
+   evalua antes de la caducidad). `{mode:off}` lo escribe `turn_off` (apagado durable P-E: estado escrito con fecha y motivo opcional --reason, idempotente, no la borra ni la re-arma el arranque). El
    remedio es `python scripts/espera_checklist_mode.py on [--mode observe|block]`.
    El mapeo del Stop hook es `EXPIRADO` o `SIN-FECHA-LEGIBLE`.
