@@ -177,6 +177,26 @@ C:/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInterac
 
 Retirada manual: borrar la clave del estado de `comms_alert` se hace con `--resolve`; un bloqueo del
 estado huerfano se degrada solo (tras 5 s se sigue sin bloqueo).
+
+## Gate de cupo por cuenta destino (quota_gate.py)
+
+python scripts/flight/quota_gate.py --target-instance <providerInstanceId> --flight-dir <VUELO>
+
+Opciones: `--supervision-policy strict|deferred` y `--strict-map`.
+
+| rc | lectura por cuenta DESTINO |
+|---|---|
+| 0 | OK/RESERVA: pct < 92 |
+| 3 | AVISO upstream de quota_tick (pct >= 90): no es veredicto del gate; el veredicto sale de la cuenta destino (pct < 92 => 0) |
+| 4 | FREEZE: 92 <= pct < 97 |
+| 5 | HARD: pct >= 97 (o supervision >= 97) |
+| 9 | NO_MEDIDO fail-closed: timeout, rc de subprocess fuera de {0,3,4,5}, salida sin JSON v2 con accounts, cuenta no resoluble, stale/sin medir, block_pct no numerico o mapa estricto |
+
+rc 0 es necesario pero no suficiente: la supervision estricta tambien debe estar medida y por debajo del HARD.
+
+Opciones de supervision: `--supervisor-instance <providerInstanceId|cuenta>`.
+En el vuelo-20261026b, `quota.reserve_for_orquestadora` es prosa y solo cuenta si su valor es el nombre exacto de una cuenta del censo; mientras sea prosa hay que pasar `--supervisor-instance`. Cambiar el roster queda fuera de esta ficha.
+
 ## Contrato 153t: identidad y acciones
 
 El productor usa `{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\WindowsPowerShell\v1.0\powershell.exe` como `AppId` predeterminado y lo expone en

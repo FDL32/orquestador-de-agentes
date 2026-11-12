@@ -827,6 +827,8 @@ POLICY_CONSUMER_REL: frozenset[str] = frozenset(
         "tests/unit/test_quota_tick.py",
         "scripts/flight/flight_stall_check.py",
         "tests/unit/test_flight_stall_check.py",
+        "scripts/flight/quota_gate.py",
+        "tests/unit/test_quota_gate.py",
     }
 )
 HELPER_ENVIOS = MOTOR_ROOT / "scripts" / "flight" / "send_with_ledger.py"

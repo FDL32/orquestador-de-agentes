@@ -490,12 +490,14 @@ def _apply_change(path, ledger, roster, by, reason, change, detail, mutate):
                 raise
 
 
-def _session_for_alta(args, data):
+def _session_for_alta(args, data):  # noqa: C901
     """Construye y valida la nueva sesion de alta.
 
     Before: ``args`` contiene los seis campos obligatorios y ``data`` es valido.
-    During: rechaza code duplicado y conserva solo opcionales explicitamente dados.
-    After: retorna el diccionario listo para anadir o lanza rc 4.
+    During: rechaza code duplicado, conserva opcionales explicitamente dados y
+        aplica el recibo detectivo de quota_gate; IM y TR bloquean rc no cero sin waiver.
+    After: retorna el diccionario listo para anadir o lanza rc 2/4. Dry-run y
+        apply comparten esta validacion; el campo es opcional para otros roles.
     """
     if _find_session(data, args.code) is not None:
         raise RegistryError(
@@ -515,6 +517,29 @@ def _session_for_alta(args, data):
             if field == "celda":
                 value = _parse_json_field(value, field, dict)
             item[field] = value
+    quota_gate_rc = getattr(args, "quota_gate_rc", None)
+    quota_gate_waiver = getattr(args, "quota_gate_waiver", None)
+    if quota_gate_waiver is not None:
+        if not quota_gate_waiver.strip():
+            raise RegistryError("quota-gate-waiver no puede estar vacio", RC_INVALID)
+        if quota_gate_rc is None:
+            raise RegistryError("quota-gate-waiver exige --quota-gate-rc", RC_INVALID)
+    if quota_gate_rc is not None:
+        receipt = {"rc": quota_gate_rc}
+        if quota_gate_waiver is not None:
+            receipt["waiver"] = quota_gate_waiver
+        item["quota_gate_receipt"] = receipt
+        if (
+            quota_gate_rc != 0
+            and args.role in ("implantacion", "triaje")
+            and quota_gate_waiver is None
+        ):
+            raise RegistryError(
+                f"alta de IM/TR con quota-gate-rc={quota_gate_rc} exige --quota-gate-waiver",
+                RC_INVALID,
+            )
+    elif args.role in ("implantacion", "triaje"):
+        item["quota_gate_receipt"] = "ausente"
     _validate_cell_requirements(item, require_cell=True)
     return item
 
@@ -972,6 +997,14 @@ def _parser():
     alta.add_argument("--thread-id", dest="thread_id", required=True)
     alta.add_argument("--started", required=True)
     alta.add_argument("--status", required=True)
+    alta.add_argument(
+        "--quota-gate-rc",
+        dest="quota_gate_rc",
+        type=int,
+        choices=(0, 3, 4, 5, 9),
+        default=None,
+    )
+    alta.add_argument("--quota-gate-waiver", dest="quota_gate_waiver", default=None)
     for flag in OPTIONAL_FIELDS:
         alta.add_argument("--" + flag.replace("_", "-"), dest=flag, default=None)
     asiento = _add_common(commands.add_parser("asiento"))
