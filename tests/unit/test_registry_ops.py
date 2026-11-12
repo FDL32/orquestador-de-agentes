@@ -3761,3 +3761,134 @@ def test_registry_ops_cutoff_matches_checker():
     from scripts.flight import check_cell_conformance
 
     assert _REGISTRY_OPS_MODULE.CUTOFF_DATE == check_cell_conformance.CUTOFF_DATE
+
+
+@pytest.mark.parametrize(
+    ("command", "apply"),
+    [("alta", False), ("alta", True), ("asiento", False), ("asiento", True)],
+    ids=["alta-dry-run", "alta-apply", "asiento-dry-run", "asiento-apply"],
+)
+def test_alta_asiento_status_activa_rechaza(tmp_path, command, apply):
+    registry = tmp_path / "registry.json"
+    ledger = registry.parent / "registry_changes.jsonl"
+    if command == "alta":
+        write_registry(registry)
+        args = [
+            "alta",
+            "--code",
+            "IM-2",
+            "--role",
+            "implantacion",
+            "--slot",
+            "implantacion-1",
+            "--thread-id",
+            "thread-2",
+            "--started",
+            "2026-11-12T10:00:00+01:00",
+            "--status",
+            "ACTIVA: lanzado a las 10 (IM-129)",
+            "--by",
+            "test",
+            "--reason",
+            "test",
+        ]
+    else:
+        write_registry(registry, [session()])
+        args = [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            "ACTIVA: lanzado a las 10 (IM-129)",
+            "--by",
+            "test",
+            "--reason",
+            "test",
+        ]
+    before = registry.read_bytes()
+    if apply:
+        args.append("--apply")
+
+    result = run_cli(registry, *args, ledger=ledger)
+
+    assert result.returncode == 2
+    assert "^ACTIVA(\\s|$)" in result.stderr
+    assert "is_activa" in result.stderr
+    assert "check_cell_conformance" in result.stderr
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+
+
+def test_alta_asiento_status_activa_fuente_unica():
+    assert _REGISTRY_OPS_MODULE._IS_ACTIVA.__module__ == "check_cell_conformance"
+    assert callable(_REGISTRY_OPS_MODULE._IS_ACTIVA)
+    assert not hasattr(_REGISTRY_OPS_MODULE, "RE_ACTIVA_PREFIX")
+    assert _REGISTRY_OPS_MODULE._IS_ACTIVA("ACTIVA") is True
+    assert _REGISTRY_OPS_MODULE._IS_ACTIVA("ACTIVA (ACK medido ... )") is True
+    assert _REGISTRY_OPS_MODULE._IS_ACTIVA("ACTIVA: lanzado") is False
+
+
+@pytest.mark.parametrize(
+    ("command", "status"),
+    [
+        ("alta", "ACTIVA"),
+        ("alta", "ACTIVA (ACK medido ... )"),
+        ("asiento", "ACTIVA"),
+        ("asiento", "ACTIVA (ACK medido ... )"),
+    ],
+    ids=[
+        "alta-activa",
+        "alta-activa-detalle",
+        "asiento-activa",
+        "asiento-activa-detalle",
+    ],
+)
+def test_alta_asiento_status_activa_acepta_predicado(tmp_path, command, status):
+    registry = tmp_path / "registry.json"
+    ledger = registry.parent / "registry_changes.jsonl"
+    if command == "alta":
+        write_registry(registry)
+        args = [
+            "alta",
+            "--code",
+            "IM-2",
+            "--role",
+            "builder",
+            "--slot",
+            "builder-2",
+            "--thread-id",
+            "thread-2",
+            "--started",
+            "2026-11-12T10:00:00+01:00",
+            "--status",
+            status,
+            "--by",
+            "test",
+            "--reason",
+            "test",
+            "--apply",
+        ]
+        expected_code = "IM-2"
+    else:
+        write_registry(registry, [session()])
+        args = [
+            "asiento",
+            "--code",
+            "IM-1",
+            "--status",
+            status,
+            "--by",
+            "test",
+            "--reason",
+            "test",
+            "--apply",
+        ]
+        expected_code = "IM-1"
+
+    result = run_cli(registry, *args, ledger=ledger)
+
+    assert result.returncode == 0
+    data = json.loads(registry.read_text(encoding="utf-8"))
+    stored = next(item for item in data["sessions"] if item["code"] == expected_code)
+    assert stored["status"] == status
+    assert ledger.exists()

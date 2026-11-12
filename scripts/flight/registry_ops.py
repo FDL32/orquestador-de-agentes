@@ -32,6 +32,7 @@ responsabilidad entre alta/asiento/nota es deliberada.
 import argparse
 import contextlib
 import errno
+import importlib.util
 import json
 import os
 import sys
@@ -58,6 +59,7 @@ RC_CONFLICT = 4
 RC_LOCK = 5
 RC_LOCK_RELEASE = 6
 CUTOFF_DATE = "2026-11-10"  # espejo de check_cell_conformance.CUTOFF_DATE
+_CELL_CHECKER = None
 LOCK_ATTEMPTS = 20
 LOCK_DELAY_S = 0.05
 MUTABLE_FIELDS = (
@@ -84,6 +86,53 @@ OPTIONAL_FIELDS = (
     "worktree",
     "celda",
 )
+
+
+def _load_cell_checker():
+    """Load the canonical cell checker from the neighboring script.
+
+    Before: the checker script exists next to this module and can be loaded by
+        its filesystem path.
+    During: imports the checker once and caches the resulting module.
+    After: returns the cached checker module or raises ``RuntimeError`` when it
+        cannot be loaded.
+    """
+    global _CELL_CHECKER
+    if _CELL_CHECKER is not None:
+        return _CELL_CHECKER
+    path = Path(__file__).resolve().with_name("check_cell_conformance.py")
+    spec = importlib.util.spec_from_file_location("check_cell_conformance", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"no se pudo cargar {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    _CELL_CHECKER = module
+    return module
+
+
+_IS_ACTIVA = _load_cell_checker().is_activa
+
+
+def _check_activa_status(status):
+    """Validate statuses that claim the active lifecycle state.
+
+    Before: ``status`` is the projected session status, which may be any JSON
+        value accepted by the registry CLI.
+    During: checks only string values beginning with ``ACTIVA`` against the
+        canonical ``is_activa`` predicate.
+    After: returns ``None`` for unrelated values or raises rc 2 for an invalid
+        ``ACTIVA``-prefixed status.
+    """
+    if not isinstance(status, str) or not status.startswith("ACTIVA"):
+        return
+    if not _IS_ACTIVA(status):
+        raise RegistryError(
+            f"status invalido: {status!r} empieza por ACTIVA y no casa el "
+            "predicado ^ACTIVA(\\s|$) de is_activa (check_cell_conformance); "
+            "usa ACTIVA o 'ACTIVA (detalle)'",
+            RC_INVALID,
+        )
 
 
 class RegistryError(Exception):
@@ -509,6 +558,7 @@ def _validate_cell_requirements(item, *, require_cell=False):
         exige dos veredictos al pasar a ASENTADA en cualquier proyeccion.
     After: retorna ``None`` si conforme o lanza ``RegistryError`` rc 2.
     """
+    _check_activa_status(item.get("status"))
     if require_cell and item.get("role") in ("implantacion", "triaje"):
         cell = item.get("celda")
         if not isinstance(cell, dict) or not cell:
