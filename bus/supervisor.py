@@ -950,6 +950,20 @@ class SequentialTicketSupervisor:
         """Materialize active-ticket projections synchronously."""
         if state == TicketState.UNKNOWN:
             return False
+        from scripts.check_backlog_contract import _ticket_has_row
+
+        backlog_path = self.collaboration_dir / "backlog.md"
+        archived_backlog_path = self.collaboration_dir / "_archive" / "backlog_done.md"
+        has_backlog_surfaces = backlog_path.exists() or archived_backlog_path.exists()
+        if has_backlog_surfaces and not (
+            _ticket_has_row(ticket_id, backlog_path)
+            or _ticket_has_row(ticket_id, archived_backlog_path)
+        ):
+            print(
+                f"[WARN] ghost-on-write projection rejected ticket {ticket_id}: "
+                "no backlog row"
+            )
+            return False
         changed = False
 
         changed |= self._write_turn_if_semantic_changed(

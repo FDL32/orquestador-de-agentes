@@ -273,6 +273,58 @@ def test_mark_ready_sync_materializes_projection_without_supervisor(
     ).read_text(encoding="utf-8")
 
 
+def test_projection_refuses_ghost_ticket(tmp_path):
+    """Before: projection surfaces exist but the ticket is absent from backlog.
+
+    During: materialize the ticket and then repeat with a valid backlog row.
+
+    After: the ghost is rejected without writes, while the valid row succeeds.
+    """
+    project_root = tmp_path
+    collaboration_dir = project_root / ".agent" / "collaboration"
+    runtime_dir = project_root / ".agent" / "runtime"
+    collaboration_dir.mkdir(parents=True)
+    runtime_dir.mkdir(parents=True)
+    (collaboration_dir / "backlog.md").write_text(
+        "| Media | OTHER | Ticket | x |", encoding="utf-8"
+    )
+    files = {
+        collaboration_dir
+        / "STATE.md": "ACTIVE_TICKET: WOT-2026-999\nSTATUS: IN_PROGRESS\n",
+        collaboration_dir / "TURN.md": "stale turn\n",
+        collaboration_dir / "execution_log.md": "Estado documental: IN_PROGRESS\n",
+    }
+    for path, content in files.items():
+        path.write_text(content, encoding="utf-8")
+    before = {path: path.read_bytes() for path in files}
+    supervisor = SequentialTicketSupervisor(
+        project_root=project_root,
+        collaboration_dir=collaboration_dir,
+        runtime_dir=runtime_dir,
+    )
+
+    assert (
+        supervisor._materialize_ticket_projection(
+            "WOT-2026-999", TicketState.READY_FOR_REVIEW
+        )
+        is False
+    )
+    assert before == {path: path.read_bytes() for path in files}
+
+    (collaboration_dir / "backlog.md").write_text(
+        "| Media | WOT-2026-999 | Ticket | x |", encoding="utf-8"
+    )
+    assert (
+        supervisor._materialize_ticket_projection(
+            "WOT-2026-999", TicketState.READY_FOR_REVIEW
+        )
+        is True
+    )
+    assert "STATUS: READY_FOR_REVIEW" in (collaboration_dir / "STATE.md").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_mark_ready_already_ready_reprojects_stale_markdown(monkeypatch, tmp_path):
     """already_ready is idempotent for events but must still heal projections."""
     project_root = tmp_path

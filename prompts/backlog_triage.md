@@ -532,6 +532,7 @@ paralelizar); NO lo ejecuta. La ejecucion sigue siendo responsabilidad
 exclusiva de `/orchestrate-pipeline`. El triage no gana logica de
 ejecucion por tener ahora un DAG en vez de una lista plana: sigue siendo
 un planificador, nunca un ejecutor.
+Una sesion de triaje NO ejecuta --mark-ready ni --bootstrap-ticket, NO escribe STATE.md, TURN.md, execution_log.md ni events.jsonl, y NO edita work_plan.md del workspace; sus artefactos salen a su carpeta temporal.
 
 **Decision de diseno confirmada (bucle adversarial 2026-10-15, 7 lentes
 independientes, 6/7 CAMBIOS_NECESARIOS sobre la propuesta original):**

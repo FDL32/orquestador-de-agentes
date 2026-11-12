@@ -1270,6 +1270,24 @@ def test_037a_contract_and_review_source_prompts_exist_on_disk() -> None:
 TRIAGE_PROMPT = PROMPTS / "backlog_triage.md"
 
 
+def test_triage_prompt_forbids_ticket_state_mutation() -> None:
+    """Before: triage prose is the read-only contract.
+
+    During: read the real prompt file.
+
+    After: the explicit ticket-state mutation prohibition remains present.
+    """
+    text = TRIAGE_PROMPT.read_text(encoding="utf-8")
+    literal = (
+        "Una sesion de triaje NO ejecuta --mark-ready ni --bootstrap-ticket, "
+        "NO escribe STATE.md, TURN.md, execution_log.md ni events.jsonl, y "
+        "NO edita work_plan.md del workspace; sus artefactos salen a su "
+        "carpeta temporal."
+    )
+    assert "El triage sigue siendo solo lectura" in text
+    assert literal in text
+
+
 def test_023u_executor_depends_on_is_real_dependency_not_order() -> None:
     """The executor's schema legend for `depends_on_groups` must say it is a
     REAL dependency, not 'execution order'. Mutation: revert l.473 back to

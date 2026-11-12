@@ -202,6 +202,22 @@ def _check_and_reconcile_drift(project_root: Path, ticket_id: str) -> dict:
     # Drift confirmed: bus is ahead of projection
     result["drift_detected"] = True
 
+    from scripts.check_backlog_contract import _ticket_has_row
+
+    collab_dir = project_root / ".agent" / "collaboration"
+    backlog_path = collab_dir / "backlog.md"
+    archived_backlog_path = collab_dir / "_archive" / "backlog_done.md"
+    has_backlog_surfaces = backlog_path.exists() or archived_backlog_path.exists()
+    if has_backlog_surfaces and not (
+        _ticket_has_row(ticket_id, backlog_path)
+        or _ticket_has_row(ticket_id, archived_backlog_path)
+    ):
+        result["reconciled"] = False
+        result["reason"] = (
+            f"ghost-on-write projection rejected ticket {ticket_id}: no backlog row"
+        )
+        return result
+
     try:
         events_dicts = [e.to_dict() for e in all_events]
         state = StateMachine.derive_state_from_events(events_dicts)

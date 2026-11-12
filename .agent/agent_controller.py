@@ -3334,7 +3334,10 @@ def _maybe_handle_stale_builder_orphan(
 
 
 def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-ready, breaker)
-    scope_override: str | None, json_output: bool, force_mode: bool
+    scope_override: str | None,
+    json_output: bool,
+    force_mode: bool,
+    dry_run: bool = False,
 ) -> int:
     """Handle --mark-ready flag.
 
@@ -3350,6 +3353,27 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
         print("[ERROR] No active plan found.")
         return 1
 
+    from scripts.check_backlog_contract import _ticket_has_row
+
+    collaboration_dir = PROJECT_ROOT / ".agent" / "collaboration"
+    backlog_path = collaboration_dir / "backlog.md"
+    archived_backlog_path = collaboration_dir / "_archive" / "backlog_done.md"
+    has_backlog_surfaces = backlog_path.exists() or archived_backlog_path.exists()
+    if has_backlog_surfaces and not (
+        _ticket_has_row(plan_id, backlog_path)
+        or _ticket_has_row(plan_id, archived_backlog_path)
+    ):
+        preview = {
+            "status": "dry_run_preview" if dry_run else "blocked",
+            "ghost_blocked": True,
+            "plan_id": plan_id,
+            "reason": f"ghost-on-write gate rejected ticket {plan_id}: no backlog row",
+        }
+        if json_output or dry_run:
+            print(json.dumps(preview, indent=2))
+        else:
+            print(f"[ERROR] {preview['reason']}")
+        return 1
     log_status = get_status(log_content, "**Estado:**")
     round_ok, process_round, round_reason = _ensure_active_builder_round(plan_id)
 
@@ -3363,6 +3387,73 @@ def _handle_mark_ready(  # noqa: C901 - linear guard chain (HUMAN_GATE, already-
             bus_state = StateMachine.derive_state_from_events(
                 [e.to_dict() for e in events]
             )
+
+    if dry_run:
+        preview = {
+            "status": "dry_run_preview",
+            "ghost_blocked": False,
+            "gate_skipped": not has_backlog_surfaces,
+            "plan_id": plan_id,
+            "bus_state": bus_state.value if bus_state is not None else None,
+        }
+        if not round_ok:
+            preview.update(
+                {
+                    "blocked": True,
+                    "reason": "stale_builder_round",
+                    "details": round_reason,
+                }
+            )
+            print(json.dumps(preview, indent=2))
+            return 1
+        if bus_state == TicketState.HUMAN_GATE or (
+            bus_state is None and "HUMAN_GATE" in log_status
+        ):
+            preview.update({"blocked": True, "reason": "human_gate"})
+            print(json.dumps(preview, indent=2))
+            return 1
+        if bus_state is not None and bus_state in (
+            TicketState.READY_FOR_REVIEW,
+            TicketState.READY_TO_CLOSE,
+            TicketState.COMPLETED,
+        ):
+            preview["already_ready"] = True
+            print(json.dumps(preview, indent=2))
+            return 0
+        breaker_status = _check_circuit_breaker(plan_id)
+        if breaker_status["open"]:
+            preview.update(
+                {
+                    "blocked": True,
+                    "reason": "circuit_breaker_open",
+                    "details": breaker_status.get("reason"),
+                }
+            )
+            print(json.dumps(preview, indent=2))
+            return 1
+        evidence_errors = _check_implementation_evidence(plan_id)
+        if evidence_errors:
+            preview.update(
+                {
+                    "blocked": True,
+                    "reason": "implementation_evidence_failed",
+                    "details": evidence_errors,
+                }
+            )
+            print(json.dumps(preview, indent=2))
+            return 1
+        guard_result = _run_pre_handoff_guard(plan_id, json_output)
+        if not guard_result["valid"]:
+            preview.update(
+                {
+                    "blocked": True,
+                    "reason": "pre_handoff_guard_failed",
+                }
+            )
+            print(json.dumps(preview, indent=2))
+            return 1
+        print(json.dumps(preview, indent=2))
+        return 0
 
     if not round_ok:
         # WT-2026-242b: Orphan containment - if the ticket is already past
@@ -7594,7 +7685,12 @@ def main():  # noqa: C901 - CLI dispatch intentionally centralizes flag handling
 
     # Check for --mark-ready
     if "--mark-ready" in sys.argv:
-        return _handle_mark_ready(scope_override, json_output, force_mode)
+        return _handle_mark_ready(
+            scope_override,
+            json_output,
+            force_mode,
+            dry_run="--dry-run" in sys.argv,
+        )
 
     # Check for --bootstrap-ticket
     if "--bootstrap-ticket" in sys.argv:

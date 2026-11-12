@@ -14,7 +14,10 @@ SCRIPT_PATH = PROJECT_ROOT / "scripts" / "launch_agent_terminals.ps1"
 
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from scripts.get_launcher_state import derive_launcher_state  # noqa: E402
+from scripts.get_launcher_state import (  # noqa: E402
+    _check_and_reconcile_drift,
+    derive_launcher_state,
+)
 
 
 def _write_work_plan(
@@ -345,6 +348,46 @@ def test_derive_launcher_state_drift_fallback_when_bus_empty(tmp_path: Path) -> 
 
     # Falls through to UNKNOWN state
     assert "reconciled" not in state
+
+
+def test_launcher_reprojection_refuses_ghost_ticket(tmp_path: Path) -> None:
+    """Before: bus drift is present but the active ticket has no backlog row.
+
+    During: reconcile the launcher projection, then repeat with a valid row.
+
+    After: the ghost is rejected without changing STATE.md; valid rows reconcile.
+    """
+    ticket_id = "WOT-2026-999"
+    _write_work_plan(tmp_path, ticket_id)
+    _write_supervisor_state(tmp_path, last_processed_sequence=0)
+    _write_stale_state_md(tmp_path, ticket_id, "IN_PROGRESS")
+    collab = tmp_path / ".agent" / "collaboration"
+    (collab / "backlog.md").write_text(
+        "| Media | OTHER | Ticket | x |", encoding="utf-8"
+    )
+    event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
+    event_bus.emit(
+        "STATE_CHANGED",
+        ticket_id=ticket_id,
+        actor="SUPERVISOR",
+        payload={"from_state": "IN_PROGRESS", "to_state": "READY_FOR_REVIEW"},
+    )
+    state_path = collab / "STATE.md"
+    before = state_path.read_bytes()
+
+    result = _check_and_reconcile_drift(tmp_path, ticket_id)
+
+    assert result["drift_detected"] is True
+    assert result["reconciled"] is False
+    assert "ghost" in result["reason"].lower()
+    assert state_path.read_bytes() == before
+
+    (collab / "backlog.md").write_text(
+        f"| Media | {ticket_id} | Ticket | x |", encoding="utf-8"
+    )
+    result = _check_and_reconcile_drift(tmp_path, ticket_id)
+    assert result["reconciled"] is True
+    assert "STATUS: READY_FOR_REVIEW" in state_path.read_text(encoding="utf-8")
 
 
 # WOT-2026-013n: honest non-success terminals fall on the terminal side of the

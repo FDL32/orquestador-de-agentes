@@ -1,5 +1,7 @@
 """Tests for WP-2026-143: Bus-backed mark-ready idempotency."""
 
+import hashlib
+import json
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -738,3 +740,213 @@ class TestMarkReadyIdempotency:
         assert payload.get("reason") == "stale_builder_round"
         assert payload.get("process_round") == 1
         assert payload.get("bus_state") == "READY_FOR_REVIEW"
+
+
+def test_mark_ready_blocks_ghost_ticket_before_any_write(tmp_path, monkeypatch, capsys):
+    """Before: a scheduling surface exists without a row for the active ticket.
+
+    During: invoke mark-ready with all downstream writes observable.
+
+    After: the ghost gate blocks before the builder-round guard or event bus.
+    """
+    ticket_id = "WOT-2026-999"
+    collaboration = tmp_path / ".agent" / "collaboration"
+    collaboration.mkdir(parents=True)
+    (collaboration / "backlog.md").write_text(
+        "| Media | OTHER | Ticket | x |", encoding="utf-8"
+    )
+    files = [
+        collaboration / "STATE.md",
+        collaboration / "TURN.md",
+        collaboration / "execution_log.md",
+    ]
+    for path in files:
+        path.write_text(f"ACTIVE_TICKET: {ticket_id}\n", encoding="utf-8")
+    before = {path: hashlib.sha256(path.read_bytes()).digest() for path in files}
+    mock_bus = MagicMock()
+    mock_ensure = MagicMock()
+    monkeypatch.setattr("agent_controller.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "agent_controller._load_mark_ready_context",
+        lambda: (f"**ID:** {ticket_id}", "**Estado:** IN_PROGRESS", ticket_id),
+    )
+    monkeypatch.setattr("agent_controller.event_bus", mock_bus)
+    monkeypatch.setattr("agent_controller.BUS_AVAILABLE", True)
+    monkeypatch.setattr("agent_controller._ensure_active_builder_round", mock_ensure)
+
+    result = _handle_mark_ready(None, False, False)
+
+    assert result == 1
+    output = capsys.readouterr().out.lower()
+    assert ticket_id.lower() in output and "ghost" in output
+    mock_ensure.assert_not_called()
+    mock_bus.emit.assert_not_called()
+    assert before == {
+        path: hashlib.sha256(path.read_bytes()).digest() for path in files
+    }
+
+    (collaboration / "backlog.md").write_text(
+        f"| Media | {ticket_id} | Ticket | x |", encoding="utf-8"
+    )
+    with (
+        patch(
+            "agent_controller._ensure_active_builder_round",
+            return_value=(True, 1, None),
+        ) as mock_ensure,
+        patch(
+            "agent_controller._check_circuit_breaker",
+            return_value={
+                "open": True,
+                "reason": "test",
+                "failures": 0,
+                "no_progress_count": 0,
+            },
+        ),
+    ):
+        assert _handle_mark_ready(None, False, False) == 1
+    mock_ensure.assert_called_once_with(ticket_id)
+
+
+def test_mark_ready_dry_run_mutates_nothing_valid_ticket(tmp_path, monkeypatch, capsys):
+    """Before: a valid ticket has all projection surfaces and a backlog row.
+
+    During: run mark-ready in dry-run mode with a real event bus.
+
+    After: preview output is returned and all four files remain byte-identical.
+    """
+    from bus.event_bus import EventBus
+
+    ticket_id = "WOT-2026-998"
+    before = _write_mark_ready_projection_fixture(tmp_path, ticket_id)
+    event_bus = EventBus(runtime_dir=tmp_path / ".agent" / "runtime" / "events")
+    monkeypatch.setattr("agent_controller.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(
+        "agent_controller._load_mark_ready_context",
+        lambda: (f"**ID:** {ticket_id}", "**Estado:** IN_PROGRESS", ticket_id),
+    )
+    monkeypatch.setattr("agent_controller.event_bus", event_bus)
+    monkeypatch.setattr("agent_controller.BUS_AVAILABLE", True)
+    with (
+        patch(
+            "agent_controller._ensure_active_builder_round",
+            return_value=(True, 1, None),
+        ),
+        patch("agent_controller._check_circuit_breaker", return_value={"open": False}),
+        patch("agent_controller._check_implementation_evidence", return_value=[]),
+        patch("agent_controller._run_pre_handoff_guard", return_value={"valid": True}),
+        patch("agent_controller._MOTOR_ROOT", Path("/motor")),
+        patch("agent_controller._resolve_motor_checkpoint_files"),
+    ):
+        result = _handle_mark_ready(None, True, False, dry_run=True)
+
+    assert result == 0
+    assert "dry_run_preview" in capsys.readouterr().out
+    assert before == {
+        path: hashlib.sha256(path.read_bytes()).digest() for path in before
+    }
+    assert event_bus.read_events() == []
+
+    import agent_controller
+    from runtime import project_root as project_root_mod
+
+    monkeypatch.setenv("AGENT_PROJECT_ROOT", str(tmp_path))
+    project_root_mod.clear_cache()
+    captured = {}
+
+    def _record_mark_ready(*args, **kwargs):
+        captured["kwargs"] = kwargs
+        return 0
+
+    monkeypatch.setattr(agent_controller, "_handle_mark_ready", _record_mark_ready)
+    monkeypatch.setattr(
+        sys, "argv", ["agent_controller.py", "--mark-ready", "--dry-run"]
+    )
+    try:
+        agent_controller.main()
+    finally:
+        project_root_mod.clear_cache()
+    assert captured["kwargs"].get("dry_run") is True
+
+
+def test_mark_ready_dry_run_mutates_nothing_ghost_and_no_surfaces(
+    tmp_path, monkeypatch, capsys
+):
+    """Before: exercise ghost and fail-open roots in dry-run mode.
+
+    During: invoke mark-ready against each isolated root.
+
+    After: both cases preview without mutating projection files.
+    """
+    ticket_id = "WOT-2026-997"
+    ghost_root = tmp_path / "ghost"
+    collab = ghost_root / ".agent" / "collaboration"
+    collab.mkdir(parents=True)
+    (collab / "backlog.md").write_text(
+        "| Media | OTHER | Ticket | x |", encoding="utf-8"
+    )
+    ghost_state = collab / "STATE.md"
+    ghost_state.write_text("STATUS: IN_PROGRESS\n", encoding="utf-8")
+    ghost_hash = hashlib.sha256(ghost_state.read_bytes()).digest()
+    monkeypatch.setattr("agent_controller.PROJECT_ROOT", ghost_root)
+    monkeypatch.setattr(
+        "agent_controller._load_mark_ready_context",
+        lambda: (f"**ID:** {ticket_id}", "**Estado:** IN_PROGRESS", ticket_id),
+    )
+    monkeypatch.setattr("agent_controller.event_bus", MagicMock())
+    monkeypatch.setattr("agent_controller.BUS_AVAILABLE", True)
+    assert _handle_mark_ready(None, True, False, dry_run=True) == 1
+    ghost_preview = json.loads(capsys.readouterr().out)
+    assert ghost_preview["status"] == "dry_run_preview"
+    assert ghost_preview["ghost_blocked"] is True
+    assert ghost_preview["plan_id"] == ticket_id
+    assert ghost_hash == hashlib.sha256(ghost_state.read_bytes()).digest()
+
+    plain_root = tmp_path / "plain"
+    plain_collab = plain_root / ".agent" / "collaboration"
+    plain_collab.mkdir(parents=True)
+    plain_state = plain_collab / "STATE.md"
+    plain_state.write_text("STATUS: IN_PROGRESS\n", encoding="utf-8")
+    plain_hash = hashlib.sha256(plain_state.read_bytes()).digest()
+    monkeypatch.setattr("agent_controller.PROJECT_ROOT", plain_root)
+    with (
+        patch(
+            "agent_controller._ensure_active_builder_round",
+            return_value=(True, 1, None),
+        ),
+        patch("agent_controller._check_circuit_breaker", return_value={"open": False}),
+        patch("agent_controller._check_implementation_evidence", return_value=[]),
+        patch("agent_controller._run_pre_handoff_guard", return_value={"valid": True}),
+    ):
+        assert _handle_mark_ready(None, True, False, dry_run=True) == 0
+    plain_output = capsys.readouterr().out.lower()
+    assert "dry_run_preview" in plain_output and "gate_skipped" in plain_output
+    assert plain_hash == hashlib.sha256(plain_state.read_bytes()).digest()
+
+
+def _write_mark_ready_projection_fixture(
+    root: Path, ticket_id: str
+) -> dict[Path, bytes]:
+    """Before: provide mark-ready projection files under an isolated root.
+
+    During: create scheduling surfaces and a backlog row.
+
+    After: return hashes for the files used by dry-run checks.
+    """
+    collaboration = root / ".agent" / "collaboration"
+    runtime_events = root / ".agent" / "runtime" / "events"
+    collaboration.mkdir(parents=True)
+    runtime_events.mkdir(parents=True)
+    (collaboration / "backlog.md").write_text(
+        f"| Media | {ticket_id} | Ticket | scope | pending | - | test | - |\n",
+        encoding="utf-8",
+    )
+    files = {
+        collaboration
+        / "STATE.md": f"ACTIVE_TICKET: {ticket_id}\nSTATUS: IN_PROGRESS\n",
+        collaboration / "TURN.md": f"ticket={ticket_id}\n",
+        collaboration / "execution_log.md": f"ticket={ticket_id}\n",
+        runtime_events / "events.jsonl": "",
+    }
+    for path, content in files.items():
+        path.write_text(content, encoding="utf-8")
+    return {path: hashlib.sha256(path.read_bytes()).digest() for path in files}
