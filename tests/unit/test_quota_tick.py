@@ -195,7 +195,7 @@ def test_fila128_flight_dir_unc_es_rc9_y_no_se_consulta_la_red(rig):
 
 
 def test_fallo_interno_inesperado_es_rc9_con_causa_y_sin_traceback(rig, monkeypatch):
-    def roto(_accounts):
+    def roto(_accounts, _census):
         raise ZeroDivisionError("a proposito")
 
     monkeypatch.setattr(rig.m, "_measure", roto)
@@ -517,7 +517,7 @@ def test_sonda_sin_salida_y_salida_larga_acotada(rig):
     assert rig.tick()[1].endswith("codex sin salida")
     rig.probe_out = "x\ny" + "z" * 300
     out = rig.tick()[1]
-    assert out.endswith("codex " + ("x y" + "z" * 300)[:110]) and "\n" not in out
+    assert out.endswith("codex " + "x y" + "z" * 300) and "\n" not in out
 
 
 def test_sonda_sanea_separadores_verticales_y_conserva_un_segmento(rig):
@@ -622,3 +622,223 @@ def test_varias_cuentas_hay_mayor_que_umbrales_y_se_muestra_ninguna_mala(rig):
     rc, out = rig.tick()
     assert rc == 9  # bad=True => NO_MEDIDO
     assert "c weekly 80%" in out  # worst=80 aparece
+
+
+def test_quota_json_schema_v2(rig):
+    """Before: a roster census and two measured windows are available.
+
+    During: request the opt-in JSON representation and inspect its closed schema.
+    After: schema version, account fields, enums and rc_info are all explicit.
+    """
+    rig.roster(
+        raw=json.dumps(
+            {
+                "quota": {
+                    "soft_freeze_block_pct": 92,
+                    "hard_stop_block_pct": 97,
+                    "account_policy": {
+                        "provider_map": {
+                            "preferred": "alvarovans",
+                            "harbor": "brabander",
+                        },
+                        "preferred_account": "alvarovans",
+                        "harbor_account": "brabander",
+                    },
+                },
+            }
+        )
+    )
+    rig.monitor_out = json.dumps(
+        accounts(
+            alvarovans=acct(3, window="session"),
+            brabander=acct(98, window="weekly"),
+        )
+    )
+    rig.probe_out = 'RATELIMITS: {"id":2,"result":{"rateLimits":{"primary":{"usedPercent":5,"resetsAt":"p"},"secondary":{"usedPercent":8,"resetsAt":"w"}}}}'
+    rc, out = rig.tick("--json")
+    payload = json.loads(out)
+    assert rc == 5 and payload["QUOTA_JSON_SCHEMA"] == 2 and payload["rc_info"] == 5
+    assert rig.m.MEASUREMENT_QUALITY == ("OK", "STALE", "NO_MEDIDO", "RESERVA")
+    assert rig.m.OPERATIVE_STATES == ("NORMAL", "VIGILANCIA", "PREPARACION", "CAMBIO")
+    assert set(payload["accounts"][0]) == {
+        "cuenta",
+        "en_censo",
+        "estado_operativo",
+        "calidad_medida",
+        "block_pct",
+        "ventana_peor",
+        "ventanas",
+    }
+    assert set(payload["codex"][0]) == {"primary_pct", "weekly_pct", "resets", "medido"}
+
+
+def test_census_cuentas_faltantes_rc9(rig):
+    """Before: the roster census names two accounts but the monitor omits one.
+
+    During: request JSON while an extra, non-census account is also present.
+    After: the missing census account is NO_MEDIDO and only that absence raises rc 9.
+    """
+    rig.roster(
+        raw=json.dumps(
+            {
+                "quota": {
+                    "account_policy": {
+                        "provider_map": {"p": "alvarovans", "h": "brabander"},
+                        "preferred_account": "alvarovans",
+                        "harbor_account": "brabander",
+                    }
+                },
+            }
+        )
+    )
+    rig.monitor_out = json.dumps(accounts(brabander=acct(10), extra=acct(99)))
+    rc, out = rig.tick("--json")
+    payload = json.loads(out)
+    missing = next(
+        item for item in payload["accounts"] if item["cuenta"] == "alvarovans"
+    )
+    extra = next(item for item in payload["accounts"] if item["cuenta"] == "extra")
+    assert rc == 9 and payload["rc_info"] == 9
+    assert (
+        missing["calidad_medida"] == "NO_MEDIDO"
+        and missing["block_pct"] is None
+        and missing["en_censo"] is True
+    )
+    assert extra["en_censo"] is False and payload["fallbacks"] is not None
+
+
+def test_estado_operativo_umbrales_por_cuenta(rig):
+    """Before: account policy supplies a custom hard stop while quota supplies fallback cuts.
+
+    During: measure a weekly value for both accounts and ask for JSON.
+    After: measured quality permits an operational state and the fallback is visible.
+    """
+    rig.roster(
+        raw=json.dumps(
+            {
+                "quota": {
+                    "soft_freeze_block_pct": 92,
+                    "hard_stop_block_pct": 97,
+                    "account_policy": {
+                        "provider_map": {"p": "alvarovans", "h": "brabander"},
+                        "preferred_account": "alvarovans",
+                        "harbor_account": "brabander",
+                        "brabander": {"hard_stop_block_pct": 99},
+                    },
+                },
+            }
+        )
+    )
+    rig.monitor_out = json.dumps(accounts(alvarovans=acct(3), brabander=acct(98)))
+    rc, out = rig.tick("--json")
+    payload = json.loads(out)
+    brabander = next(
+        item for item in payload["accounts"] if item["cuenta"] == "brabander"
+    )
+    assert rc == 5 and brabander["estado_operativo"] == "PREPARACION"
+    assert any("alvarovans" in item for item in payload["fallbacks"])
+    rig.roster(
+        raw=json.dumps(
+            {
+                "quota": {
+                    "soft_freeze_block_pct": 92,
+                    "hard_stop_block_pct": 97,
+                    "account_policy": {
+                        "provider_map": {"p": "alvarovans", "h": "brabander"},
+                        "preferred_account": "alvarovans",
+                        "harbor_account": "brabander",
+                    },
+                }
+            }
+        )
+    )
+    _, default_out = rig.tick("--json")
+    default_brabander = next(
+        item
+        for item in json.loads(default_out)["accounts"]
+        if item["cuenta"] == "brabander"
+    )
+    assert default_brabander["estado_operativo"] == "CAMBIO"
+    rig.monitor_out = json.dumps(
+        accounts(alvarovans=acct(3), brabander=acct(98, stale=True))
+    )
+    _, stale_out = rig.tick("--json")
+    stale = next(
+        item
+        for item in json.loads(stale_out)["accounts"]
+        if item["cuenta"] == "brabander"
+    )
+    assert stale["calidad_medida"] == "STALE" and stale["estado_operativo"] is None
+
+
+def test_codex_sin_truncado_110(rig):
+    """Before: the probe emits an unparseable payload longer than 110 characters.
+
+    During: run the normal text tick.
+    After: the complete sanitized payload is retained on one physical line.
+    """
+    raw = "x y" + "z" * 300
+    rig.probe_out = raw
+    rc, out = rig.tick()
+    assert rc == 0 and out.endswith("codex " + raw) and out.count("\n") == 0
+
+
+def test_codex_payload_real_anidado_y_top_level_tolerado(rig):
+    """Before: the probe may wrap rate limits below a result object.
+
+    During: measure the real nested payload and then the legacy top-level form.
+    After: both forms produce the exact measured text and JSON values.
+    """
+    nested = (
+        'RATELIMITS: {"id":2,"result":{"rateLimits":{"primary":'
+        '{"usedPercent":5,"resetsAt":"p"},"secondary":'
+        '{"usedPercent":8,"resetsAt":"w"}}}}'
+    )
+    rig.probe_out = nested
+    rc, text = rig.tick()
+    assert rc == 0 and "codex codex primary 5% weekly 8%" in text
+    rc, encoded = rig.tick("--json")
+    codex = json.loads(encoded)["codex"][0]
+    assert (
+        rc == 0
+        and codex["primary_pct"] == 5
+        and codex["weekly_pct"] == 8
+        and codex["medido"] is True
+    )
+    rig.probe_out = (
+        'RATELIMITS: {"rateLimits":{"primary":{"usedPercent":5,'
+        '"resetsAt":"p"},"secondary":{"usedPercent":8,"resetsAt":"w"}}}'
+    )
+    rc, text = rig.tick()
+    assert rc == 0 and "codex codex primary 5% weekly 8%" in text
+
+
+def test_extra_fuera_de_censo_no_eleva_rc_ni_estado(rig):
+    """Before: the roster census contains only the two declared provider accounts.
+
+    During: measure those accounts plus an extra account at a hard percentage.
+    After: the extra remains visible but cannot raise the process rc or global state.
+    """
+    rig.roster(
+        raw=json.dumps(
+            {
+                "quota": {
+                    "account_policy": {
+                        "provider_map": {"p": "alvarovans", "h": "brabander"},
+                        "preferred_account": "alvarovans",
+                        "harbor_account": "brabander",
+                    }
+                }
+            }
+        )
+    )
+    rig.monitor_out = json.dumps(
+        accounts(alvarovans=acct(3), brabander=acct(40), extra=acct(99))
+    )
+    rc, text = rig.tick()
+    assert rc == 0 and text.startswith("QUOTA OK")
+    rc, encoded = rig.tick("--json")
+    payload = json.loads(encoded)
+    extra = next(item for item in payload["accounts"] if item["cuenta"] == "extra")
+    assert rc == 0 and payload["rc_info"] == 0
+    assert extra["en_censo"] is False and extra["block_pct"] == 99

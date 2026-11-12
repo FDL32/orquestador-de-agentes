@@ -69,7 +69,7 @@ def test_append_writes_one_parseable_line_per_call(tmp_path: Path) -> None:
     assert second.returncode == 0, second.stdout + second.stderr
     records = read_lines(tmp_path)
     assert [record["ts"] for record in records] == [TS_A, TS_B]
-    assert all(record["v"] == 1 for record in records)
+    assert all(record["v"] == 2 for record in records)
     assert all(record["unmeasured"] == {} for record in records)
 
 
@@ -390,3 +390,70 @@ def test_quota_summary_unicode_is_utf8_json(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert read_lines(tmp_path)[0]["quota_summary"] == "cupo ✓"
+
+
+def test_tick_trace_schema_v2_cola_despachable(tmp_path: Path) -> None:
+    """Before: a v2 tick contains the declared dispatch queue and optional summaries.
+
+    During: write a complete v2 record and read it through the compatibility reader.
+    After: new fields are measured without entering unmeasured and the enum is preserved.
+    """
+    result = run_trace(
+        tmp_path,
+        *measured_args(),
+        "--cola-despachable",
+        "2",
+        "--cola-motivo",
+        "SIN_GO",
+        "--gate-rc",
+        "0",
+        "--quota-accounts",
+        '[{"cuenta":"brabander","calidad_medida":"OK","block_pct":98,"estado_operativo":"CAMBIO"}]',
+        "--destino",
+        "IM-42",
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = read_lines(tmp_path)[0]
+    assert record["v"] == 2
+    assert record["cola_despachable"] == 2 and record["cola_motivo"] == "SIN_GO"
+    assert record["gate_rc"] == 0 and record["destino"] == "IM-42"
+    assert record["unmeasured"] == {}
+
+
+def test_tick_trace_v1_is_read_as_queue_not_declared(tmp_path: Path) -> None:
+    """Before: a legacy v1 line has none of the v2 queue fields.
+
+    During: read the real trace file with the bounded compatibility reader.
+    After: the legacy record remains readable and queue state is explicitly absent.
+    """
+    trace = tmp_path / "tick_trace.jsonl"
+    trace.write_text(
+        json.dumps({"v": 1, "ts": TS_A, "unmeasured": {}}) + "\n", encoding="utf-8"
+    )
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("tick_trace_reader", SCRIPT)
+    loaded = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(loaded)
+    records = loaded.read_records(tmp_path)
+    assert records[0]["v"] == 1 and records[0].get("cola_despachable") is None
+
+
+def test_tick_trace_quota_missing_account_roundtrip(tmp_path: Path) -> None:
+    """Before: quota JSON marks a census account as NO_MEDIDO with null block_pct.
+
+    During: carry that exact entry through the tick_trace quota summary field.
+    After: the trace preserves the absence signal for downstream detectors.
+    """
+    summary = '[{"cuenta":"alvarovans","calidad_medida":"NO_MEDIDO","block_pct":null,"estado_operativo":null}]'
+    result = run_trace(
+        tmp_path,
+        *measured_args(),
+        "--quota-accounts",
+        summary,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    record = read_lines(tmp_path)[0]
+    assert record["quota_accounts"][0]["cuenta"] == "alvarovans"
+    assert record["quota_accounts"][0]["calidad_medida"] == "NO_MEDIDO"
+    assert record["quota_accounts"][0]["block_pct"] is None

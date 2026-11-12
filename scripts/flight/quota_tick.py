@@ -15,6 +15,13 @@ After: UNA linea ``QUOTA <ESTADO> (soft S/hard H) | <cuenta> <ventana> <pct>% | 
     3 AVISO (>= 90), 4 FREEZE (>= soft), 5 HARD (>= hard), 9 NO_MEDIDO. Cualquier fallo interno
     (roster o monitor ausentes o ilegibles, cuentas vacias, porcentaje NaN, booleano o cadena)
     es rc 9 con la causa; nunca un traceback con rc 1 ni un OK sin haber medido nada.
+
+Schema JSON v2 congelado: ``QUOTA_JSON_SCHEMA``; cada cuenta lleva ``cuenta``,
+``en_censo``, ``estado_operativo``, ``calidad_medida``, ``block_pct``,
+``ventana_peor`` y ``ventanas``; ``codex`` lleva exactamente
+``primary_pct``, ``weekly_pct``, ``resets`` y ``medido``. ``rc_info`` copia el
+rc y ``fallbacks`` declara los defaults. Un registro v1 de tick_trace omite los
+campos de cola y por tanto ``cola_despachable`` se interpreta como no declarado.
 """
 
 import argparse
@@ -36,6 +43,9 @@ SOFT_DEFAULT = 92
 HARD_DEFAULT = 97
 WARN_PCT = 90
 RC = {"NO_MEDIDO": 9, "HARD": 5, "FREEZE": 4, "AVISO": 3, "OK": 0}
+QUOTA_JSON_SCHEMA = 2
+OPERATIVE_STATES = ("NORMAL", "VIGILANCIA", "PREPARACION", "CAMBIO")
+MEASUREMENT_QUALITY = ("OK", "STALE", "NO_MEDIDO", "RESERVA")
 
 
 class NoMedidoError(Exception):
@@ -98,7 +108,7 @@ def _flight_dir(raw):
     return cand
 
 
-def _roster_quota(flight_dir):
+def _roster_config(flight_dir):
     """Bloque ``quota`` del roster (un dict, vacio si falta la clave).
 
     Before: ``flight_dir`` existe.
@@ -114,7 +124,15 @@ def _roster_quota(flight_dir):
     quota = roster.get("quota", {})
     if not isinstance(quota, dict):
         raise NoMedidoError("roster: quota no es un objeto JSON")
-    return quota
+    policy = quota.get("account_policy", roster.get("account_policy", {}))
+    if not isinstance(policy, dict):
+        policy = {}
+    return quota, policy
+
+
+def _roster_quota(flight_dir):
+    """Return only the quota block for legacy callers."""
+    return _roster_config(flight_dir)[0]
 
 
 def _thresholds(quota):
@@ -186,26 +204,26 @@ def _accounts(monitor):
     return accounts
 
 
-def _measure(accounts):
-    """Resume porcentajes y estados stale de las cuentas medidas.
+def _measure(accounts, census):
+    """Resume porcentajes and stale states for the measured accounts.
 
-    Before: ``accounts`` es el diccionario validado por ``_accounts``.
-    During: lee porcentaje, stale y ventana, conserva cada cuenta como texto y calcula
-        el peor porcentaje mediante ``_is_real``.
-    After: devuelve ``(worst, parts, bad)`` con el maximo, fragmentos y marca de dato
-        malo; un entero JSON fuera del rango convertible a ``float`` marca la cuenta
-        como mala y no propaga ``OverflowError``.
+    Before: ``accounts`` is the validated monitor map and ``census`` is the roster census.
+    During: retain every account in text while calculating severity only from the census
+        when it is non-empty; an empty census preserves the legacy all-account behavior.
+    After: return ``(worst, parts, bad)`` without allowing an extra account to raise rc.
     """
     worst, parts, bad = 0, [], False
+    measured_names = set(census) if census else set(accounts)
     for name, v in accounts.items():
         pct, stale = v.get("block_pct"), v.get("stale")
         ok = _is_real(pct) and pct != -math.inf
-        if not ok or stale:
-            bad = True
+        if not ok or stale:  # noqa: SIM102 - preserves the mutation anchor
+            if name in measured_names:
+                bad = True
         parts.append(
             f"{name} {v.get('block_window')} {pct}%{' STALE' if stale else ''}"
         )
-        if ok:
+        if name in measured_names and ok:
             worst = max(worst, pct)
     return worst, parts, bad
 
@@ -219,8 +237,15 @@ def _codex(probe, home):
     After: devuelve un fragmento informativo estable; cualquier excepción produce ``NO_MEDIDO``
         sin alterar el rc de la medición.
     """
+    account = Path(home).name.lstrip(".") or "codex"
+    empty = {
+        "primary_pct": None,
+        "weekly_pct": None,
+        "resets": {"primary": None, "weekly": None},
+        "medido": False,
+    }
     if not probe:
-        return f"codex NO_MEDIDO sin {PROBE_ENV}"
+        return f"codex NO_MEDIDO sin {PROBE_ENV}", empty
     try:
         c = subprocess.run(  # noqa: S603 - interprete actual y sonda del usuario
             [sys.executable, probe, home],
@@ -229,11 +254,31 @@ def _codex(probe, home):
             timeout=60,
             check=False,
         )
-        return "codex " + (
-            c.stdout.strip().replace("\n", " ").replace("|", "/")[:110] or "sin salida"
-        )
+        raw = c.stdout.strip().replace("\r", " ").replace("\n", " ").replace("|", "/")
+        match = re.search(r"RATELIMITS:\s*(\{.*\})", raw)
+        if match:
+            payload = json.loads(match.group(1))
+            data = (
+                payload["result"]
+                if isinstance(payload.get("result"), dict)
+                else payload
+            )
+            limits = data["rateLimits"]
+            primary = limits["primary"]["usedPercent"]
+            weekly = limits["secondary"]["usedPercent"]
+            item = {
+                "primary_pct": primary,
+                "weekly_pct": weekly,
+                "resets": {
+                    "primary": limits["primary"].get("resetsAt"),
+                    "weekly": limits["secondary"].get("resetsAt"),
+                },
+                "medido": True,
+            }
+            return f"codex {account} primary {primary}% weekly {weekly}%", item
+        return f"codex {raw or 'sin salida'}", empty
     except Exception as exc:
-        return f"codex NO_MEDIDO {type(exc).__name__}"
+        return f"codex NO_MEDIDO {type(exc).__name__}", empty
 
 
 def _state(worst, bad, soft, hard):
@@ -252,6 +297,127 @@ def _state(worst, bad, soft, hard):
     return "AVISO" if worst >= WARN_PCT else "OK"
 
 
+def _census(policy):
+    """Build the declared account census without treating an absent census as an error.
+
+    Before: ``policy`` is the roster account_policy object.
+    During: collect provider-map values and preferred/harbor identities.
+    After: return an ordered unique list, or an empty list for legacy rosters.
+    """
+    values = []
+    provider_map = policy.get("provider_map", {})
+    if isinstance(provider_map, dict):
+        values.extend(
+            value for value in provider_map.values() if isinstance(value, str)
+        )
+    for key in ("preferred_account", "harbor_account"):
+        value = policy.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    return list(dict.fromkeys(values))
+
+
+def _account_cuts(name, quota, policy):
+    """Resolve per-account soft and hard cuts and report visible fallback reasons.
+
+    Before: quota and policy are JSON dictionaries.
+    During: prefer account_policy[name], then quota, then 92/97.
+    After: return ``(soft, hard, reasons)`` with no silent fallback.
+    """
+    account = policy.get(name, {})
+    if not isinstance(account, dict):
+        account = {}
+    reasons = []
+    values = []
+    for key, default in (
+        ("soft_freeze_block_pct", SOFT_DEFAULT),
+        ("hard_stop_block_pct", HARD_DEFAULT),
+    ):
+        if key in account:
+            values.append(account[key])
+            continue
+        if key in quota:
+            values.append(quota[key])
+            reasons.append(f"{name}:{key}=quota")
+            continue
+        values.append(default)
+        reasons.append(f"{name}:{key}=default")
+    soft, hard, invalid = _thresholds(
+        dict(zip(("soft_freeze_block_pct", "hard_stop_block_pct"), values, strict=True))
+    )
+    if invalid:
+        reasons.append(f"{name}:umbrales-invalidos")
+    return soft, hard, reasons
+
+
+def _operative_state(value, window, quality, soft, hard):
+    """Classify an account's measured operational window.
+
+    Before: value/window/quality are normalized monitor data.
+    During: apply account cuts for weekly data and the fixed 5h/session boundaries.
+    After: return a closed operational enum or null for non-measurements.
+    """
+    if quality not in ("OK", "RESERVA") or not _is_real(value):
+        return None
+    if str(window).lower() in {"5h", "session", "5_hours"}:
+        return "CAMBIO" if value >= 95 else "VIGILANCIA" if value >= 85 else "NORMAL"
+    return "CAMBIO" if value >= hard else "PREPARACION" if value >= 95 else "NORMAL"
+
+
+def _account_json(name, measured, census, quota, policy):
+    """Create one frozen schema-v2 account entry from monitor data."""
+    windows = []
+    if measured is None:
+        quality = "NO_MEDIDO"
+        block_pct = None
+        worst_window = None
+        state = None
+    else:
+        pct = measured.get("block_pct")
+        stale = bool(measured.get("stale"))
+        quality = (
+            "STALE"
+            if stale
+            else "OK"
+            if _is_real(pct) and pct != -math.inf
+            else "NO_MEDIDO"
+        )
+        block_pct = pct if quality != "NO_MEDIDO" else None
+        window = measured.get("block_window")
+        windows.append({"ventana": window, "block_pct": pct, "calidad_medida": quality})
+        worst_window = window
+        soft, hard, _ = _account_cuts(name, quota, policy)
+        state = _operative_state(pct, window, quality, soft, hard)
+    return {
+        "cuenta": name,
+        "en_censo": name in census,
+        "estado_operativo": state,
+        "calidad_medida": quality,
+        "block_pct": block_pct,
+        "ventana_peor": worst_window,
+        "ventanas": windows,
+    }
+
+
+def _json_payload(accounts, census, quota, policy, codex_item, rc):
+    """Build the single stdout JSON object for an opt-in quota tick."""
+    entries = []
+    fallbacks = []
+    for name in [*census, *[key for key in accounts if key not in census]]:
+        entry = _account_json(name, accounts.get(name), census, quota, policy)
+        entries.append(entry)
+        if name in census:
+            _, _, reasons = _account_cuts(name, quota, policy)
+            fallbacks.extend(reasons)
+    return {
+        "QUOTA_JSON_SCHEMA": QUOTA_JSON_SCHEMA,
+        "accounts": entries,
+        "codex": [codex_item],
+        "rc_info": rc,
+        "fallbacks": list(dict.fromkeys(fallbacks)),
+    }
+
+
 def _tick(a):
     """Ejecuta una medicion completa de cupo y escribe su linea de resultado.
 
@@ -260,16 +426,32 @@ def _tick(a):
     After: devuelve el rc del estado; ``NoMedidoError`` sube al ``main`` y no se modifica ningun fichero.
     """
     env = os.environ
-    quota = _roster_quota(_flight_dir(a.flight_dir or env.get(FLIGHT_DIR_ENV)))
+    quota, policy = _roster_config(_flight_dir(a.flight_dir or env.get(FLIGHT_DIR_ENV)))
     soft, hard, invalid = _thresholds(quota)
     accounts = _accounts(a.monitor or env.get(MONITOR_ENV))
-    worst, parts, bad = _measure(accounts)
+    census = _census(policy)
+    worst, parts, bad = _measure(accounts, census)
     home = a.codex_home or env.get(CODEX_HOME_ENV) or (Path.home() / ".codex")
-    parts.append(_codex(a.probe or env.get(PROBE_ENV), Path(home).as_posix()))
+    codex_text, codex_item = _codex(
+        a.probe or env.get(PROBE_ENV), Path(home).as_posix()
+    )
+    parts.append(codex_text)
     state = _state(worst, bad, soft, hard)
     mark = " umbrales-roster-invalidos" if invalid else ""
-    print(f"QUOTA {state} (soft {soft}/hard {hard}){mark} | " + " | ".join(parts))
-    return RC[state]
+    missing = [name for name in census if name not in accounts]
+    process_rc = 9 if missing else RC[state]
+    text = f"QUOTA {state} (soft {soft}/hard {hard}){mark} | " + " | ".join(parts)
+    if a.json:
+        print(
+            json.dumps(
+                _json_payload(accounts, census, quota, policy, codex_item, process_rc),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+        )
+    else:
+        print(text)
+    return process_rc
 
 
 def main(argv=None):
@@ -292,6 +474,7 @@ def main(argv=None):
         "--codex-home",
         help=f"directorio de codex; por defecto ${CODEX_HOME_ENV} o ~/.codex",
     )
+    ap.add_argument("--json", action="store_true", help="emit frozen schema-v2 JSON")
     a = ap.parse_args(argv)
     try:
         return _tick(a)

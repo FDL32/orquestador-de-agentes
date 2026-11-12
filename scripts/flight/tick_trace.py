@@ -2,9 +2,11 @@
 
 Before: the caller supplies an existing absolute ``--ops-dir`` and explicit
 measurements; no live flight files are read.
-During: validate the arguments, build schema version 1, and append one UTF-8
+During: validate the arguments, build schema version 2, and append one UTF-8
 JSON line to the fixed ``tick_trace.jsonl`` path with one binary write;
-``quota_summary`` is bounded to 200 characters.
+``quota_summary`` is bounded to 200 characters and ``quota_accounts`` to 4096
+characters with bounded per-account schema. A v1 record has no queue fields;
+the reader represents that as ``cola_despachable`` not declared.
 After: return 0 for a fully measured record, 1 for a record containing null
 measurements, or 2 for usage/I/O errors, with a named stdout message except
 for argparse ``--help``. Limit: one writer; simultaneous calls can
@@ -19,6 +21,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -26,13 +29,32 @@ from typing import Any
 
 
 TRACE_NAME = "tick_trace.jsonl"
+TRACE_SCHEMA = 2
+QUEUE_MOTIVES = (
+    "NO_DECLARADO",
+    "CADUCADO",
+    "CERO",
+    "SIN_BRIEF",
+    "FLT_NO_DISJUNTO",
+    "TOPE_ALCANZADO",
+    "SIN_GO",
+    "BUILDER_O_LENTE_VIVO",
+    "CUPO",
+    "OTRO",
+)
 FIELDS = (
     "coordinator",
     "roster_sha12",
     "guard_rc",
     "quota_rc",
     "quota_summary",
+    "cola_despachable",
+    "cola_motivo",
+    "gate_rc",
+    "quota_accounts",
+    "destino",
 )
+OPTIONAL_FIELDS = FIELDS[5:]
 _SHA12 = re.compile(r"[0-9a-fA-F]{12}")
 _TS_WITH_OFFSET = re.compile(
     r"\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}"
@@ -70,6 +92,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--guard-rc")
     parser.add_argument("--quota-rc")
     parser.add_argument("--quota-summary")
+    parser.add_argument("--cola-despachable")
+    parser.add_argument("--cola-motivo")
+    parser.add_argument("--gate-rc")
+    parser.add_argument("--quota-accounts")
+    parser.add_argument("--destino")
     parser.add_argument("--ts")
     parser.add_argument("--unmeasured", action="append", default=[])
     return parser
@@ -105,6 +132,68 @@ def _parse_unmeasured(values: list[str]) -> dict[str, str]:
             raise UsageError(f"--unmeasured invalido: {value}")
         reasons[field] = reason
     return reasons
+
+
+def _parse_queue(args: argparse.Namespace) -> dict[str, Any]:  # noqa: C901
+    """Validate optional schema-v2 queue fields.
+
+    Before: parser values and explicit ``--unmeasured`` reasons exist.
+    During: validate queue bounds, the closed motive enum and bounded JSON summary.
+    After: return the five optional values, with absent fields represented as null.
+    """
+    queue = _parse_rc(args.cola_despachable, "cola-despachable")
+    if queue is not None and queue < 0:
+        raise UsageError("cola-despachable must be >= 0")
+    motive = args.cola_motivo
+    if motive is not None and motive not in QUEUE_MOTIVES:
+        raise UsageError("cola-motivo invalido")
+    gate_rc = _parse_rc(args.gate_rc, "gate-rc")
+    summary = None
+    if args.quota_accounts is not None:
+        try:
+            summary = json.loads(args.quota_accounts)
+        except json.JSONDecodeError as exc:
+            raise UsageError("quota-accounts must be JSON") from exc
+        if (
+            len(args.quota_accounts) > 4096
+            or not isinstance(summary, list)
+            or len(summary) > 32
+        ):
+            raise UsageError("quota-accounts exceeds 4096 characters or 32 accounts")
+        for item in summary:
+            if not isinstance(item, dict) or set(item) != {
+                "cuenta",
+                "calidad_medida",
+                "block_pct",
+                "estado_operativo",
+            }:
+                raise UsageError("quota-accounts entry has invalid schema")
+            if not isinstance(item["cuenta"], str) or not item["cuenta"]:
+                raise UsageError("quota-accounts cuenta must be a string")
+            if item["calidad_medida"] not in {"OK", "STALE", "NO_MEDIDO", "RESERVA"}:
+                raise UsageError("quota-accounts calidad_medida invalida")
+            pct = item["block_pct"]
+            if pct is not None and (
+                isinstance(pct, bool)
+                or not isinstance(pct, (int, float))
+                or not math.isfinite(pct)
+            ):
+                raise UsageError("quota-accounts block_pct invalido")
+            if item["estado_operativo"] not in {
+                None,
+                "NORMAL",
+                "VIGILANCIA",
+                "PREPARACION",
+                "CAMBIO",
+            }:
+                raise UsageError("quota-accounts estado_operativo invalido")
+    return {
+        "cola_despachable": queue,
+        "cola_motivo": motive,
+        "gate_rc": gate_rc,
+        "quota_accounts": summary,
+        "destino": args.destino,
+    }
 
 
 def _parse_ts(raw: str | None) -> str:
@@ -145,8 +234,9 @@ def _record(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     quota_rc = _parse_rc(args.quota_rc, "quota-rc")
     reasons = _parse_unmeasured(args.unmeasured)
     timestamp = _parse_ts(args.ts)
+    queue = _parse_queue(args)
     record: dict[str, Any] = {
-        "v": 1,
+        "v": TRACE_SCHEMA,
         "ts": timestamp,
         "coordinator": args.coordinator,
         "roster_sha12": args.roster_sha12,
@@ -156,11 +246,36 @@ def _record(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             args.quota_summary[:200] if args.quota_summary is not None else None
         ),
         "unmeasured": {},
+        **queue,
     }
-    for field in FIELDS:
+    for field in FIELDS[:5]:
         if record[field] is None:
             record["unmeasured"][field] = reasons.get(field, "not_provided")
+    for field in OPTIONAL_FIELDS:
+        if record[field] is None and field in reasons:
+            record["unmeasured"][field] = reasons[field]
     return record, int(bool(record["unmeasured"]))
+
+
+def read_records(ops_dir: Path) -> list[dict[str, Any]]:
+    """Read bounded trace records while preserving v1 records unchanged.
+
+    Before: ``ops_dir`` is an existing operation directory.
+    During: parse at most 256 physical records and tolerate legacy v1 omissions.
+    After: return parsed records; a missing v2 queue field reads as not declared.
+    """
+    target = ops_dir / TRACE_NAME
+    if not target.is_file():
+        return []
+    records = []
+    for line in target.read_text(encoding="utf-8").splitlines()[-256:]:
+        try:
+            value = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    return records
 
 
 def _append(ops_dir: Path, record: dict[str, Any]) -> None:

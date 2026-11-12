@@ -2433,3 +2433,199 @@ def test_detect_aisla_fallo_y_conserva_detector_sano(box):
     assert broke is True
     assert any(key == "detector-roto" for key, _, _ in found)
     assert any(key.startswith("cola-") for key, _, _ in found)
+
+
+def test_codex_segmento_detector(box):
+    """Before: quota text contains a codex segment and one real account.
+
+    During: parse the producer line through the detector account parser.
+    After: codex text is excluded while the real account remains measured.
+    """
+    parsed = box.m._quota_accounts(
+        "QUOTA OK | alvarovans weekly 40% | codex codex primary 5% weekly 8% | brabander weekly 30%"
+    )
+    assert parsed[3] is False and parsed[0] == [40, 30]
+
+
+def test_cortes_cupo_desde_account_policy(box):
+    """Before: the roster defines custom soft and hard cuts.
+
+    During: resolve the flight configuration and classify a named account.
+    After: the custom hard cut is used and the legacy key remains cupo-97.
+    """
+    (box.flight / "flight_roster.json").write_text(
+        json.dumps({"quota": {"soft_freeze_block_pct": 90, "hard_stop_block_pct": 95}}),
+        encoding="utf-8",
+    )
+    cfg, causes, fatal = box.m._resolve_paths(
+        types.SimpleNamespace(
+            flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+        ),
+        box.ops,
+    )
+    assert causes == [] and fatal is None
+    box.m.CFG = cfg
+    found = box.m._quota_levels([("brabander", 96)])
+    assert (
+        found[0][0] == "cupo-97" and "brabander" in found[0][2] and "96%" in found[0][2]
+    )
+    soft_found = box.m._quota_levels([("brabander", 91)])
+    assert soft_found[0][0] == "cupo-92" and "91%" in soft_found[0][2]
+
+
+def test_cortes_cupo_fallback_visible_con_roster_ilegible(box):
+    """Before: the roster has no readable quota cuts.
+
+    During: classify an account using detector defaults.
+    After: the legacy key and account remain, and the fallback is visible.
+    """
+    (box.flight / "flight_roster.json").write_text("{invalid", encoding="utf-8")
+    cfg, _, _ = box.m._resolve_paths(
+        types.SimpleNamespace(
+            flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+        ),
+        box.ops,
+    )
+    box.m.CFG = cfg
+    found = box.m._quota_levels([("alvarovans", 98)])
+    assert found[0][0] == "cupo-97"
+    assert "alvarovans" in found[0][2] and "corte de respaldo" in found[0][2]
+
+
+def test_cola_despachable_ociosa_2_ticks(box):
+    """Before: two close trace records declare a non-empty dispatch queue.
+
+    During: run the queue detector with one live IM.
+    After: the detector emits the two-tick warning and does not dispatch anything.
+    """
+    _write_cell_fixtures(box, 1)
+    trace = box.ops / "tick_trace.jsonl"
+    records = [
+        {
+            "v": 2,
+            "ts": "2026-11-06T12:30:01+01:00",
+            "cola_despachable": 1,
+            "cola_motivo": "SIN_GO",
+        },
+        {
+            "v": 2,
+            "ts": "2026-11-06T12:40:01+01:00",
+            "cola_despachable": 2,
+            "cola_motivo": "CUPO",
+        },
+    ]
+    trace.write_text(json.dumps(records[0]) + "\n", encoding="utf-8")
+    box.m.CFG.ops = box.ops
+    assert "cola-despachable" in box.m.DETECTOR_NAMES
+    assert box.m.check_cola_despachable({}, {}) == []
+    urgent = [
+        dict(records[0], ts=f"2026-11-06T12:{minute:02d}:01+01:00")
+        for minute in (10, 20, 30, 40)
+    ]
+    trace.write_text(
+        "\n".join(json.dumps(item) for item in urgent) + "\n", encoding="utf-8"
+    )
+    urgent_found = box.m.check_cola_despachable({}, {})
+    assert urgent_found[0][1] == "URGENTE" and "4 ticks" in urgent_found[0][2]
+    legacy = dict(urgent[-1])
+    legacy.pop("cola_despachable")
+    trace.write_text(
+        "\n".join(json.dumps(item) for item in [*urgent[:3], legacy]) + "\n",
+        encoding="utf-8",
+    )
+    assert box.m.check_cola_despachable({}, {}) == []
+    trace.write_text(
+        "\n".join(json.dumps(item) for item in records) + "\n", encoding="utf-8"
+    )
+    found = box.m.check_cola_despachable({}, {})
+    assert found and found[0][0] == "cola-despachable-ociosa" and "2" in found[0][2]
+    assert found[0][1] == "AVISO"
+    gap = dict(records[1], ts="2026-11-06T13:20:01+01:00")
+    trace.write_text(
+        "\n".join(json.dumps(item) for item in (records[0], gap)) + "\n",
+        encoding="utf-8",
+    )
+    assert box.m.check_cola_despachable({}, {}) == []
+
+
+def test_cola_despachable_cupo_contraste_cuenta(box):
+    """Before: the same tick carries CUPO, destination identity and account summary.
+
+    During: evaluate two consecutive records against the roster soft cut.
+    After: the warning cites the destination account and its blocking percentage.
+    """
+    _write_cell_fixtures(box, 1)
+    (box.flight / "flight_roster.json").write_text(
+        json.dumps({"quota": {"soft_freeze_block_pct": 90, "hard_stop_block_pct": 95}}),
+        encoding="utf-8",
+    )
+    cfg, _, _ = box.m._resolve_paths(
+        types.SimpleNamespace(
+            flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+        ),
+        box.ops,
+    )
+    box.m.CFG = cfg
+    summary = [
+        {
+            "cuenta": "brabander",
+            "calidad_medida": "OK",
+            "block_pct": 98,
+            "estado_operativo": "CAMBIO",
+        }
+    ]
+    records = [
+        {
+            "v": 2,
+            "ts": "2026-11-06T12:30:01+01:00",
+            "cola_despachable": 1,
+            "cola_motivo": "CUPO",
+            "quota_accounts": summary,
+            "destino": "brabander",
+            "quota_rc": 0,
+        },
+        {
+            "v": 2,
+            "ts": "2026-11-06T12:40:01+01:00",
+            "cola_despachable": 1,
+            "cola_motivo": "CUPO",
+            "quota_accounts": summary,
+            "destino": "brabander",
+            "quota_rc": 0,
+        },
+    ]
+    (box.ops / "tick_trace.jsonl").write_text(
+        "\n".join(json.dumps(item) for item in records) + "\n", encoding="utf-8"
+    )
+    found = box.m.check_cola_despachable({}, {})
+    assert "brabander" in found[0][2] and "98%" in found[0][2]
+    invalid = [
+        dict(records[0], quota_accounts=None, destino="brabander"),
+        dict(records[1], quota_accounts=None, destino="brabander"),
+    ]
+    (box.ops / "tick_trace.jsonl").write_text(
+        "\n".join(json.dumps(item) for item in invalid) + "\n", encoding="utf-8"
+    )
+    invalid_found = box.m.check_cola_despachable({}, {})
+    assert "OTRO" in invalid_found[0][2] and "NO_MEDIDO" in invalid_found[0][2]
+    healthy = [
+        dict(
+            records[0],
+            quota_accounts=[
+                {**summary[0], "block_pct": 40, "estado_operativo": "NORMAL"}
+            ],
+            quota_rc=9,
+        ),
+        dict(
+            records[1],
+            quota_accounts=[
+                {**summary[0], "block_pct": 40, "estado_operativo": "NORMAL"}
+            ],
+            quota_rc=9,
+        ),
+    ]
+    (box.ops / "tick_trace.jsonl").write_text(
+        "\n".join(json.dumps(item) for item in healthy) + "\n", encoding="utf-8"
+    )
+    healthy_found = box.m.check_cola_despachable({}, {})
+    assert "OTRO" in healthy_found[0][2] and "NO_MEDIDO" in healthy_found[0][2]

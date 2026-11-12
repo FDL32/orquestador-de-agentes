@@ -20,6 +20,7 @@ After: imprime una linea por hallazgo y un resumen. rc 0 = sin hallazgos, rc 1 =
 
 import argparse
 import contextlib
+import datetime as dt
 import glob
 import hashlib
 import importlib.util
@@ -40,6 +41,8 @@ FLIGHT_DIR_ENV = "FLIGHT_DIR"
 NO_WINDOW = 0x08000000
 FREE_GB_DEFAULT = 5.0
 QUOTA_STALE_MIN = 40
+QUOTA_SOFT_FALLBACK = 92
+QUOTA_HARD_FALLBACK = 97
 TASK_STALE_S = 25 * 60  # la tarea corre cada 10 min: mas de 2 ciclos
 TASK_FUTURE_S = 5 * 60  # un ts_tarea mas alla de esto en el futuro es ilegible
 HEARTBEAT_STALE_S = 35 * 60
@@ -59,6 +62,21 @@ GO_RESOLVED_RE = re.compile(
 )
 QUOTA_NAME = "quota_last.txt"
 QUOTA_READ_MAX = 4096
+DIAG_TICKS = 2
+URGENTE_TICKS = 4
+TICK_GAP_MAX_MIN = 30
+QUEUE_MOTIVES = {
+    "NO_DECLARADO",
+    "CADUCADO",
+    "CERO",
+    "SIN_BRIEF",
+    "FLT_NO_DISJUNTO",
+    "TOPE_ALCANZADO",
+    "SIN_GO",
+    "BUILDER_O_LENTE_VIVO",
+    "CUPO",
+    "OTRO",
+}
 FLIGHT_ROSTER_NAME = "flight_roster.json"
 STATE_NAME = "stall_state.json"
 TASK_REGISTERED_NAME = "task_registered.json"
@@ -68,7 +86,16 @@ GIT_MARKERS = ("index.lock", "MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD")
 
 _CA = None
 CFG = None
-DETECTOR_NAMES = ("quota", "cola", "git", "disco", "hook", "tarea", "im-ocioso")
+DETECTOR_NAMES = (
+    "quota",
+    "cola",
+    "git",
+    "disco",
+    "hook",
+    "tarea",
+    "im-ocioso",
+    "cola-despachable",
+)
 _CELL_CHECKER = None
 
 
@@ -199,7 +226,7 @@ def _quota_accounts(text):
         cuentan como sin porcentaje; un segmento ajeno con ``N%`` marca ``desconocida``.
         El segmento codex se excluye por prefijo y quota_tick sanea ``|`` dentro de su parte informativa.
     """
-    pcts, sin_pct, stale, desconocida = [], False, False, False
+    pcts, sin_pct, stale, desconocida, account_pcts = [], False, False, False, []
     for segment in text.split("|")[1:]:
         if re.match(r"\s*codex(?:\s|$)", segment):
             continue
@@ -218,10 +245,12 @@ def _quota_accounts(text):
         )
         value = float(num.group(1)) if num else math.inf
         if math.isfinite(value):
-            pcts.append(int(value) if value.is_integer() else value)
+            normalized = int(value) if value.is_integer() else value
+            pcts.append(normalized)
+            account_pcts.append((m.group(0).split()[0], normalized))
         else:
             sin_pct = True
-    return pcts, sin_pct, stale, desconocida
+    return pcts, sin_pct, stale, desconocida, account_pcts
 
 
 def check_quota(out):
@@ -262,7 +291,7 @@ def check_quota(out):
                 f"La salida del cupo supera la cota de lectura de {QUOTA_READ_MAX} caracteres",
             )
         ]
-    pcts, sin_pct, stale, desconocida = _quota_accounts(text)
+    pcts, sin_pct, stale, desconocida, account_pcts = _quota_accounts(text)
     declara = re.search(r"\bNO_MEDIDO\b", text.split("|", 1)[0]) is not None
     razones = _quota_reasons(age_min, declara, stale)
     ilegible = (not pcts or sin_pct) and not declara
@@ -287,7 +316,7 @@ def check_quota(out):
                 "La salida del cupo contiene una cuenta no reconocida",
             )
         )
-    found += _quota_levels(pcts)
+    found += _quota_levels(account_pcts)
     out["cupo_max"] = max(pcts) if pcts else None
     return found
 
@@ -318,21 +347,27 @@ def _quota_levels(pcts):
     """
     if not pcts:
         return []
-    worst = max(pcts)
-    if worst >= 97:
+    if pcts and isinstance(pcts[0], tuple):
+        worst_account, worst = max(pcts, key=lambda item: item[1])
+    else:
+        worst_account, worst = "desconocida", max(pcts)
+    soft = getattr(CFG, "quota_soft", QUOTA_SOFT_FALLBACK)
+    hard = getattr(CFG, "quota_hard", QUOTA_HARD_FALLBACK)
+    fallback = " (corte de respaldo)" if getattr(CFG, "quota_fallback", True) else ""
+    if worst >= hard:
         return [
             (
                 "cupo-97",
                 "URGENTE",
-                f"Cupo de una cuenta al {worst}% (corte duro 97%): los implantadores se interrumpen",
+                f"Cupo de {worst_account} al {worst}% (corte duro {hard}%){fallback}: los implantadores se interrumpen",
             )
         ]
-    if worst >= 92:
+    if worst >= soft:
         return [
             (
                 "cupo-92",
                 "AVISO",
-                f"Cupo de una cuenta al {worst}% (congelado suave 92%)",
+                f"Cupo de {worst_account} al {worst}% (congelado suave {soft}%){fallback}",
             )
         ]
     return []
@@ -648,6 +683,11 @@ def _resolve_paths(a, ops):  # noqa: C901
         cola=None,
         motor=None,
         quota=None,
+        quota_soft=QUOTA_SOFT_FALLBACK,
+        quota_hard=QUOTA_HARD_FALLBACK,
+        quota_fallback=True,
+        tick_trace=None,
+        roster_quota={},
         session_code=None,
         registry=None,
         store=Path(
@@ -669,6 +709,16 @@ def _resolve_paths(a, ops):  # noqa: C901
         if roster.is_file():
             try:
                 value = json.loads(roster.read_text(encoding="utf-8"))
+                quota = value.get("quota", {})
+                if isinstance(quota, dict):
+                    cfg.roster_quota = quota
+                    soft_valid = _is_finite(quota.get("soft_freeze_block_pct"))
+                    hard_valid = _is_finite(quota.get("hard_stop_block_pct"))
+                    if soft_valid:
+                        cfg.quota_soft = quota["soft_freeze_block_pct"]
+                    if hard_valid:
+                        cfg.quota_hard = quota["hard_stop_block_pct"]
+                    cfg.quota_fallback = not (soft_valid and hard_valid)
                 candidate = (
                     value.get("active_roles", {})
                     .get("orquestador", {})
@@ -678,6 +728,7 @@ def _resolve_paths(a, ops):  # noqa: C901
                     cfg.session_code = candidate
             except (OSError, ValueError, AttributeError):
                 pass
+        cfg.tick_trace = Path(raw) / "ops" / "tick_trace.jsonl"
     except ValueError as exc:
         causes.append(str(exc))
     raw = a.motor_wt or env.get("STALL_MOTOR_WT")
@@ -704,6 +755,8 @@ def _resolve_paths(a, ops):  # noqa: C901
         cfg.quota = Path(raw)
     elif ops is not None:
         cfg.quota = ops / QUOTA_NAME
+    if ops is not None:
+        cfg.tick_trace = ops / "tick_trace.jsonl"
     fatal = _free_gb_min(cfg, env.get("STALL_FREE_GB_MIN"))
     return cfg, causes, fatal
 
@@ -864,6 +917,127 @@ def _heartbeat_check(a, ca):
     return max(2, notify_rc) if state_failed else 2
 
 
+def _trace_records():
+    """Read the bounded tick trace through its production compatibility reader.
+
+    Before: ``CFG.tick_trace`` points to the operation trace file.
+    During: parse JSONL records and ignore malformed lines without inventing queue state.
+    After: return ordered dictionaries, including legacy v1 records without new fields.
+    """
+    target = getattr(CFG, "tick_trace", None) or (CFG.ops / "tick_trace.jsonl")
+    if not target.is_file():
+        return []
+    records = []
+    for line in target.read_text(encoding="utf-8", errors="replace").splitlines()[
+        -256:
+    ]:
+        try:
+            value = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    return records
+
+
+def _trace_ts(record):
+    """Parse an offset-bearing trace timestamp or return null."""
+    raw = record.get("ts")
+    if not isinstance(raw, str):
+        return None
+    try:
+        return dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _queue_reason(record):
+    """Validate the CUPO motive against the same tick's destination summary."""
+    motive = record.get("cola_motivo")
+    if motive != "CUPO":
+        return motive if motive in QUEUE_MOTIVES else "OTRO", "motivo " + str(
+            motive or "NO_DECLARADO"
+        )
+    destination = record.get("destino")
+    accounts = record.get("quota_accounts")
+    if (
+        not isinstance(destination, str)
+        or not destination
+        or not isinstance(accounts, list)
+    ):
+        return "OTRO", "motivo OTRO NO_MEDIDO"
+    for item in accounts:
+        if not isinstance(item, dict) or item.get("cuenta") != destination:
+            continue
+        pct = item.get("block_pct")
+        state = item.get("estado_operativo")
+        if (
+            _is_finite(pct) and pct >= getattr(CFG, "quota_soft", QUOTA_SOFT_FALLBACK)
+        ) or state in {
+            "CAMBIO",
+            "PREPARACION",
+        }:
+            return "CUPO", f"motivo CUPO: {destination} {pct}%"
+    return "OTRO", "motivo OTRO NO_MEDIDO"
+
+
+def check_cola_despachable(out, st):
+    """Report a dispatchable queue left idle across consecutive heartbeat ticks.
+
+    Before: tick trace records and registry/store configuration are available.
+    During: require two close positive queue declarations and fewer than two live IMs.
+    After: return an AVISO or URGENTE finding without launching or mutating any IM.
+    """
+    del st
+    records = _trace_records()
+    if (
+        not records
+        or CFG.registry is None
+        or not CFG.registry.is_file()
+        or CFG.store is None
+        or not CFG.store.is_file()
+    ):
+        return []
+    checker = _load_cell_checker()
+    sessions = checker._registry(CFG.registry)
+    connection, _, settled = checker._store_lookup(CFG.store)
+    try:
+        live = checker.live_ims(sessions, settled)
+    finally:
+        connection.close()
+    if len(live) >= 2:
+        return []
+    streak = []
+    for record in reversed(records):
+        queue = record.get("cola_despachable")
+        if not isinstance(queue, int) or isinstance(queue, bool) or queue <= 0:
+            break
+        if streak:
+            current_ts = _trace_ts(streak[-1])
+            prior_ts = _trace_ts(record)
+            if (
+                current_ts is None
+                or prior_ts is None
+                or (current_ts - prior_ts).total_seconds() > TICK_GAP_MAX_MIN * 60
+            ):
+                break
+        streak.append(record)
+        if len(streak) >= URGENTE_TICKS:
+            break
+    if len(streak) < DIAG_TICKS:
+        return []
+    latest = streak[0]
+    _motive, detail = _queue_reason(latest)
+    level = "URGENTE" if len(streak) >= URGENTE_TICKS else "AVISO"
+    return [
+        (
+            "cola-despachable-ociosa",
+            level,
+            f"Cola despachable ociosa ({len(streak)} ticks), {detail}",
+        )
+    ]
+
+
 def _detect(out, st, only=None):
     """Ejecuta todos los detectores aislando el fallo de cada uno.
 
@@ -881,6 +1055,7 @@ def _detect(out, st, only=None):
         "hook": lambda: check_hook(out),
         "tarea": lambda: check_tarea(out),
         "im-ocioso": lambda: check_im_ocioso(out, st),
+        "cola-despachable": lambda: check_cola_despachable(out, st),
     }
     selected = [only] if only else list(DETECTOR_NAMES)
     for name in selected:

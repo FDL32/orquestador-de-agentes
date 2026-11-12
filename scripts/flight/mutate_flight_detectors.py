@@ -248,8 +248,8 @@ m(
     '                "cupo-97",\n                "URGENTE",',
     '                "cupo-97",\n                "AVISO",',
 )
-m("N63", "2A", "    if worst >= 92:", "    if worst >= 99:")
-m("Q3b", "2A", "    if worst >= 97:", "    if worst >= 99:")
+m("N63", "2A", "    if worst >= hard:", "    if worst >= 99:")
+m("Q3b", "2A", "    if worst >= soft:", "    if worst >= 99:")
 m(
     "N64",
     "2A",
@@ -581,7 +581,7 @@ q("N91", 'return "AVISO" if worst >= WARN_PCT else "OK"', 'return "AVISO"')
 q("N92", "        value = quota.get(key, default)", "        value = default")
 q(
     "N93",
-    '        return f"codex NO_MEDIDO {type(exc).__name__}"',
+    '        return f"codex NO_MEDIDO {type(exc).__name__}", empty',
     '        raise NoMedidoError("codex")',
 )
 q(
@@ -635,8 +635,8 @@ q("Q12", "            timeout=90,", "            timeout=900,")
 q("Q13", '"-NoProfile", "-File", monitor, "-Json"', '"-File", monitor, "-Json"')
 q(
     "Q14",
-    '            c.stdout.strip().replace("\\n", " ").replace("|", "/")[:110]',
-    '            c.stdout.strip().replace("\\n", " ").replace("|", "/")[:1100]',
+    '        raw = c.stdout.strip().replace("\\r", " ").replace("\\n", " ").replace("|", "/")',
+    '        raw = c.stdout.strip().replace("\\r", " ").replace("\\n", " ").replace("|", "/")[:110]',
 )
 q("Q15", 'or (Path.home() / ".codex")', 'or "x"')
 q("Q16", 'mark = " umbrales-roster-invalidos" if invalid else ""', 'mark = ""')
@@ -660,7 +660,11 @@ q(
 )
 q("Q23", "a.monitor or env.get(MONITOR_ENV)", "env.get(MONITOR_ENV) or a.monitor")
 q("Q24", "a.probe or env.get(PROBE_ENV)", "env.get(PROBE_ENV) or a.probe")
-q("Q25", 'return f"codex NO_MEDIDO sin {PROBE_ENV}"', 'return ""')
+q(
+    "Q25",
+    'return f"codex NO_MEDIDO sin {PROBE_ENV}", empty',
+    'return "", empty',
+)
 q("Q26", "    except NoMedidoError:\n        raise\n", "")
 q(
     "Q27",
@@ -684,7 +688,7 @@ m(
 m(
     "A1b",
     "2A",
-    "pcts.append(int(value) if value.is_integer() else value)",
+    "pcts.append(normalized)",
     "pcts.append(int(value))",
 )
 m(
@@ -800,6 +804,44 @@ m(
 m("A9a", "2A", "toks[-1])", "toks[0])")
 m("A9c", "2A", 're.findall(r"\\S+%", rest)', 're.findall(r"[\\d.eE+-]+%", rest)')
 m("A9d", "2A", "if toks\n", "if False\n")
+
+
+# ---------------- WOT-2026-163a P1/P4 controls ----------------
+q("P1A", '"QUOTA_JSON_SCHEMA": QUOTA_JSON_SCHEMA', '"QUOTA_JSON_SCHEMA": 1')
+q("P1B", "process_rc = 9 if missing else RC[state]", "process_rc = RC[state]")
+q("P1C", 'if quality not in ("OK", "RESERVA") or not _is_real(value):', "if False:")
+q(
+    "P1D",
+    "return f\"codex {raw or 'sin salida'}\", empty",
+    "return f\"codex {raw or 'sin salida'}\"[:110], empty",
+)
+m(
+    "P1E",
+    "2A",
+    'if re.match(r"\\s*codex(?:\\s|$)", segment):\n            continue',
+    "if False:\n            continue",
+)
+m("P1F", "2A", 'soft = getattr(CFG, "quota_soft", QUOTA_SOFT_FALLBACK)', "soft = 92")
+q("P1G", 'limits = data["rateLimits"]', 'limits = payload["rateLimits"]')
+m(
+    "P4A",
+    "2A",
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "cola-despachable",\n)',
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n)',
+)
+m("P4B", "2A", "if len(streak) < DIAG_TICKS:", "if len(streak) < 1:")
+m(
+    "P4C",
+    "2A",
+    'if motive != "CUPO":',
+    'if motive == "CUPO":',
+)
+m(
+    "P4D",
+    "2A",
+    "if (\n        not isinstance(destination, str)\n        or not destination\n        or not isinstance(accounts, list)\n    ):",
+    "if False:",
+)
 
 
 def die(msg):
@@ -1167,7 +1209,12 @@ REANCHORED = {
     "T6": "159a: _is_finite valida finitud",
     "Q1": "159a: _is_real rechaza NaN",
     "Q2": "159a: _is_real rechaza bool",
-    "Q14": "153j vigente: salida de sonda acotada",
+    "Q14": "163a vigente: salida de sonda sin truncado a 110",
+    "N63": "163a: quota soft cut moved to roster",
+    "Q3b": "163a: quota hard cut moved to roster",
+    "N93": "163a: codex exception shape changed",
+    "Q25": "163a: codex no-probe shape changed",
+    "A1b": "163a: quota account tuple normalization moved",
 }
 
 if __name__ == "__main__":
