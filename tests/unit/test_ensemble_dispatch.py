@@ -7763,7 +7763,10 @@ def test_058y_calibration_survives_with_at_least_four_blind_lenses():
 
 
 def test_058y_ratio_is_the_adjudicated_option_b():
-    """La decision ADJUDICADA es 9 con arbol / 4 ciegas, no 'las que salgan'.
+    """La decision ADJUDICADA es 13 con arbol / 4 ciegas, no 'las que salgan'.
+
+    El recuento historico 9/4 quedo obsoleto por el alta GLM completo de
+    2026-11-12; la lista cerrada conserva ahora 13 perfiles con arbol.
 
     INVARIANTE, no medicion: se asertan las DOS clases a la vez, de modo que
     mover un perfil de una a otra sin decision explicita rompa el test.
@@ -7803,6 +7806,7 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "challenger_codex_sol_cli",
         "challenger_kilo_deepseek_flash",
         "challenger_kilo_gemma",
+        "challenger_kilo_glm",
         "challenger_kilo_glm_flash",
         "challenger_kilo_mimo_flash",
         "challenger_kilo_qwen",
@@ -7824,7 +7828,50 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "BA252",
         "BA253",
         "BA254",
+        "BA255",
     ], "lentes con arbol = backend_key DISTINTAS, no perfiles cualesquiera"
+
+
+def test_family_leaders_kilo_full_glm_aggregates_by_family(tmp_path):
+    """Before: start with no scorecard; During: adjudicate two GLM rows; After: aggregate under glm."""
+    for i in range(2):
+        ticket = f"WOT-KILO-GLM-{i:03d}d"
+        ed.append_scorecard(
+            tmp_path,
+            {
+                "ts": f"t{i}",
+                "event": "ronda",
+                "ticket": ticket,
+                "rol": "challenger",
+                "task_type": "code-review",
+                "backend": "kilo",
+                "model": "nan/glm5.3",
+                "ronda": 1,
+                "outcome": None,
+                "evidencia": "e",
+                "input_bytes": 10,
+                "context_kind": "diff",
+            },
+        )
+        ed.adjudicate(
+            tmp_path,
+            ticket=ticket,
+            ronda=1,
+            rol="challenger",
+            outcome="adoptada",
+            evidence="cmd + salida",
+            adjudicator_backend="fake-adjudicator",
+        )
+
+    family_path = ed.regenerate_family_leaders(tmp_path)
+    family_leaders = json.loads(family_path.read_text(encoding="utf-8"))
+    cell = family_leaders["por_task_type"]["code-review"]
+
+    assert ed.MODEL_FAMILY_MAP[("kilo", "nan/glm5.3")] == "glm"
+    assert cell["n_muestras"] == 2
+    assert cell["lider"] is None
+    assert family_leaders["unmapped_backend_model_pairs"] == []
+    assert family_leaders["scorecard_sha256"]
 
 
 # --- WOT-2026-059m: la ronda no acepta un commit_sha que no resuelve ----------

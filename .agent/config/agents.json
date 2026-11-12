@@ -350,6 +350,17 @@
       "backend_key": "BA03",
       "repo_scope": "destino"
     },
+    "challenger_kilo_glm": {
+      "backend": "kilo",
+      "channel": "agent",
+      "model": "nan/glm5.3",
+      "context": "diff-o-artefacto-publico",
+      "write": true,
+      "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
+      "data_sensitivity": "public",
+      "backend_key": "BA255",
+      "repo_scope": "destino"
+    },
     "challenger_kilo_mimo_flash": {
       "backend": "kilo",
       "channel": "agent",
@@ -1332,6 +1343,16 @@
         "variant": "sol",
         "uso_restringido": true,
         "uso_restringido_nota": "WOT-2026-161s: uso restringido (gpt-6.1-sol consume mucho); no veto"
+      },
+      "BA255": {
+        "backend": "kilo",
+        "model": "nan/glm5.3",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "full",
+        "generation": 1
       }
     },
     "loop_shapes": {

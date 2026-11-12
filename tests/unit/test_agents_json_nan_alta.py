@@ -41,7 +41,7 @@ EXPECTED_NEW = {
 def _real_config() -> dict:
     """Carga el agents.json real del motor y comprueba su cardinalidad."""
     config = ed.load_motor_config()
-    assert len(config["ensemble_registry"]["backend_keys"]) == 59
+    assert len(config["ensemble_registry"]["backend_keys"]) == 60
     return config
 
 

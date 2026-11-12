@@ -507,6 +507,7 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     ("kilo", "nan/gemma4"): "gemma",
     ("kilo", "nan/qwen3.8-flash"): "qwen",
     ("kilo", "nan/glm5.3-flash"): "glm",
+    ("kilo", "nan/glm5.3"): "glm",
     ("kilo", "nan/mimo-v2.6-flash"): "mimo",
     ("nvidia_api", "z-ai/glm-5.3"): "glm",
     ("nvidia_api", "z-ai/glm-5.3-flash"): "glm",

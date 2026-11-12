@@ -81,6 +81,7 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA252 | claude | sonnet | active |
 | BA253 | claude | opus | active |
 | BA254 | codex | gpt-6.1-sol | active |
+| BA255 | kilo | nan/glm5.3 | active |
 | BA26 | nan_api | glm5.3 | active |
 | BA27 | nan_api | deepseek-v4-pro | active |
 | BA28 | nan_api | hy4 | active |
