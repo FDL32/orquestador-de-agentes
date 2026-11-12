@@ -89,12 +89,10 @@ def test_go_index_is_derived_from_a_non_one_predecessor(tmp_path: Path) -> None:
     match = re.search(r"(?m)^9\. Contexto propio:.*$", fixture)
     assert match is not None
     step9 = match.group(0)
-    for literal in ("fila b1", "Go relevo 24h 1", "Go relevo 24h 2"):
+    for literal in ("fila b1", "Go relevo 24h 1"):
         assert step9.count(literal) == 1
-    mutated_step9 = (
-        step9.replace("fila b1", "fila b4")
-        .replace("Go relevo 24h 1", "Go relevo 24h 4")
-        .replace("Go relevo 24h 2", "Go relevo 24h 5")
+    mutated_step9 = step9.replace("fila b1", "fila b4").replace(
+        "Go relevo 24h 1", "Go relevo 24h 4"
     )
     predecessor = tmp_path / "go-index-4.md"
     predecessor.write_text(
@@ -110,7 +108,6 @@ def test_go_index_is_derived_from_a_non_one_predecessor(tmp_path: Path) -> None:
     assert rendered_step9 is not None
     assert "fila b7" in rendered_step9.group(0)
     assert "Go relevo 24h 7" in rendered_step9.group(0)
-    assert "Go relevo 24h 8" in rendered_step9.group(0)
     for literal in ("fila b4", "fila b1", "Go relevo 24h 4", "Go relevo 24h 1"):
         assert literal not in rendered_step9.group(0)
 
@@ -207,7 +204,7 @@ def test_predecessor_sha12_matches_independent_hash() -> None:
     expected = hashlib.sha256(PREDECESSOR.read_bytes()).hexdigest()[:12]
 
     assert predecessor_sha12(PREDECESSOR) == expected
-    assert predecessor_sha12(PREDECESSOR) == "fadc9966e810"
+    assert predecessor_sha12(PREDECESSOR) == "846f6c4f5336"
 
 
 def test_render_blindado_for_salto_x_to_x_mas_uno(tmp_path: Path) -> None:
@@ -1779,3 +1776,89 @@ def test_late_exception_keeps_accumulated_problems(tmp_path: Path) -> None:
     assert rc == 2
     assert "regla R2: esperado 1, encontrado 2" in output
     assert "ancla R2b de ARRANQUE no encontrada" in output
+
+
+def test_norm_and_latido_template_declare_the_same_go_format() -> None:
+    norm = (ROOT / ".agent/rules/common/avisos_parada_vuelo.md").read_text(
+        encoding="utf-8"
+    )
+    fixture = PREDECESSOR.read_text(encoding="utf-8")
+    go_section = fixture.split("GO AL USUARIO:", 1)[1].split("```", 1)[0]
+    step9_match = re.search(r"(?m)^9\. Contexto propio:.*$", fixture)
+    assert step9_match is not None
+    literals = (
+        "Go_Relevo_N",
+        "N desde 32",
+        "TEXTO PLANO",
+        "FUERA de bloques de codigo",
+        "sin espacios finales",
+        "b1-b31",
+        "Go relevo 24h N",
+    )
+
+    for literal in literals:
+        assert literal in norm
+        assert literal in go_section
+    assert "(hoy" not in step9_match.group(0)
+
+
+def test_r3_preserves_new_format_citation(tmp_path: Path) -> None:
+    fixture = PREDECESSOR.read_text(encoding="utf-8")
+    match = re.search(r"(?m)^9\. Contexto propio:.*$", fixture)
+    assert match is not None
+    step9 = match.group(0)
+    new_step9 = step9.replace("fila b1 de diseno", "fila b32 de diseno").replace(
+        "'Go relevo 24h 1'", "'Go_Relevo_32'"
+    )
+    predecessor = tmp_path / "new-format.md"
+    predecessor.write_text(
+        fixture[: match.start()] + new_step9 + fixture[match.end() :],
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 33, _juicios_sucesor())
+
+    assert rc == 0
+    rendered_step9 = re.search(r"(?m)^9\. Contexto propio:.*$", output)
+    assert rendered_step9 is not None
+    assert "Go_Relevo_33" in rendered_step9.group(0)
+    assert "fila b33" in rendered_step9.group(0)
+    assert "Go relevo 24h 33" not in rendered_step9.group(0)
+
+    future_step9 = step9.replace("fila b1 de diseno", "fila b2 de diseno").replace(
+        "'Go relevo 24h 1'", "'Go_Relevo_2'"
+    )
+    future_predecessor = tmp_path / "future-reference.md"
+    future_predecessor.write_text(
+        fixture[: match.start()]
+        + future_step9
+        + fixture[match.end() :]
+        + "\nReferencia futura: Go_Relevo_3.\n",
+        encoding="utf-8",
+    )
+    rc, future_output = render_latido(future_predecessor, roster, 3, _juicios_sucesor())
+
+    assert rc == 0
+    assert "Referencia futura: Go_Relevo_4." in future_output
+
+
+def test_duplicate_used_line_citation_is_rc2(tmp_path: Path) -> None:
+    fixture = PREDECESSOR.read_text(encoding="utf-8")
+    match = re.search(r"(?m)^9\. Contexto propio:.*$", fixture)
+    assert match is not None
+    step9 = match.group(0)
+    duplicate_step9 = step9.replace("fila b1 de diseno", "fila b32 de diseno").replace(
+        "'Go relevo 24h 1'", "'Go_Relevo_32' y 'Go_Relevo_32'"
+    )
+    predecessor = tmp_path / "duplicate-used-line.md"
+    predecessor.write_text(
+        fixture[: match.start()] + duplicate_step9 + fixture[match.end() :],
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 33, _juicios_sucesor())
+
+    assert rc == 2
+    assert "regla R3 linea del salto" in output

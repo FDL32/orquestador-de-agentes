@@ -6,8 +6,10 @@ anchors, ``roster`` must contain exactly the three consumed roster objects, and
 
 During: the renderer validates and applies the closed R1-R7 rules. R1
 substitutes identities and thread identifiers; R2 preserves the context
-cascade start and R2b-fin preserves its unique ending; R3 updates step-9
-``Go N``, ``Go N+1``, and ``fila bN`` references; R4 forces ``ESTADO:
+cascade start and R2b-fin preserves its unique ending; R3 validates the
+step-9 used-line citation in either ``Go relevo 24h N`` or ``Go_Relevo_N``
+format and updates ``Go N+1`` and ``fila bN`` references while preserving
+the cited format; R4 forces ``ESTADO:
 VIGENTE``; R5 detects explicit judgement holes and reports rc 3; R6 keeps the
 single postcompaction anchor; and R7 corrects the ``X -> X`` handoff jump.
 Protected cascade, postcompaction, and judgement spans are preserved while
@@ -62,7 +64,9 @@ from typing import Any
 
 _CASCADE_START = "la cascada es "
 _CASCADE_END = " LATIDO DE PROGRESO"
-_R3_PATTERN = re.compile(r"(?<![A-Za-z0-9])(fila b|Go relevo 24h )(\d+)(?![A-Za-z0-9])")
+_R3_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9])(fila b|Go relevo 24h |Go_Relevo_)(\d+)(?![A-Za-z0-9])"
+)
 
 
 def predecessor_sha12(predecessor: str | Path) -> str:
@@ -484,12 +488,16 @@ def render_latido(  # noqa: C901
         else:
             step9 = step9_match.group(0)
             r3_rules = {
-                f"Go relevo 24h {derived['go_index']}": 1,
-                f"fila b{derived['go_index']}": 1,
-                f"Go relevo 24h {derived['go_index'] + 1}": 1,
+                "linea del salto": (
+                    step9.count(f"Go relevo 24h {derived['go_index']}")
+                    + step9.count(f"Go_Relevo_{derived['go_index']}")
+                ),
+                f"fila b{derived['go_index']}": step9.count(
+                    f"fila b{derived['go_index']}"
+                ),
             }
-            for literal, expected in r3_rules.items():
-                measured = step9.count(literal)
+            for literal, measured in r3_rules.items():
+                expected = 1
                 if measured != expected:
                     problems.append(
                         f"regla R3 {literal}: esperado {expected}, encontrado {measured}"
@@ -557,7 +565,10 @@ def render_latido(  # noqa: C901
                 prefix, number = match.group(1), int(match.group(2))
                 if number == derived["go_index"]:
                     return f"{prefix}{go_index}"
-                if prefix == "Go relevo 24h " and number == derived["go_index"] + 1:
+                if (
+                    prefix in ("Go relevo 24h ", "Go_Relevo_")
+                    and number == derived["go_index"] + 1
+                ):
                     return f"{prefix}{go_index + 1}"
                 return match.group(0)
 
