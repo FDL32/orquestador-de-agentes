@@ -69,6 +69,22 @@ _R3_PATTERN = re.compile(
 )
 
 
+def _count_r3_index(text: str, index: int, prefixes: tuple[str, ...]) -> int:
+    """Count R3 references for one index and a selected set of prefixes.
+
+    Before: ``text`` contains R3 references, ``index`` is the target numeric
+    index, and ``prefixes`` selects complete prefixes from ``_R3_PATTERN``.
+    During: each token-pattern match is filtered by its prefix and integer
+    index, preserving the same token boundaries used by R3 replacement.
+    After: return the number of matching R3 references.
+    """
+
+    return sum(
+        match.group(1) in prefixes and int(match.group(2)) == index
+        for match in _R3_PATTERN.finditer(text)
+    )
+
+
 def predecessor_sha12(predecessor: str | Path) -> str:
     """Return the first 12 hexadecimal SHA-256 characters of a predecessor.
 
@@ -488,12 +504,13 @@ def render_latido(  # noqa: C901
         else:
             step9 = step9_match.group(0)
             r3_rules = {
-                "linea del salto": (
-                    step9.count(f"Go relevo 24h {derived['go_index']}")
-                    + step9.count(f"Go_Relevo_{derived['go_index']}")
+                "linea del salto": _count_r3_index(
+                    step9,
+                    derived["go_index"],
+                    ("Go relevo 24h ", "Go_Relevo_"),
                 ),
-                f"fila b{derived['go_index']}": step9.count(
-                    f"fila b{derived['go_index']}"
+                f"fila b{derived['go_index']}": _count_r3_index(
+                    step9, derived["go_index"], ("fila b",)
                 ),
             }
             for literal, measured in r3_rules.items():

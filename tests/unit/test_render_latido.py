@@ -128,7 +128,7 @@ def test_context_code_must_match_cited_supervisor() -> None:
 def test_context_thread_id_must_match_cited_supervisor() -> None:
     roster = json.loads(ROSTER.read_text(encoding="utf-8"))
     roster["cadena_contexto"][0]["threadId"] = (
-        "mcp:99999999-9999-4999-8999-999999999999"
+        "mcp:00000000-0000-4000-8000-000000000025"
     )
 
     rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
@@ -204,7 +204,7 @@ def test_predecessor_sha12_matches_independent_hash() -> None:
     expected = hashlib.sha256(PREDECESSOR.read_bytes()).hexdigest()[:12]
 
     assert predecessor_sha12(PREDECESSOR) == expected
-    assert predecessor_sha12(PREDECESSOR) == "846f6c4f5336"
+    assert predecessor_sha12(PREDECESSOR) == "79b55776207c"
 
 
 def test_render_blindado_for_salto_x_to_x_mas_uno(tmp_path: Path) -> None:
@@ -749,16 +749,16 @@ def test_synthetic_pair_derives_identities_without_pair_literals(
         .replace("CO-54", "CO-55")
         .replace("CO-53", "CO-54")
         .replace(
-            "mcp:0355d3c5-08e9-427a-ba65-e6e3ab43b7ce",
-            "mcp:11111111-1111-4111-8111-111111111111",
+            "mcp:00000000-0000-4000-8000-000000000002",
+            "mcp:00000000-0000-4000-8000-000000000005",
         )
         .replace(
-            "mcp:d0cbb70f-c8f3-444d-a15d-ce28235cc26c",
-            "mcp:33333333-3333-4333-8333-333333333333",
+            "mcp:00000000-0000-4000-8000-000000000032",
+            "mcp:00000000-0000-4000-8000-000000000012",
         )
         .replace(
-            "mcp:a3854955-09b6-4647-a647-d96a935442dc",
-            "mcp:44444444-4444-4444-8444-444444444444",
+            "mcp:00000000-0000-4000-8000-000000000028",
+            "mcp:00000000-0000-4000-8000-000000000015",
         )
     )
     predecessor = tmp_path / "synthetic.md"
@@ -766,17 +766,17 @@ def test_synthetic_pair_derives_identities_without_pair_literals(
     roster = {
         "active_roles": {
             "orquestador": {
-                "threadId": "mcp:11111111-1111-4111-8111-111111111112",
+                "threadId": "mcp:00000000-0000-4000-8000-000000000006",
                 "session_code": "CO-57",
             },
             "supervisor": {
-                "threadId": "mcp:22222222-2222-4222-8222-222222222222",
+                "threadId": "mcp:00000000-0000-4000-8000-000000000009",
                 "session_code": "CO-56",
             },
         },
         "cadena_contexto": [
             {
-                "threadId": "mcp:33333333-3333-4333-8333-333333333333",
+                "threadId": "mcp:00000000-0000-4000-8000-000000000012",
                 "session_code": "CO-55",
             }
         ],
@@ -795,13 +795,13 @@ def test_synthetic_pair_derives_identities_without_pair_literals(
     assert rc == 0
     assert "Eres CO-57" in output
     assert (
-        "Tu supervisora es CO-56 (mcp:22222222-2222-4222-8222-222222222222," in output
+        "Tu supervisora es CO-56 (mcp:00000000-0000-4000-8000-000000000009," in output
     )
     assert "cascada directa CO-55" in output
     assert "o 'CO-55'" in output
     assert "cascada directa CO-54" not in output
     assert "o 'CO-54'" not in output
-    assert "cascada directa CO-55 (mcp:33333333-3333-4333-8333-333333333333)" in output
+    assert "cascada directa CO-55 (mcp:00000000-0000-4000-8000-000000000012)" in output
     assert "Go relevo 24h 9" in output
 
 
@@ -979,10 +979,10 @@ def test_reduced_roster_shape_is_exact(mutate, expected: str) -> None:
 
 
 def test_uppercase_foreign_mcp_id_is_rejected(tmp_path: Path) -> None:
+    foreign_id = "mcp:" + "abcdef12-1234-4123-8123-123456789012".upper()
     predecessor = tmp_path / "uppercase-id.md"
     predecessor.write_text(
-        PREDECESSOR.read_text(encoding="utf-8")
-        + "\nmcp:ABCDEF12-1234-4123-8123-123456789012\n",
+        PREDECESSOR.read_text(encoding="utf-8") + f"\n{foreign_id}\n",
         encoding="utf-8",
     )
     roster = json.loads(ROSTER.read_text(encoding="utf-8"))
@@ -990,7 +990,7 @@ def test_uppercase_foreign_mcp_id_is_rejected(tmp_path: Path) -> None:
     rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
 
     assert rc == 2
-    assert "id mcp ajeno al roster: mcp:ABCDEF12-1234-4123-8123-123456789012" in output
+    assert f"id mcp ajeno al roster: {foreign_id}" in output
 
 
 def test_go_index_zero_is_rejected() -> None:
@@ -1491,11 +1491,11 @@ def _real_roster() -> dict:
         "active_roles": {
             "_schema_note": "known metadata",
             "orquestador": {
-                "threadId": "mcp:5c3353f8-5d71-4efc-bfa5-38164d851130",
+                "threadId": "mcp:00000000-0000-4000-8000-000000000017",
                 "session_code": "CO-56",
                 "since": "2026-11-08T08:44:56+01:00",
                 "set_by": "CO-54",
-                "predecessor_threadId": "mcp:0355d3c5-08e9-427a-ba65-e6e3ab43b7ce",
+                "predecessor_threadId": "mcp:00000000-0000-4000-8000-000000000002",
                 "version": 147,
                 "status": "active",
                 "approved_by": "CO-54",
@@ -1503,18 +1503,18 @@ def _real_roster() -> dict:
                 "estado": "ACTIVO",
             },
             "supervisor": {
-                "threadId": "mcp:0355d3c5-08e9-427a-ba65-e6e3ab43b7ce",
+                "threadId": "mcp:00000000-0000-4000-8000-000000000002",
                 "session_code": "CO-55",
                 "since": "2026-11-08T08:44:56+01:00",
                 "set_by": "CO-54",
-                "predecessor_threadId": "mcp:d0cbb70f-c8f3-444d-a15d-ce28235cc26c",
+                "predecessor_threadId": "mcp:00000000-0000-4000-8000-000000000032",
                 "version": 48,
                 "status": "active",
             },
         },
         "cadena_contexto": [
             {
-                "threadId": "mcp:d0cbb70f-c8f3-444d-a15d-ce28235cc26c",
+                "threadId": "mcp:00000000-0000-4000-8000-000000000032",
                 "session_code": "CO-54",
                 "hasta": "2026-11-08T08:44:56+01:00",
                 "cerrado_por": "CO-54",
@@ -1862,3 +1862,210 @@ def test_duplicate_used_line_citation_is_rc2(tmp_path: Path) -> None:
 
     assert rc == 2
     assert "regla R3 linea del salto" in output
+
+
+def test_r3_conteo_paso9_semantica_token(tmp_path: Path) -> None:
+    text = (
+        "xGo relevo 24h 1; Go relevo 24h 1; Go relevo 24h 12; "
+        "Go relevo 24h 1x; Go_Relevo_1; Go_Relevo_12; fila b1; fila b12"
+    )
+    assert (
+        render_latido_module._count_r3_index(text, 1, ("Go relevo 24h ", "Go_Relevo_"))
+        == 2
+    )
+    assert render_latido_module._count_r3_index(text, 1, ("Go relevo 24h ",)) == 1
+    assert render_latido_module._count_r3_index(text, 1, ("Go_Relevo_",)) == 1
+    assert render_latido_module._count_r3_index(text, 1, ("fila b",)) == 1
+    assert (
+        render_latido_module._count_r3_index(text, 12, ("Go relevo 24h ", "Go_Relevo_"))
+        == 2
+    )
+    assert render_latido_module._count_r3_index(text, 12, ("fila b",)) == 1
+    assert (
+        render_latido_module._count_r3_index("xGo relevo 24h 1", 1, ("Go relevo 24h ",))
+        == 0
+    )
+    assert (
+        render_latido_module._count_r3_index("Go relevo 24h 1x", 1, ("Go relevo 24h ",))
+        == 0
+    )
+    assert (
+        render_latido_module._count_r3_index("Go relevo 24h 01", 1, ("Go relevo 24h ",))
+        == 1
+    )
+
+    predecessor = tmp_path / "r3-token.md"
+    source = PREDECESSOR.read_text(encoding="utf-8")
+    replacement = (
+        "9. Contexto propio: Go relevo 24h 2; Go relevo 24h 21; fila b21; "
+        "fila b2 de diseno/GO_RELEVO_24H_REGISTRO.md"
+    )
+    objective = re.search(r"\(ARRANQUE_[A-Z]+-\d+_\d{8}\.md s\.2: .*?\)", source)
+    assert objective is not None
+    original_step9 = re.search(r"(?m)^9\. Contexto propio:.*$", source)
+    assert original_step9 is not None
+    suffix = original_step9.group(0)[
+        original_step9.group(0).find(" Procedimiento: ARRANQUE_") :
+    ]
+    updated = re.sub(
+        r"(?m)^9\. Contexto propio:.*$",
+        replacement + "\n" + objective.group(0) + "\n" + suffix,
+        source,
+        count=1,
+    )
+    predecessor.write_text(updated, encoding="utf-8")
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 3, _juicios_sucesor())
+
+    assert rc == 0
+    line9 = re.search(r"(?m)^9\. Contexto propio:.*$", output)
+    assert line9 is not None
+    assert "Go relevo 24h 3" in line9.group(0)
+
+
+def test_error_juicio_objetivo_sin_cierre() -> None:
+    text = PREDECESSOR.read_text(encoding="utf-8")
+    objective = re.search(r"\(ARRANQUE_[A-Z]+-\d+_\d{8}\.md s\.2: .*?\)", text)
+    assert objective is not None
+    malformed = text.replace(objective.group(0), objective.group(0)[:-1], 1)
+
+    with pytest.raises(
+        ValueError, match="no se encontro cierre de JUICIO objetivo_en_curso"
+    ):
+        render_latido_module._judgement_spans(malformed)
+
+
+def test_error_roster_values_active_roles_no_dict() -> None:
+    _, _, _, errors = render_latido_module._roster_values(
+        {"active_roles": [], "cadena_contexto": [{}]}
+    )
+
+    assert any("active_roles debe ser dict" in error for error in errors)
+
+
+def test_error_roster_values_cadena_contexto_no_list() -> None:
+    _, _, _, errors = render_latido_module._roster_values(
+        {"active_roles": {}, "cadena_contexto": {}}
+    )
+
+    assert any("cadena_contexto debe ser list" in error for error in errors)
+
+
+def test_error_roster_values_objeto_ausente() -> None:
+    _, _, _, errors = render_latido_module._roster_values(
+        {
+            "active_roles": {"orquestador": None, "supervisor": {}},
+            "cadena_contexto": [{}],
+        }
+    )
+
+    assert any(
+        "objeto ausente en active_roles.orquestador" in error for error in errors
+    )
+
+
+def test_error_reduce_roster_active_roles_no_dict() -> None:
+    reduced, errors = reduce_roster({"active_roles": None, "cadena_contexto": []})
+
+    assert reduced is None
+    assert any("active_roles debe ser dict" in error for error in errors)
+
+
+def test_error_reduce_roster_objeto_ausente() -> None:
+    reduced, errors = reduce_roster(
+        {"active_roles": {"orquestador": None}, "cadena_contexto": [{}]}
+    )
+
+    assert reduced is None
+    assert any(
+        "objeto ausente en active_roles.orquestador" in error for error in errors
+    )
+
+
+def test_error_reduce_roster_cadena_vacia() -> None:
+    reduced, errors = reduce_roster({"active_roles": {}, "cadena_contexto": []})
+
+    assert reduced is None
+    assert any(
+        "cadena_contexto debe tener al menos un elemento" in error for error in errors
+    )
+
+
+def test_error_reduce_roster_contexto_no_dict() -> None:
+    reduced, errors = reduce_roster({"active_roles": {}, "cadena_contexto": ["x"]})
+
+    assert reduced is None
+    assert any("objeto ausente en cadena_contexto[0]" in error for error in errors)
+
+
+def test_error_paso9_ausente_en_validacion(tmp_path: Path, monkeypatch) -> None:
+    """Reachability requires stubbing _derive_predecessor with a valid mapping.
+
+    The predecessor keeps every anchor but its step-9 line is renamed, so the
+    validation site can only run when derivation is bypassed; without the stub
+    the earlier derivation error wins and this branch stays unexecuted.
+    """
+
+    source = PREDECESSOR.read_text(encoding="utf-8")
+    cascade_start = source.find(render_latido_module._CASCADE_START) + len(
+        render_latido_module._CASCADE_START
+    )
+    cascade_end = source.find(render_latido_module._CASCADE_END, cascade_start)
+    derived = render_latido_module._derive_predecessor(
+        source, cascade_start, cascade_end
+    )
+    monkeypatch.setattr(
+        render_latido_module, "_derive_predecessor", lambda text, start, end: derived
+    )
+    predecessor = tmp_path / "without-step9.md"
+    predecessor.write_text(
+        re.sub(r"(?m)^9\. Contexto propio:", "8. Contexto propio:", source),
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "regla R3: parrafo del paso 9 ausente" in output
+
+
+def test_error_paso9_ausente_tras_derivacion(tmp_path: Path, monkeypatch) -> None:
+    """Reachability requires monkeypatching replacement to remove line 9."""
+
+    original = render_latido_module._replace_identity_tokens
+
+    def remove_step9(*args, **kwargs):
+        rendered = original(*args, **kwargs)
+        return re.sub(r"(?m)^9\. Contexto propio:.*\r?\n?", "", rendered)
+
+    monkeypatch.setattr(render_latido_module, "_replace_identity_tokens", remove_step9)
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "regla R3: parrafo del paso 9 ausente tras derivacion" in output
+
+
+def test_error_session_code_no_numerico() -> None:
+    """This branch is directly reachable because roster validation requires [A-Z]+-[0-9]+."""
+
+    with pytest.raises(ValueError, match="session_code no numerico: CO-"):
+        render_latido_module._next_session_code("CO-")
+
+
+def test_fixtures_sin_identificadores_reales() -> None:
+    texts = [
+        path.read_text(encoding="utf-8") for path in (PREDECESSOR, SUCCESSOR, ROSTER)
+    ]
+    combined = "".join(texts)
+    uuids = re.findall(
+        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        combined,
+    )
+
+    assert all(uuid.startswith("00000000-0000-4000-8000-") for uuid in uuids)
+    assert re.findall(r"[0-9a-fA-F]{32}", combined) == []
+    assert len(uuids) >= 60
