@@ -8,7 +8,6 @@ It is written so the repository can be cloned or published without any knowledge
 ```text
 orquestador_de_agentes/
 |-- .agent/
-|   |-- collaboration/
 |   |-- config/
 |   |-- context/
 |   |-- hooks/
@@ -68,7 +67,10 @@ orquestador_de_agentes/
 
 ## Design vs. development sessions (destination projects)
 
-The motor ships `.agent/collaboration/` as a neutral seed. A destination project populates it at
+`.agent/collaboration/` is not shipped by the motor (neither versioned nor distributed);
+its operational state lives in the destination project (`repo_destino`, `workspace_activo`);
+only a historical `_archive/` may remain locally, gitignored by the motor.
+A destination project populates it at
 runtime with two parallel, non-colliding session types: a read-only `sesion_diseno` (triages the
 backlog, drafts flight plans into a queue, never touches code or `backlog.md`) and a
 `sesion_desarrollo` (implements, commits, and advances queued flight plans through execution).
