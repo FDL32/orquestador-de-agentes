@@ -51,7 +51,7 @@
   - `agent_system/templates/repomix.config.json`: plantilla de configuracion de Repomix.
 - `scripts/`: utilidades de instalacion, upgrade, rollback y validacion.
 - `skills/`: micro-habilidades reutilizables.
-- `.agent/collaboration/`: estado operacional canonico — vive en el `repo_destino`, no en el motor. El motor contiene seeds neutros; apuntar al destino via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`.
+- `.agent/collaboration/`: operativo en `repo_destino`, no en motor; el motor no lo trackea (ver `vocabulario_canonico.md`). Via `AGENT_PROJECT_ROOT` o `motor_destination_link.json`.
 - `.agent/runtime/memory/`: memoria persistente por proyecto.
 - `.agent/context/repomix.xml`: contexto comprimido del workspace generado por Repomix (bootstrapping).
 - `.agent/council/`: broker de consejo y auditoria paralela.

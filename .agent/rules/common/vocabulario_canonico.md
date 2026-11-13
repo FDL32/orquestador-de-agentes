@@ -178,7 +178,7 @@ falla solo ante un generador/ejemplo vivo con prefijo legacy sin etiqueta.
 
 | Ubicacion | Rol | Contenido |
 |-----------|-----|-----------|
-| `repo_motor/.agent/collaboration/` | **Seed neutro** | Archivos en estado READY_TO_START/IDLE. Molde para nuevos destinos instalados. No contienen tickets activos. |
+| `repo_motor/.agent/collaboration/` | **No versionado ni distribuido por el motor** | El estado operativo vive en el `repo_destino` / `workspace_activo`; solo `_archive/` historico que el motor gitignora. Destrackeo de las 6 proyecciones: b4379a93; vigilante `check_collaboration_state_clean.py`: 23a5f2db. |
 | `repo_destino/.agent/collaboration/` | **Estado operativo activo** | `work_plan.md`, `execution_log.md`, `TURN.md`, `STATE.md`, `backlog.md` con el ticket real en curso. |
 
 **Nunca usar `repo_motor/.agent/collaboration/` como operativo.** El guard anti-drift bloquea escrituras operativas ahi sin `AGENT_PROJECT_ROOT`.
