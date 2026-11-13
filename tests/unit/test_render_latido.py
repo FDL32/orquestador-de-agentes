@@ -204,7 +204,7 @@ def test_predecessor_sha12_matches_independent_hash() -> None:
     expected = hashlib.sha256(PREDECESSOR.read_bytes()).hexdigest()[:12]
 
     assert predecessor_sha12(PREDECESSOR) == expected
-    assert predecessor_sha12(PREDECESSOR) == "79b55776207c"
+    assert predecessor_sha12(PREDECESSOR) == "0dfa47ca7bc9"
 
 
 def test_render_blindado_for_salto_x_to_x_mas_uno(tmp_path: Path) -> None:
