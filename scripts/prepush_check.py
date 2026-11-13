@@ -1045,29 +1045,21 @@ def run_hook_delivery_check(project_root: Path) -> CheckResult:
 
 
 def run_settings_canonical_drift_check(project_root: Path) -> CheckResult:
-    """WOT-2026-129l: WARN si el diff de push altera comandos canonicos de hooks.
+    """WOT-2026-166a: WARN y censo de settings en cada ejecucion de prepush.
 
-    Deteccion en el motor: un diff que toca ``.agent/hooks/claude_guard_entry.py``
-    o ``scripts/check_claude_settings_portability.py`` produce un aviso NOMBRADO
-    que lista los destinos cuyo ``.claude/settings.json`` NO pasa el gate con
-    el motor NUEVO, con el comando de re-sincronizacion.
+    Before: ``project_root`` resoluble (checkout del motor); el modulo del guard
+        vive en ``scripts/check_settings_canonical_drift.py``.
+    During: import ESTATICO del modulo e invocacion de ``main()``. El guard
+        censa en cada ejecucion los destinos con ``.claude/settings.json``,
+        informa denominador, numero de problemas y si cada fallo tiene el gate
+        en ``.github/workflows``. La salida es WARN y conserva
+        ``is_blocking=False``.
+    After: el resultado queda ``passed=True`` e ``is_blocking=False`` aunque el
+        censo encuentre drift, porque hacerlo bloqueante queda fuera de este
+        ticket. Las excepciones se convierten en WARN no bloqueante.
 
-    Before: ``project_root`` resoluble (checkout del motor). El modulo del guard
-        vive en ``scripts/check_settings_canonical_drift.py`` del motor.
-    During: import ESTATICO de ``scripts.check_settings_canonical_drift``. Se
-        invoca ``main()`` del modulo; su rc es siempre 0 (WARN, DoD 3). La
-        salida stdout se captura como output del CheckResult. try/except amplio:
-        CUALQUIER excepcion se convierte en CheckResult WARN con
-        ``is_blocking=False`` (R-A: nunca propaga excepcion, un raise abortaria
-        TODO el prepush y romperia el DoD 3).
-    After: ``passed=True`` si diff no toca trigger o todos los destinos estan
-        al dia; ``passed=False`` + ``is_blocking=False`` (WARN) si hay destinos
-        que fallan el gate. El nombre del guard aparece como
-        "Settings Canonical Drift Check (WOT-2026-129l, WARN)".
-
-    R-B: en topologia de worktrees el default (`parents[1].parent`) puede no
-        alcanzar el destino activo; el remedio es ``--destino-root`` o la env
-        ``AGENT_DESTINOS_ROOT``.
+    En topologia de worktrees el remedio para un destino fuera del default es
+    ``--destino-root`` o la variable ``AGENT_DESTINOS_ROOT``.
     """
     name = "Settings Canonical Drift Check (WOT-2026-129l, WARN)"
 

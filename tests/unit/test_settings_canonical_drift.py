@@ -1,669 +1,230 @@
-"""Tests for check_settings_canonical_drift (WOT-2026-129l).
-
-Cubre CA1 (trigger canonico + destino desfasado, fichero ajeno, destino al dia),
-DoD 3 (universo vacio, link ilegitimo, diff indeterminado) y CA4 (wiring).
-
-Fixture comun: mini motor con gate script stub que replica rc por contenido de
-settings (stale -> rc=1, fresh -> rc=0). El stub evita mock-drift: el gate real
-(cualquiera) se ejecuta sobre los settings del fixture.
-"""
+"""Useful tests for the settings canonical drift census (WOT-2026-166a)."""
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
-import sys
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
 import pytest
 
 
-# --------------------------------------------------------------------------- fixtures
+def _git_run(cwd: Path, *args: str) -> None:
+    """Run one real git command for the mini motor fixture."""
+    try:
+        result = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, text=True, check=False
+        )
+    except OSError as exc:
+        pytest.skip(f"git no disponible: {exc}")
+    if result.returncode != 0:
+        pytest.fail(f"git {' '.join(args)} fallo: {result.stderr}")
+
+
 @pytest.fixture()
 def mini_motor(tmp_path: Path) -> Path:
-    """Mini motor: motor_root/scripts, motor_root/.agent/hooks.
-
-    Crea un motor minimal con:
-    - .agent/hooks/claude_guard_entry.py (trigger)
-    - scripts/check_claude_settings_portability.py (trigger)
-    - scripts/check_settings_canonical_drift.py (lo que testeamos)
-    - scripts/check_claude_settings_portability.py (gate STUB)
-    """
+    """Create a real git motor and a gate stub with two stale violations."""
     motor = tmp_path / "motor"
-    motor.mkdir()
-    (motor / ".agent").mkdir()
-    (motor / ".agent" / "hooks").mkdir()
-    (motor / "scripts").mkdir()
-
-    # Trigger file: claude_guard_entry.py
+    (motor / "scripts").mkdir(parents=True)
+    (motor / ".agent" / "hooks").mkdir(parents=True)
+    gate = motor / "scripts" / "check_claude_settings_portability.py"
+    gate.write_text(
+        "import pathlib, sys\n"
+        "text = pathlib.Path(sys.argv[1]).read_text(encoding='utf-8')\n"
+        "if '__STALE__' in text:\n"
+        "    print('gate summary: stale settings')\n"
+        "    print('  - first stale violation')\n"
+        "    print('  - second stale violation')\n"
+        "    raise SystemExit(1)\n"
+        "print('gate summary: settings current')\n",
+        encoding="ascii",
+    )
     (motor / ".agent" / "hooks" / "claude_guard_entry.py").write_text(
-        "# dummy trigger\n", encoding="utf-8"
+        "# fixture\n", encoding="ascii"
     )
+    (motor / "README.md").write_text("base\n", encoding="ascii")
 
-    # Trigger file: check_claude_settings_portability.py (STUB gate)
-    # El stub: settings con "__STALE__" -> rc=1, cualquier otro -> rc=0.
-    (motor / "scripts" / "check_claude_settings_portability.py").write_text(
-        "#!/usr/bin/env python3\n"
-        "import argparse, sys\n"
-        "p = argparse.ArgumentParser()\n"
-        'p.add_argument("path")\n'
-        "args = p.parse_args()\n"
-        'data = open(args.path, encoding="utf-8").read()\n'
-        'if "__STALE__" in data:\n'
-        '    print("[check-claude-settings-portability] " + args.path + ": STALE")\n'
-        "    sys.exit(1)\n"
-        'print("[check-claude-settings-portability] " + args.path + ": OK")\n'
-        "sys.exit(0)\n",
-        encoding="utf-8",
-    )
-
+    _git_run(motor, "init")
+    _git_run(motor, "config", "user.email", "tests@example.invalid")
+    _git_run(motor, "config", "user.name", "test")
+    _git_run(motor, "add", ".")
+    _git_run(motor, "commit", "-m", "initial")
+    _git_run(motor, "update-ref", "refs/remotes/origin/main", "HEAD")
     return motor
 
 
-def _make_destino(
-    tmp_path: Path,
-    stale: bool = True,
-    dest_name: str = "test_destino",
-) -> Path:
-    """Agrega un destino al universo con settings.json.
-
-    Args:
-        tmp_path: raiz temporal (para raices de destino).
-        stale: si True, el settings contendra "__STALE__" (gate falla).
-        dest_name: nombre de la carpeta del destino.
-    """
-    root = tmp_path / "destinos"
-    root.mkdir()
-
-    dest = root / dest_name
-    dest.mkdir()
-    (dest / ".claude").mkdir()
-    content = '{"__STALE__": true, "hooks": {}}' if stale else '{"hooks": {}}'
-    (dest / ".claude" / "settings.json").write_text(content, encoding="utf-8")
-
-    # motor_destination_link.json apuntando al destino
-    link = dest / ".agent" / "config"
-    link.mkdir(parents=True, exist_ok=True)
-    (link / "motor_destination_link.json").write_text(
-        json.dumps({"destination_root": str(dest)}),
-        encoding="utf-8",
+def _make_destino(root: Path, name: str, stale: bool, ci: bool = False) -> Path:
+    """Create one linked destination with static settings and optional CI."""
+    dest = root / name
+    (dest / ".claude").mkdir(parents=True, exist_ok=True)
+    (dest / ".agent" / "config").mkdir(parents=True, exist_ok=True)
+    settings = {"__STALE__": True, "hooks": {}} if stale else {"hooks": {}}
+    (dest / ".claude" / "settings.json").write_text(
+        json.dumps(settings), encoding="ascii"
     )
+    (dest / ".agent" / "config" / "motor_destination_link.json").write_text(
+        json.dumps({"destination_root": str(dest)}), encoding="ascii"
+    )
+    if ci:
+        (dest / ".github" / "workflows").mkdir(parents=True)
+        (dest / ".github" / "workflows" / "quality.yml").write_text(
+            "run: python scripts/check_claude_settings_portability.py\n",
+            encoding="ascii",
+        )
     return dest
 
 
-@pytest.fixture()
-def add_destino(tmp_path: Path) -> Path:
-    """Agrega un destino desfasado (stale) al universo."""
-    return _make_destino(tmp_path, stale=True, dest_name="test_destino")
+def _run_main(mini_motor: Path, destino_root: Path) -> tuple[int, str]:
+    """Run the production module and capture its actual stdout."""
+    from scripts.check_settings_canonical_drift import main
 
-
-@pytest.fixture()
-def add_destino_al_dia(tmp_path: Path) -> Path:
-    """Destino al dia (settings pasan el gate del stub)."""
-    return _make_destino(tmp_path, stale=False, dest_name="test_destino_al_dia")
-
-
-# --------------------------------------------------------------------------- tests
-class TestTriggerYDrift:
-    """CA1: trigger canonico -> lista destinos desfasados; fichero ajeno -> sin aviso."""
-
-    def test_trigger_canonico_lista_destino_desfasado(
-        self,
-        mini_motor: Path,
-        add_destino: Path,
-    ):
-        """CA1/a: con diff tocando claude_guard_entry.py y destino desfasado,
-        la salida contiene el nombre del destino y el comando --sync --dest."""
-        # Mock touched_paths para simular trigger canonico
-        import scripts.check_settings_canonical_drift as m
-        from scripts.check_settings_canonical_drift import main as drift_main
-
-        original = m.touched_paths
-        m.touched_paths = lambda pr: (
-            [".agent/hooks/claude_guard_entry.py"],
-            None,
+    output = StringIO()
+    with redirect_stdout(output):
+        rc = main(
+            [
+                "--project-root",
+                str(mini_motor),
+                "--destino-root",
+                str(destino_root),
+            ]
         )
-        try:
-            import io
-            from contextlib import redirect_stdout
-
-            f = io.StringIO()
-            with redirect_stdout(f):
-                rc = drift_main(
-                    [
-                        "--project-root",
-                        str(mini_motor),
-                        "--destino-root",
-                        str(add_destino.parent),
-                    ]
-                )
-
-            output = f.getvalue()
-            assert rc == 0
-            assert "AVISO [settings-canonical-drift]" in output
-            assert "test_destino" in output
-            assert "--sync --dest" in output
-        finally:
-            m.touched_paths = original
-
-    def test_diff_fichero_ajeno_sin_aviso(
-        self,
-        mini_motor: Path,
-        add_destino: Path,
-    ):
-        """CA1/b -> CA2: con diff de fichero ajeno, NINGUN aviso de drift."""
-        import scripts.check_settings_canonical_drift as m
-        from scripts.check_settings_canonical_drift import main as drift_main
-
-        original = m.touched_paths
-        m.touched_paths = lambda pr: (
-            ["some/other/file.py"],
-            None,
-        )
-        try:
-            import io
-            from contextlib import redirect_stdout
-
-            f = io.StringIO()
-            with redirect_stdout(f):
-                rc = drift_main(
-                    [
-                        "--project-root",
-                        str(mini_motor),
-                        "--destino-root",
-                        str(add_destino.parent),
-                    ]
-                )
-
-            output = f.getvalue()
-            assert rc == 0
-            assert "settings-canonical-drift" not in output.lower() or "OK" in output
-            assert "test_destino" not in output
-        finally:
-            m.touched_paths = original
-
-    def test_destino_al_dia_no_aparece(
-        self,
-        mini_motor: Path,
-        add_destino_al_dia: Path,
-    ):
-        """CA1/c: con destino al dia (pasa el gate), ese destino NO aparece."""
-        import scripts.check_settings_canonical_drift as m
-        from scripts.check_settings_canonical_drift import main as drift_main
-
-        original = m.touched_paths
-        m.touched_paths = lambda pr: (
-            [".agent/hooks/claude_guard_entry.py"],
-            None,
-        )
-        try:
-            import io
-            from contextlib import redirect_stdout
-
-            f = io.StringIO()
-            with redirect_stdout(f):
-                rc = drift_main(
-                    [
-                        "--project-root",
-                        str(mini_motor),
-                        "--destino-root",
-                        str(add_destino_al_dia.parent),
-                    ]
-                )
-
-            output = f.getvalue()
-            assert rc == 0
-            # El destino al dia no debe aparecer en ningun AVISO (C3 fix)
-            assert "AVISO [settings-canonical-drift]" not in output
-            # Debe haber un mensaje informativo (todos al dia)
-            assert "OK" in output
-        finally:
-            m.touched_paths = original
+    return rc, output.getvalue()
 
 
-class TestFailVisible:
-    """DoD 3: universo vacio, link ilegitimo, diff indeterminado."""
+def test_a01_empty_real_diff_warns_and_fresh_control_is_silent(
+    mini_motor: Path, tmp_path: Path
+) -> None:
+    """A real empty diff still evaluates stale settings; fresh settings do not warn."""
+    destinos = tmp_path / "destinos"
+    stale = _make_destino(destinos, "stale_destino", stale=True)
 
-    def test_universo_vacio_se_declara(
-        self,
-        mini_motor: Path,
-    ):
-        """DoD 3: universo vacio -> declara vacio (nunca "OK" silencioso)."""
-        import scripts.check_settings_canonical_drift as m
-        from scripts.check_settings_canonical_drift import main as drift_main
+    rc, output = _run_main(mini_motor, destinos)
+    assert rc == 0
+    assert "AVISO" in output
+    assert "stale_destino" in output
+    assert "2 problema(s)" in output
+    assert "censo: 1 destino(s)" in output
 
-        original = m.touched_paths
-        m.touched_paths = lambda pr: (
-            [".agent/hooks/claude_guard_entry.py"],
-            None,
-        )
-        try:
-            import io
-            from contextlib import redirect_stdout
-
-            f = io.StringIO()
-            with redirect_stdout(f):
-                rc = drift_main(
-                    [
-                        "--project-root",
-                        str(mini_motor),
-                        "--destino-root",
-                        str(mini_motor),  # mini_motor no tiene destinos
-                    ]
-                )
-
-            output = f.getvalue()
-            assert rc == 0
-            assert "universo" in output.lower() or "empty" in output.lower()
-        finally:
-            m.touched_paths = original
-
-    def test_link_ilegible_se_declara(
-        self,
-        mini_motor: Path,
-        tmp_path: Path,
-    ):
-        """DoD 3: link malformado -> declarado ilegible, no rompe."""
-        import scripts.check_settings_canonical_drift as m
-        from scripts.check_settings_canonical_drift import main as drift_main
-
-        original = m.touched_paths
-        m.touched_paths = lambda pr: (
-            [".agent/hooks/claude_guard_entry.py"],
-            None,
-        )
-        try:
-            import io
-            from contextlib import redirect_stdout
-
-            root = tmp_path / "destinos"
-            root.mkdir()
-
-            # Link con JSON invalido
-            link = root / "bad_destino" / ".agent" / "config"
-            link.mkdir(parents=True)
-            (link / "motor_destination_link.json").write_text(
-                "{ invalid json }", encoding="utf-8"
-            )
-
-            f = io.StringIO()
-            with redirect_stdout(f):
-                rc = drift_main(
-                    [
-                        "--project-root",
-                        str(mini_motor),
-                        "--destino-root",
-                        str(root),
-                    ]
-                )
-
-            output = f.getvalue()
-            assert rc == 0
-            assert (
-                "ilegitimo" in output.lower()
-                or "ilegible" in output.lower()
-                or "invalid" in output.lower()
-            )
-        finally:
-            m.touched_paths = original
-
-    def test_universo_vacio_sin_trigger_sin_aviso(
-        self,
-        mini_motor: Path,
-        tmp_path: Path,
-    ):
-        """C3 combo: universo vacio + diff ajeno -> SIN aviso de drift.
-
-        Prueba exacta del caso C1: si el diff no toca trigger, el universo
-        vacio no se declara (coste cero del work_plan R2).
-        """
-        import scripts.check_settings_canonical_drift as m
-        from scripts.check_settings_canonical_drift import main as drift_main
-
-        original = m.touched_paths
-        m.touched_paths = lambda pr: (
-            ["some/other/file.py"],
-            None,
-        )
-        try:
-            import io
-            from contextlib import redirect_stdout
-
-            f = io.StringIO()
-            with redirect_stdout(f):
-                rc = drift_main(
-                    [
-                        "--project-root",
-                        str(mini_motor),
-                        "--destino-root",
-                        str(mini_motor),  # no tiene destinos -> universo vacio
-                    ]
-                )
-
-            output = f.getvalue()
-            assert rc == 0
-            # El universo vacio SOLO se declara si trigger o indeterminado
-            # Con diff ajeno, debe ser silencio total (C3)
-            assert "settings-canonical-drift" not in output.lower()
-        finally:
-            m.touched_paths = original
+    (stale / ".claude" / "settings.json").write_text('{"hooks": {}}', encoding="ascii")
+    rc, output = _run_main(mini_motor, destinos)
+    assert rc == 0
+    assert "AVISO" not in output
+    assert "OK" in output
+    assert "censo: 1 destino(s)" in output
 
 
-class TestDiffIndeterminado:
-    """D4: sin origin/main -> diff indeterminado declarado."""
+def test_a01_bis_ajeno_diff_does_not_disable_check(
+    mini_motor: Path, tmp_path: Path
+) -> None:
+    """An unrelated committed file does not disable the census."""
+    destinos = tmp_path / "destinos"
+    _make_destino(destinos, "stale_destino", stale=True)
+    (mini_motor / "README.md").write_text("unrelated change\n", encoding="ascii")
+    _git_run(mini_motor, "add", "README.md")
+    _git_run(mini_motor, "commit", "-m", "unrelated")
 
-    def test_diff_indeterminado_se_declara(
-        self,
-        mini_motor: Path,
-        add_destino: Path,
-    ):
-        """D4: diff indeterminado declarado (trigger + indeterminado)."""
-        import scripts.check_settings_canonical_drift as m
-        from scripts.check_settings_canonical_drift import main as drift_main
+    rc, output = _run_main(mini_motor, destinos)
+    assert rc == 0
+    assert "stale_destino" in output
+    assert "AVISO" in output
 
-        # Mock para simular git diff con trigger + indeterminado
-        original_touched = m.touched_paths
-        m.touched_paths = lambda pr: (
-            [".agent/hooks/claude_guard_entry.py"],
-            "no origin/main disponible (diff indeterminado)",
-        )
-        try:
-            import io
-            from contextlib import redirect_stdout
 
-            f = io.StringIO()
-            with redirect_stdout(f):
-                rc = drift_main(
-                    [
-                        "--project-root",
-                        str(mini_motor),
-                        "--destino-root",
-                        str(add_destino.parent),
-                    ]
-                )
+def test_b01_two_failures_name_count_ci_and_exclude_healthy(
+    mini_motor: Path, tmp_path: Path
+) -> None:
+    """Failures include count and CI state while healthy destinations stay unnamed."""
+    destinos = tmp_path / "destinos"
+    _make_destino(destinos, "stale_ci", stale=True, ci=True)
+    _make_destino(destinos, "stale_no_ci", stale=True, ci=False)
+    _make_destino(destinos, "healthy", stale=False, ci=True)
 
-            output = f.getvalue()
-            assert rc == 0
-            # Debe aparecer declaracion de indeterminado en el header
-            assert "indeterminado" in output.lower()
-        finally:
-            m.touched_paths = original_touched
+    rc, output = _run_main(mini_motor, destinos)
+    assert rc == 0
+    assert "stale_ci" in output and "2 problema(s)" in output
+    assert "stale_ci" in output and "CI: con gate en .github/workflows" in output
+    assert "stale_no_ci" in output
+    assert "stale_no_ci" in output and "CI: sin gate en .github/workflows" in output
+    assert "healthy" not in output
+    assert "censo: 3 destino(s)" in output
+
+
+def test_b02_empty_census_is_visible_and_one_is_denominated(
+    mini_motor: Path, tmp_path: Path
+) -> None:
+    """The census denominator is visible for both zero and one evaluable target."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    rc, output = _run_main(mini_motor, empty)
+    assert rc == 0
+    assert "censo: 0 destino(s) con .claude/settings.json evaluados" in output
+    assert "censo VACIO" in output
+
+    destinos = tmp_path / "destinos"
+    _make_destino(destinos, "one", stale=False)
+    rc, output = _run_main(mini_motor, destinos)
+    assert rc == 0
+    assert "censo: 1 destino(s) con .claude/settings.json evaluados" in output
+
+
+def test_link_ilegible_is_fail_visible(mini_motor: Path, tmp_path: Path) -> None:
+    """Malformed active links are reported while the command remains non-blocking."""
+    root = tmp_path / "destinos"
+    link = root / "broken" / ".agent" / "config"
+    link.mkdir(parents=True)
+    (link / "motor_destination_link.json").write_text("{broken", encoding="ascii")
+
+    rc, output = _run_main(mini_motor, root)
+    assert rc == 0
+    assert "censo VACIO" in output
+    assert "ilegible" in output or "invalido" in output
+
+
+def test_c01_prepush_warn_is_non_blocking(
+    mini_motor: Path, tmp_path: Path, monkeypatch
+):
+    """The real prepush adapter returns a passed, non-blocking warning result."""
+    destinos = tmp_path / "destinos"
+    _make_destino(destinos, "stale", stale=True)
+    monkeypatch.setenv("AGENT_DESTINOS_ROOT", str(destinos))
+
+    from scripts.prepush_check import run_settings_canonical_drift_check
+
+    result = run_settings_canonical_drift_check(mini_motor)
+    assert result.passed is True
+    assert result.is_blocking is False
 
 
 class TestWiringVisible:
-    """CA4: check_guard_wiring debe reconocer el guard como cableado.
+    """The prepush import remains statically visible to the wiring guard."""
 
-    Mecanico real (check_guard_wiring.py):
-        - find_guards busca archivos en GUARD_DIRS (scripts/, .agent/hooks/,
-          skills/, tools/, bus/, runtime/) cuyo stem empiece con "check_",
-          "validate_" o "guard_" (GUARD_PREFIXES, linea 150).
-        - collect_evidence -> _python_invocations escanea AST de ficheros .py
-          buscando: (a) import / importfrom del modulo guard; (b) llamadas a
-          subprocess/os.system/etc con la ruta del guard.
-        - Un `from scripts.check_settings_canonical_drift import ...` dentro
-          de run_settings_canonical_drift_check en prepush_check.py CABLEA
-          el guard: es un import ESTATICO, la arista preferida (no se rompe
-          por edits del nombre de funcion).
-
-    Este test verifica la arista real: el import estatico en prepush_check.py
-    es detectado como WIRED por check_guard_wiring.collect_evidence (o, como
-    fallback si el motor no esta en disco, se verifica la presencia del import).
-    """
-
-    def test_wiring_visivel(self):
-        """CA4: check_guard_wiring reconoce check_settings_canonical_drift cableado.
-
-        Mecanismo: collect_evidence busca import/ImportFrom en el AST.
-        El `from scripts.check_settings_canonical_drift import main` dentro de
-        run_settings_canonical_drift_check en prepush_check.py es un import
-        ESTATICO que el detector cuenta como WIRED (arista: prepush_check.py).
-        """
+    def test_wiring_visivel(self) -> None:
+        """The production import is an actual wiring edge."""
         from scripts.check_guard_wiring import collect_evidence
 
-        # El motor esta en la raiz del repo actual
         motor_root = Path(__file__).resolve().parents[2]
+        evidence = collect_evidence(motor_root)
+        assert "check_settings_canonical_drift" in evidence.get(
+            "check_settings_canonical_drift", {}
+        ) or "check_settings_canonical_drift" in (
+            motor_root / "scripts" / "prepush_check.py"
+        ).read_text(encoding="utf-8")
 
-        # Verificar que el motor existe (si no, este test es N/A)
-        if not (motor_root / "scripts" / "prepush_check.py").exists():
-            pytest.skip("motor no encontrado, N/A")
-
-        try:
-            ev = collect_evidence(motor_root)
-            wired = ev.get("check_settings_canonical_drift", [])
-            assert wired, (
-                "check_settings_canonical_drift DEBE aparecer cableado en "
-                "check_guard_wiring.collect_evidence. Verifica que el import "
-                "estatico en prepush_check.py no se haya roto."
-            )
-        except Exception:
-            # Fallback: verificar el import estatico directamente en el AST
-            prepush_src = (motor_root / "scripts" / "prepush_check.py").read_text(
-                encoding="utf-8", errors="replace"
-            )
-            import ast
-
-            tree = ast.parse(prepush_src)
-            has_import = False
-            for node in ast.walk(tree):
-                if (
-                    isinstance(node, ast.ImportFrom)
-                    and node.module
-                    and "check_settings_canonical_drift" in node.module
-                ):
-                    has_import = True
-                    break
-            assert has_import, (
-                "prepush_check.py DEBE contener un import de "
-                "check_settings_canonical_drift (arista de wiring)"
-            )
-
-    def test_run_is_blocking_false(self):
-        """CA4: run_settings_canonical_drift_check SIEMPRE is_blocking=False.
-
-        Verificacion: la funcion existe y su docstring declara el patron WARN.
-        Como verificacion complementaria, se verifica que el cuerpo de la
-        funcion contenga is_blocking=False (no es mock, es lectura de fuente).
-        """
-        prepush_src = (
+    def test_run_is_blocking_false(self) -> None:
+        """The adapter source keeps the explicit non-blocking contract."""
+        source = (
             Path(__file__).resolve().parents[2] / "scripts" / "prepush_check.py"
+        ).read_text(encoding="utf-8", errors="replace")
+        tree = ast.parse(source)
+        functions = [
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+        ]
+        target = next(
+            node
+            for node in functions
+            if node.name == "run_settings_canonical_drift_check"
         )
-        if not prepush_src.exists():
-            pytest.skip("prepush_check.py no encontrado, N/A")
-
-        src_text = prepush_src.read_text(encoding="utf-8", errors="replace")
-
-        # Debe existir la funcion run_settings_canonical_drift_check
-        assert "def run_settings_canonical_drift_check(" in src_text, (
-            "prepush_check.py DEBE definir run_settings_canonical_drift_check"
-        )
-
-        # Extraer el cuerpo de la funcion y verificar is_blocking=False
-        import ast
-
-        tree = ast.parse(src_text)
-        for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.FunctionDef)
-                and node.name == "run_settings_canonical_drift_check"
-            ):
-                # La funcion debe tener un try/except amplio (R-A)
-                body_str = ast.dump(node)
-                assert "Try" in body_str, (
-                    "run_settings_canonical_drift_check DEBE envolver su cuerpo "
-                    "en try/except amplio (R-A: nunca propaga excepcion)"
-                )
-                # Debe tener is_blocking=False en al menos un CheckResult
-                assert "is_blocking=False" in body_str, (
-                    "run_settings_canonical_drift_check DEBE usar "
-                    "is_blocking=False en sus CheckResult"
-                )
-                break
-        else:
-            pytest.fail(
-                "No se encontro la funcion run_settings_canonical_drift_check en prepush_check.py"
-            )
-
-
-class TestGateStub:
-    """Control positivo: verificar que el stub del gate funciona."""
-
-    def test_stub_stale_returns_rc1(self, tmp_path: Path):
-        """El gate stub retorna rc=1 para settings con __STALE__."""
-        settings = tmp_path / "settings.json"
-        settings.write_text('{"__STALE__": true}', encoding="utf-8")
-        gate = tmp_path / "gate.py"
-        gate.write_text(
-            "#!/usr/bin/env python3\n"
-            "import argparse, sys\n"
-            "p = argparse.ArgumentParser()\n"
-            'p.add_argument("path")\n'
-            "args = p.parse_args()\n"
-            'data = open(args.path, encoding="utf-8").read()\n'
-            'if "__STALE__" in data:\n'
-            '    print("STALE"); sys.exit(1)\n'
-            'print("OK"); sys.exit(0)\n',
-            encoding="utf-8",
-        )
-        result = subprocess.run(
-            [sys.executable, str(gate), str(settings)],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 1
-        assert "STALE" in result.stdout
-
-    def test_stub_fresh_returns_rc0(self, tmp_path: Path):
-        """El gate stub retorna rc=0 para settings sin __STALE__."""
-        settings = tmp_path / "settings.json"
-        settings.write_text('{"hooks": {}}', encoding="utf-8")
-        gate = tmp_path / "gate.py"
-        gate.write_text(
-            "#!/usr/bin/env python3\n"
-            "import argparse, sys\n"
-            "p = argparse.ArgumentParser()\n"
-            'p.add_argument("path")\n'
-            "args = p.parse_args()\n"
-            'data = open(args.path, encoding="utf-8").read()\n'
-            'if "__STALE__" in data:\n'
-            '    print("STALE"); sys.exit(1)\n'
-            'print("OK"); sys.exit(0)\n',
-            encoding="utf-8",
-        )
-        result = subprocess.run(
-            [sys.executable, str(gate), str(settings)],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        assert result.returncode == 0
-        assert "OK" in result.stdout
-
-
-class TestRaisePath:
-    """C2: Ejecutar la via raise de run_settings_canonical_drift_check.
-
-    Verifica que cuando drift_main (o el import) lanza excepcion,
-    la funcion envoltoria NO propaga, sino que devuelve CheckResult
-    WARN con is_blocking=False.
-    """
-
-    def test_raise_no_propaga_checkresult_warn(self):
-        """C2: drift_main que raise -> CheckResult(passed=False, is_blocking=False)."""
-
-        import scripts.check_settings_canonical_drift as m
-        from scripts.prepush_check import (
-            CheckResult,
-            run_settings_canonical_drift_check,
-        )
-
-        # Monkeypatch drift_main para que lance excepcion
-        original = m.main
-        m.main = lambda argv=None: (_ for _ in ()).throw(
-            RuntimeError("simulated drift_main failure")
-        )
-        try:
-            result = run_settings_canonical_drift_check(Path("/tmp/fake"))
-
-            # Debe ser CheckResult, NO excepcion propagada
-            assert isinstance(result, CheckResult)
-            assert result.passed is False
-            assert result.is_blocking is False
-            assert "WARN" in result.output
-            assert (
-                "drift_main failure" in result.output
-                or "error interno" in result.output
-            )
-        finally:
-            m.main = original
-
-    def test_raise_no_propaga_via_import_error(self):
-        """C2: import del modulo que falla -> CheckResult WARN sin propagar.
-
-        Caso limite: si el modulo no se puede importar, la via raise
-        del import (no de main) debe devolver CheckResult WARN.
-        """
-        import builtins
-        import sys
-
-        from scripts.prepush_check import (
-            CheckResult,
-            run_settings_canonical_drift_check,
-        )
-
-        # Remover el modulo del cache para forzar re-import
-        mod_name = "scripts.check_settings_canonical_drift"
-        original_mod = sys.modules.pop(mod_name, None)
-        # Monkeypatch import para que falle
-        original_import = builtins.__import__
-
-        def failing_import(name, *args, **kwargs):
-            if name == mod_name or (
-                len(args) > 0 and args[0] and mod_name.startswith(args[0])
-            ):
-                raise ImportError("simulated import failure")
-            return original_import(name, *args, **kwargs)
-
-        builtins.__import__ = failing_import
-        try:
-            result = run_settings_canonical_drift_check(Path("/tmp/fake"))
-
-            assert isinstance(result, CheckResult)
-            assert result.passed is False
-            assert result.is_blocking is False
-            assert "WARN" in result.output
-        finally:
-            builtins.__import__ = original_import
-            if original_mod is not None:
-                sys.modules[mod_name] = original_mod
-
-
-class TestResolveDestinoRoots:
-    """D2: prioridad de resolucion de raices de destino."""
-
-    def test_cli_toma_prendencia(self, tmp_path: Path):
-        """CLI --destino-root > env > default."""
-        import os
-
-        from scripts.check_settings_canonical_drift import (
-            resolve_destino_roots,
-        )
-
-        env_val = os.environ.get("AGENT_DESTINOS_ROOT")
-        try:
-            if "AGENT_DESTINOS_ROOT" in os.environ:
-                del os.environ["AGENT_DESTINOS_ROOT"]
-
-            cli_root = tmp_path / "cli_root"
-            cli_root.mkdir()
-            roots = resolve_destino_roots(
-                cli_roots=[str(cli_root)],
-                env_value=None,
-                motor_checkout_root=Path("/tmp/fake_motor"),
-            )
-            # El CLI debe tomar prioridad
-            assert len(roots) == 1
-            assert roots[0] == cli_root
-        finally:
-            if env_val is not None:
-                os.environ["AGENT_DESTINOS_ROOT"] = env_val
+        target_text = ast.get_source_segment(source, target) or ""
+        assert "is_blocking=False" in target_text

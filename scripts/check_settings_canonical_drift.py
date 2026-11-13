@@ -1,29 +1,25 @@
 #!/usr/bin/env python3
-r"""Settings canonical drift check - prepush WARN for hook drift (WOT-2026-129l).
+r"""Census destination settings drift and emit a non-blocking WARN.
 
 Before (Pre-condiciones):
-    - ``project_root`` (motor checkout) resoluble desde ``cwd`` o CLI.
-    - ``gate_script`` apunta a ``scripts/check_claude_settings_portability.py``
-      del motor (lectura estatica, nunca ejecuta comandos de destino).
+    - ``project_root`` (motor checkout) is resolvable from ``cwd`` or CLI.
+    - The gate script is in the motor and reads destination settings statically.
 
 During (Proceso y Recursos):
-    - Lee ``git diff --name-only origin/main...HEAD`` en el motor.
-    - Si el diff toca ``.agent/hooks/claude_guard_entry.py`` o
-      ``scripts/check_claude_settings_portability.py``: dispara evaluacion.
-    - Barredo universos de destino desde raices canonicas (D2: cli > env > default).
-    - Por cada destino resoluble: corre el gate contra su ``settings.json``.
-    - Compose aviso NOMBRADO con destinos fallidos + comando de resync.
+    - Census destinations on every execution using D2 root precedence
+      (CLI > ``AGENT_DESTINOS_ROOT`` > default), independent of git diff.
+    - Run the sole destination subprocess gate for each existing settings file,
+      count violation lines, and inspect workflows statically for CI coverage.
 
 After (Post-condiciones y Errores):
-    - Imprime bloque ``[settings-canonical-drift] WARN ...`` si hay alertas.
-    - Declara universo vacio, links ilegibles, diff indeterminado (fail-visible).
-    - **rc 0 siempre** (salvo error interno del script): es un WARN, nunca bloquea.
-    - Nunca lanza excepcion no capturada al cliente (prepush_check envuelve en
-      try/except amplio con `is_blocking=False`).
+    - Always print the census denominator; empty census and unreadable links are
+      fail-visible, never silent.
+    - Name each failing destination with problem count, CI status, and resync
+      command; healthy destinations are not named.
+    - Return rc 0 in all expected cases, including WARNs and internal errors.
+      This remains a WARN and never becomes blocking through ``prepush_check``.
 
-NOTA: En topologia de worktrees, el default (`parents[1].parent`) puede no
-alcanzar el destino activo y que el remedio es `--destino-root` o la env
-`AGENT_DESTINOS_ROOT`.
+The destination is never asked to execute a command or resync itself.
 """
 
 from __future__ import annotations
@@ -36,10 +32,6 @@ from collections.abc import Sequence
 from pathlib import Path
 
 
-# WOT-2026-152b-1: the link is read through the BOM-tolerant helper that
-# prefix_resolver loads by path. If the ``_read_link`` name cannot be imported
-# (absent, renamed or raising on access) the link counts as unreadable
-# (fail-closed), never a traceback and never a pass.
 try:
     try:
         from scripts.prefix_resolver import _read_link
@@ -49,57 +41,18 @@ except Exception as _import_exc:  # fail-closed: nothing may escape
     _READ_LINK_IMPORT_FAILURE = f"import: {_import_exc}"
 
     def _read_link(link_path: Path) -> tuple[dict | None, str | None]:
+        """Report that the link reader could not be imported."""
         return None, _READ_LINK_IMPORT_FAILURE
 
 
-# Trigger: ficheros cuya modificacion puede alterar comandos canonicos de hooks.
-TRIGGER_PATHS: frozenset[str] = frozenset(
-    {
-        ".agent/hooks/claude_guard_entry.py",
-        "scripts/check_claude_settings_portability.py",
-    }
-)
-
-# Ruta al gate que valida settings.json por destino.
 _GATE_SCRIPT = "scripts/check_claude_settings_portability.py"
-
-
-def touched_paths(project_root: Path) -> tuple[list[str], str | None]:
-    """`git diff --name-only origin/main...HEAD` en project_root.
-
-    Returns (paths, motive) donde motive != None declara indeterminado
-    (sin origin/main, git fallo) -> fail-visible (D4).
-    """
-    try:
-        result = subprocess.run(
-            ["git", "diff", "--name-only", "origin/main...HEAD"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            timeout=30,
-            cwd=str(project_root),
-        )
-        if result.returncode != 0:
-            # origin/main no existe o git fallo -> indeterminado
-            return [], "no origin/main disponible (diff indeterminado)"
-        paths = [p for p in result.stdout.strip().splitlines() if p]
-        return paths, None
-    except subprocess.TimeoutExpired:
-        return [], "timeout ejecutando git diff (indeterminado)"
-    except OSError:
-        return [], "git no disponible (indeterminado)"
-
-
-def is_trigger(touched: Sequence[str]) -> bool:
-    """True si alguna ruta normalizada esta en TRIGGER_PATHS."""
-    touched_set = {Path(p).as_posix() for p in touched}
-    return bool(touched_set & TRIGGER_PATHS)
 
 
 def _try_root(path_str: str) -> Path | None:
     """Resolve a path string; return Path if dir exists, else None."""
     try:
-        p = Path(path_str).resolve()
-        return p if p.is_dir() else None
+        path = Path(path_str).resolve()
+        return path if path.is_dir() else None
     except (OSError, ValueError):
         return None
 
@@ -109,106 +62,100 @@ def resolve_destino_roots(
     env_value: str | None,
     motor_checkout_root: Path,
 ) -> list[Path]:
-    """D2: cli > AGENT_DESTINOS_ROOT (os.pathsep) > padre del checkout.
-
-    Devuelve lista NO vacia de Path, o lista vacia si nada resuelve.
-    """
-    # 1. CLI --destino-root (repetible)
+    """Resolve roots using D2 precedence: CLI, env, then motor parent."""
     if cli_roots:
-        roots = [_try_root(r) for r in cli_roots]
-        valid = [r for r in roots if r is not None]
+        roots = [_try_root(value) for value in cli_roots]
+        valid = [root for root in roots if root is not None]
         if valid:
             return valid
 
-    # 2. Env AGENT_DESTINOS_ROOT (separada por os.pathsep)
     if env_value:
-        roots = []
-        for part in env_value.split(os.pathsep):
-            p = _try_root(part.strip())
-            if p is not None:
-                roots.append(p)
-        if roots:
-            return roots
+        roots = [_try_root(part.strip()) for part in env_value.split(os.pathsep)]
+        valid = [root for root in roots if root is not None]
+        if valid:
+            return valid
 
-    # 3. Default: padre del checkout del motor (topologia worktrees)
     default = motor_checkout_root.parent
-    if default.is_dir():
-        return [default]
-
-    return []
+    return [default] if default.is_dir() else []
 
 
 def discover_destinos(
     roots: Sequence[Path],
 ) -> tuple[list[Path], list[str]]:
-    """Barredo <root>/*/.agent/config/motor_destination_link.json.
-
-    Returns (destinos_resolubles, problemas) - problemas declara links
-    ilegibles/JSON invalido (DoD 3); nunca excepcion no capturada.
-    """
+    """Discover linked destinations and expose unreadable links as problems."""
     destinos: list[Path] = []
     problemas: list[str] = []
-
     for root in roots:
         try:
-            # Buscar <root>/*/ (carpetas worktree) y luego verificar el JSON dentro
-            for worktree_dir in sorted(root.glob("*")):
-                if not worktree_dir.is_dir():
-                    continue
-                json_path = (
-                    worktree_dir / ".agent" / "config" / "motor_destination_link.json"
-                )
-                if not json_path.exists():
-                    continue
-                data, reason = _read_link(json_path)
-                if data is None:
-                    problemas.append(
-                        f"{json_path}: JSON invalido o ilegible ({reason})"
-                    )
-                    continue
-                try:
-                    dest_path = data.get("destination_root")
-                    if dest_path and Path(dest_path).is_dir():
-                        destinos.append(Path(dest_path))
-                    else:
-                        problemas.append(
-                            f"{json_path}: destination_root ausente o no es directorio"
-                        )
-                except OSError as exc:
-                    problemas.append(f"{json_path}: JSON invalido o ilegible ({exc})")
+            worktrees = sorted(root.glob("*"))
         except OSError:
             problemas.append(f"raiz {root}: acceso denegado o inexistente")
-
+            continue
+        for worktree_dir in worktrees:
+            if not worktree_dir.is_dir():
+                continue
+            json_path = (
+                worktree_dir / ".agent" / "config" / "motor_destination_link.json"
+            )
+            if not json_path.exists():
+                continue
+            data, reason = _read_link(json_path)
+            if data is None:
+                problemas.append(f"{json_path}: JSON invalido o ilegible ({reason})")
+                continue
+            try:
+                destination = data.get("destination_root")
+                destination_path = Path(destination) if destination else None
+                if destination_path is not None and destination_path.is_dir():
+                    destinos.append(destination_path)
+                else:
+                    problemas.append(
+                        f"{json_path}: destination_root ausente o no es directorio"
+                    )
+            except (OSError, TypeError, ValueError) as exc:
+                problemas.append(f"{json_path}: JSON invalido o ilegible ({exc})")
     return destinos, problemas
+
+
+def _ci_has_gate(destination: Path) -> bool:
+    """Return whether a destination workflow references the portability gate."""
+    workflows = destination / ".github" / "workflows"
+    try:
+        candidates = list(workflows.glob("*.yml")) + list(workflows.glob("*.yaml"))
+    except OSError:
+        return False
+
+    def workflow_has_gate(workflow: Path) -> bool:
+        """Read one workflow without allowing an inaccessible file to escape."""
+        try:
+            return "check_claude_settings_portability.py" in workflow.read_text(
+                encoding="utf-8", errors="replace"
+            )
+        except OSError:
+            return False
+
+    return any(workflow_has_gate(workflow) for workflow in candidates)
+
+
+def _count_violations(stdout: str) -> int:
+    """Count gate violation lines whose stripped form starts with ``- ``."""
+    return sum(line.strip().startswith("- ") for line in stdout.splitlines())
 
 
 def gate_failing_destinos(
     destinos: list[Path],
     gate_script: Path,
-) -> tuple[list[tuple[Path, str]], int, bool]:
-    """Por destino con settings.json: gate -> falla si rc!=0.
-
-    Args:
-        destinos: lista de raices de destino (repo_destino).
-        gate_script: ruta absoluta al script de gate del motor.
-
-    Returns:
-        (fallas, al_dia, gate_script_missing) donde fallas =
-        [(destino, resumen_linea), ...], al_dia = conteo de destinos que
-        pasaron el gate, y gate_script_missing = True si el gate script
-        no existe (fall-visible, no bloquea).
-    """
-    fallas: list[tuple[Path, str]] = []
-    al_dia: int = 0
-
+) -> tuple[list[tuple[Path, int, str, bool]], int, bool]:
+    """Run the real gate for settings files and return failures plus census."""
+    fallas: list[tuple[Path, int, str, bool]] = []
+    al_dia = 0
     if not gate_script.exists():
         return fallas, al_dia, True
 
-    for dest in destinos:
-        settings_path = dest / ".claude" / "settings.json"
+    for destino in destinos:
+        settings_path = destino / ".claude" / "settings.json"
         if not settings_path.exists():
-            continue  # sin settings -> no se puede evaluar, no se cuenta
-
+            continue
         try:
             result = subprocess.run(  # noqa: S603
                 [sys.executable, str(gate_script), str(settings_path)],
@@ -217,190 +164,105 @@ def gate_failing_destinos(
                 timeout=60,
             )
             if result.returncode != 0:
-                # Tomar la primera linea del stdout como resumen
-                stdout_lines = (result.stdout or "").strip().splitlines()
+                stdout = result.stdout or ""
+                violations = _count_violations(stdout) or 1
+                first_line = stdout.strip().splitlines()
                 summary = (
-                    stdout_lines[0]
-                    if stdout_lines
+                    first_line[0]
+                    if first_line
                     else f"gate fallo (rc={result.returncode})"
                 )
-                fallas.append((dest, summary))
+                fallas.append((destino, violations, summary, _ci_has_gate(destino)))
             else:
                 al_dia += 1
-        except (subprocess.TimeoutExpired, OSError):
-            fallas.append((dest, "gate NO EJECUTABLE (timeout/OSError)"))
-
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            fallas.append(
+                (destino, 1, f"gate NO EJECUTABLE ({exc})", _ci_has_gate(destino))
+            )
     return fallas, al_dia, False
 
 
 def build_warn(
-    failing: list[tuple[Path, str]],
-    al_dia: int,
-    universo_vacio: bool,
+    failing: list[tuple[Path, int, str, bool]],
+    census: int,
+    healthy: int,
     problemas_links: list[str],
-    diff_indeterminado: str | None,
     gate_script_missing: bool = False,
-) -> tuple[str, list[str]]:
-    """Compone el bloque NOMBRADO.
-
-    Returns (cabecera, lineas_destino) donde cabecera incluye el tag
-    [settings-canonical-drift] WARN y lineas_destino son las lineas de
-    detalle por destino (en rojo).
-    """
-    lines: list[str] = []
-
-    if universo_vacio:
-        lines.append(
-            "AVISO [settings-canonical-drift] (WOT-2026-129l): "
-            "diff toca trigger canonico, pero universo de destinos vacio."
-        )
-        if diff_indeterminado:
-            lines.append(
-                f"AVISO [settings-canonical-drift] (WOT-2026-129l): "
-                f"diff indeterminado: {diff_indeterminado}"
-            )
-        return "\n".join(lines), []
-
-    # Detalles por destino fallido
-    for dest, resumen in failing:
-        dest_name = dest.name if dest.name else str(dest)
-        lines.append(
-            f"AVISO [settings-canonical-drift] (WOT-2026-129l): "
-            f"{dest_name} - {resumen}\n"
-            f"  -> re-sync: python scripts/install_agent_system.py --sync --dest {dest}"
-        )
-
-    cabecera_parts: list[str] = [
-        f"[settings-canonical-drift] WARN (WOT-2026-129l): "
-        f"{len(failing)} destino(s) con settings.json NO pasa el gate canonico "
-        f"tras cambio en trigger."
+) -> list[str]:
+    """Build the always-visible census, warning, and link-problem lines."""
+    lines = [
+        f"[settings-canonical-drift] censo: {census} destino(s) con "
+        ".claude/settings.json evaluados."
     ]
-
-    if al_dia > 0:
-        cabecera_parts.append(f"{al_dia} destino(s) al dia.")
-
-    if problemas_links:
-        cabecera_parts.extend(f"  link ilegitimo: {p}" for p in problemas_links[:5])
-        if len(problemas_links) > 5:
-            cabecera_parts.append(
-                f"  ... y {len(problemas_links) - 5} problemas de link mas omitidos."
-            )
-
-    if diff_indeterminado:
-        cabecera_parts.append(f"  diff indeterminado: {diff_indeterminado}")
-
-    if gate_script_missing:
-        cabecera_parts.append(
-            "  gate script ausente: no se pudo evaluar ningun destino"
+    if census == 0:
+        lines.append(
+            "[settings-canonical-drift] WARN: censo VACIO (0 destinos evaluables)."
         )
-
-    return "\n".join(cabecera_parts), lines
+    elif not failing:
+        lines.append(
+            f"[settings-canonical-drift] OK: {healthy} destino(s) al dia de {census}."
+        )
+    else:
+        lines.append(
+            f"[settings-canonical-drift] WARN: {len(failing)} de {census} "
+            "destino(s) fallan el gate canonico."
+        )
+        for destino, count, summary, has_ci in failing:
+            ci_status = (
+                "CI: con gate en .github/workflows"
+                if has_ci
+                else "CI: sin gate en .github/workflows"
+            )
+            lines.append(
+                f"AVISO [settings-canonical-drift]: {destino.name} - "
+                f"{count} problema(s); {ci_status}; {summary}"
+            )
+            lines.append(
+                "  -> resync: python scripts/install_agent_system.py --sync --dest "
+                f"{destino}"
+            )
+    lines.extend(
+        f"[settings-canonical-drift] WARN: link ilegible: {problem}"
+        for problem in problemas_links
+    )
+    if gate_script_missing:
+        lines.append(
+            "[settings-canonical-drift] WARN: gate script ausente; no hay destinos evaluables."
+        )
+    return lines
 
 
 def main(argv: list[str] | None = None) -> int:
-    """rc 0 siempre salvo error interno (es un WARN, DoD 3).
+    """Census and report settings drift; return zero because this is a WARN.
 
-    CLI:
-        --destino-root: raiz alternativa para buscar destinos (repetible).
-        --project-root: raiz del motor (default: cwd).
+    Before: CLI roots and the motor checkout are available or defaultable.
+    During: discover linked destinations, run the gate only for static settings
+        files, and print census, failures, problem counts, and CI state.
+    After: return rc 0 for warnings and convert unexpected errors to a visible
+        internal-error line without blocking the caller.
     """
-    parser = argparse.ArgumentParser(
-        description="Settings canonical drift check (WOT-2026-129l)"
-    )
-    parser.add_argument(
-        "--destino-root",
-        action="append",
-        default=None,
-        help="Raiz para buscar destinos (repetible).",
-    )
-    parser.add_argument(
-        "--project-root",
-        type=Path,
-        default=None,
-        help="Raiz del checkout del motor (default: cwd).",
-    )
-
+    parser = argparse.ArgumentParser(description="Settings canonical drift census")
+    parser.add_argument("--destino-root", action="append", default=None)
+    parser.add_argument("--project-root", type=Path, default=None)
     try:
         args = parser.parse_args(argv)
-        project_root = args.project_root or Path.cwd()
-        motor_checkout_root = project_root.resolve()
-
-        # Resolver gate script
-        gate_script = motor_checkout_root / _GATE_SCRIPT
-
-        # Paso 1: touched_paths (coste minimo primero)
-        touched, diff_motive = touched_paths(motor_checkout_root)
-
-        # Paso 2: decidir dispara/no-dispara ANTES de tocar universo/gate
-        # (a) motive (indeterminado) -> procede a evaluar/declarar (D4)
-        # (b) not motive and not is_trigger -> return 0 SILENCIOSO (coste cero)
-        # (c) trigger -> evalua universo/gate y declara todo (C1 fix)
-        if not diff_motive and not is_trigger(touched):
-            return 0
-
-        # Paso 3: resolver universo de destinos (solo si trigger o indeterminado)
-        destino_roots = resolve_destino_roots(
+        motor_root = (args.project_root or Path.cwd()).resolve()
+        gate_script = motor_root / _GATE_SCRIPT
+        roots = resolve_destino_roots(
             args.destino_root,
             os.environ.get("AGENT_DESTINOS_ROOT"),
-            motor_checkout_root,
+            motor_root,
         )
-
-        if not destino_roots:
-            # Universo vacio declarado (fail-visible)
-            header, _ = build_warn([], 0, True, [], diff_motive, False)
-            print(header)
-            return 0
-
-        destinos, problemas_links = discover_destinos(destino_roots)
-
-        # Si no hay destinos resolubles y no hay problemas, universo vacio
-        if not destinos and not problemas_links:
-            header, _ = build_warn([], 0, True, [], diff_motive, False)
-            print(header)
-            return 0
-
-        # Paso 4: ejecutar gate contra cada destino (siempre que haya destinos)
-        fallas, al_dia, gate_missing = gate_failing_destinos(destinos, gate_script)
-
-        # Paso 5: componer y emitir aviso
-        if not is_trigger(touched):
-            # No es trigger, pero diff_motive existe (indeterminado) o problemas_links
-            header, _ = build_warn(
-                [], 0, False, problemas_links, diff_motive, gate_missing
-            )
-            print(header)
-            return 0
-
-        if fallas:
-            # Hay destinos fallidos -> imprimir aviso completo
-            header, details = build_warn(
-                fallas, al_dia, False, problemas_links, diff_motive, gate_missing
-            )
-            print(header)
-            for d in details:
-                print(d)
-        elif problemas_links or diff_motive:
-            # Solo problemas de link o diff indeterminado -> declarar
-            header, _ = build_warn(
-                [], 0, False, problemas_links, diff_motive, gate_missing
-            )
-            print(header)
-        elif al_dia > 0:
-            # Al menos algunos destinos al dia -> mensaje OK
-            print(
-                f"[settings-canonical-drift] OK (WOT-2026-129l): "
-                f"{al_dia} destino(s) al dia tras cambio en trigger."
-            )
-        else:
-            # Trigger positivo, sin destinos, sin problemas, sin al dia
-            header, _ = build_warn([], 0, True, [], diff_motive, gate_missing)
-            print(header)
-
+        destinos, link_problems = discover_destinos(roots)
+        failures, healthy, gate_missing = gate_failing_destinos(destinos, gate_script)
+        evaluated = healthy + len(failures)
+        for line in build_warn(
+            failures, evaluated, healthy, link_problems, gate_missing
+        ):
+            print(line)
         return 0
-
     except Exception as exc:
-        # Error interno: declarar pero no bloquear
-        print(f"[settings-canonical-drift] ERROR INTERNO (WOT-2026-129l): {exc}")
+        print(f"[settings-canonical-drift] ERROR INTERNO: {exc}")
         return 0
 
 
