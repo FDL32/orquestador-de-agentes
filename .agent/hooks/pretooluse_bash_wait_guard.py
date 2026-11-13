@@ -13,6 +13,9 @@ from __future__ import annotations
 import json
 import re
 import sys
+from contextlib import suppress
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 
@@ -25,6 +28,9 @@ _SLEEP_RE = re.compile(r"\bsleep\b((?:\s+[0-9]+(?:\.[0-9]+)?[smhdSMHD]?)+)")
 _DURATION_RE = re.compile(r"([0-9]+(?:\.[0-9]+)?)([smhdSMHD]?)")
 _LOOP_RE = re.compile(r"\b(?:while|until)\b")
 _UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+TELEMETRY_FILE = Path(".agent/runtime/telemetry/tool_usage.jsonl")
+_detached_call_count = 0
+_AMPERSAND_RE = re.compile(r"(?<![&|>])&(?![&>])")
 
 
 def _fail(message: str) -> int:
@@ -118,6 +124,115 @@ def _read_payload() -> dict[str, Any]:
     return data
 
 
+def _without_arithmetic(command: str) -> str:
+    """Blank balanced shell arithmetic expressions.
+
+    Before: ``command`` is already stripped of quoted shell interiors.
+    During: scan from each ``$((`` opener while tracking nested parentheses.
+    After: return the text with each arithmetic expression replaced by a single
+    space, so operators inside them cannot be mistaken for detached launches.
+    Unclosed arithmetic text is blanked through the end conservatively.
+    """
+    result: list[str] = []
+    index = 0
+    while index < len(command):
+        if command.startswith("$((", index):
+            depth = 2
+            index += 3
+            while index < len(command) and depth:
+                if command[index] == "(":
+                    depth += 1
+                elif command[index] == ")":
+                    depth -= 1
+                index += 1
+            result.append(" ")
+            continue
+        result.append(command[index])
+        index += 1
+    return "".join(result)
+
+
+def _detect_detached_launch(command: str) -> str | None:
+    """Detect a detached launch in unquoted shell text.
+
+    Before: ``command`` is the Bash command from a validated tool payload.
+    During: remove quoted and arithmetic text, then match one detached-launch
+    signal while excluding shell operators and descriptor redirections.
+    After: return the stable signal name, or ``None`` when no signal matches.
+    Heredocs, comments and backticks are intentionally outside this detector.
+    """
+    outside = _outside_quotes(command)
+    searchable = _without_arithmetic(outside)
+    for signal, pattern in (
+        ("nohup", re.compile(r"\bnohup\b")),
+        ("setsid", re.compile(r"\bsetsid\b")),
+        ("disown", re.compile(r"\bdisown\b")),
+        ("start /b", re.compile(r"\bstart\s+/b\b", re.IGNORECASE)),
+        ("Start-Process", re.compile(r"\bStart-Process\b", re.IGNORECASE)),
+    ):
+        if pattern.search(searchable):
+            return signal
+    if _AMPERSAND_RE.search(searchable):
+        return "ampersand"
+    return None
+
+
+def _record_detached_launch(data: dict[str, Any], signal: str) -> None:
+    """Append one detached-launch usage row, allowing all I/O failures.
+
+    Before: ``data`` is a validated PreToolUse payload and ``signal`` is a
+    detector result.
+    During: increment the process-local call counter and append the exact
+    eight-field telemetry schema to the shared relative sink.
+    After: return without raising, including when the sink cannot be written.
+    """
+    global _detached_call_count
+    call_count = _detached_call_count
+    _detached_call_count += 1
+    row = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "topic": "tool_usage",
+        "signal": signal,
+        "source": "pretooluse_bash_wait_guard",
+        "tool": "Bash",
+        "context": f"detached_launch {signal}",
+        "session_id": data.get("session_id", "unknown"),
+        "call_count": call_count,
+    }
+    try:
+        TELEMETRY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with TELEMETRY_FILE.open("a", encoding="utf-8") as stream:
+            stream.write(json.dumps(row, ensure_ascii=False) + "\n")
+    except Exception:
+        return
+
+
+def _warn_detached_launch(data: dict[str, Any], signal: str) -> None:
+    """Warn about a detached launch without changing the hook decision.
+
+    Before: ``data`` and ``signal`` identify one detected Bash launch.
+    During: attempt telemetry and emit one Claude hook-specific JSON object.
+    After: return zero-equivalent control even if telemetry or stdout handling
+    raises; the warning is deliberately fail-open.
+    """
+    with suppress(Exception):
+        _record_detached_launch(data, signal)
+    with suppress(Exception):
+        print(
+            json.dumps(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "additionalContext": (
+                            "no habra notificacion al terminar; usa "
+                            "run_in_background o Monitor"
+                        ),
+                    }
+                }
+            )
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     """Decide whether a Bash tool call may wait in the foreground.
 
@@ -155,6 +270,10 @@ def main(argv: list[str] | None = None) -> int:
             "foreground loop wait exceeds limit; set run_in_background=true or "
             "use Monitor"
         )
+    with suppress(Exception):
+        signal = _detect_detached_launch(command)
+        if signal:
+            _warn_detached_launch(data, signal)
     return 0
 
 
