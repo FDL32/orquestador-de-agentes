@@ -5389,6 +5389,146 @@ class TestValidateJsonTotals:
         assert data["total_warnings"] == 0
 
 
+class TestValidateJsonProjectRoot:
+    """WOT-2026-044s: JSON identifies the resolved validation subject."""
+
+    @staticmethod
+    def _neutralize_validate(tmp_path, monkeypatch):
+        """Neutralize _handle_validate collaborators for JSON contract tests."""
+        import agent_controller
+
+        monkeypatch.setattr(agent_controller, "validate_state_files", lambda: {})
+        fake_work_plan = tmp_path / "work_plan.md"
+        fake_work_plan.write_text("# Plan\n", encoding="utf-8")
+        fake_collab = tmp_path / "collab"
+        fake_collab.mkdir()
+        monkeypatch.setattr(agent_controller, "WORK_PLAN", fake_work_plan)
+        monkeypatch.setattr(agent_controller, "get_collab_dir", lambda: fake_collab)
+        monkeypatch.setattr(
+            agent_controller, "_collect_deliverable_type_warnings", lambda x: {}
+        )
+        monkeypatch.setattr(agent_controller, "read_file", lambda x: "")
+        monkeypatch.setattr(agent_controller, "get_status", lambda x, y: "APPROVED")
+        monkeypatch.setattr(
+            agent_controller, "_check_scope_for_validate", lambda x, y: ([], [])
+        )
+        monkeypatch.setattr(agent_controller, "_check_bus_drift", lambda x, y: [])
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_invariants",
+            lambda x, y, z: {"errors": [], "warnings": []},
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_validate_contract_gap_coherence",
+            lambda x: ([], []),
+        )
+        mock_prose_module = type(
+            "MockProseModule",
+            (),
+            {
+                "validate_ticket_prose": staticmethod(
+                    lambda work_plan_path, collab_dir: {
+                        "warnings": [],
+                        "warning_count": 0,
+                    }
+                )
+            },
+        )()
+        monkeypatch.setitem(
+            sys.modules, "scripts.validate_ticket_prose", mock_prose_module
+        )
+        return agent_controller
+
+    def test_validate_json_emits_absolute_resolved_project_root(
+        self, tmp_path, monkeypatch
+    ):
+        """JSON publishes the exact absolute resolution used by validation."""
+        ac = self._neutralize_validate(tmp_path, monkeypatch)
+        supplied_root = tmp_path / "nested" / ".." / "subject"
+        expected = supplied_root.resolve()
+        monkeypatch.setattr(ac, "PROJECT_ROOT", supplied_root)
+
+        from io import StringIO
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            exit_code = ac._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old_stdout
+
+        data = json.loads(captured.getvalue())
+        assert exit_code == 0
+        assert isinstance(data["project_root"], str)
+        assert Path(data["project_root"]).is_absolute()
+        assert data["project_root"] == str(expected)
+        assert data["project_root"] != str(supplied_root)
+
+    def test_two_project_roots_produce_distinct_field_via_real_cli(self, tmp_path):
+        """The real CLI makes distinct roots distinguishable without its argv."""
+        roots = [tmp_path / "a" / "p", tmp_path / "b" / "p"]
+        values = []
+        for root in roots:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    ".agent/agent_controller.py",
+                    "--validate",
+                    "--json",
+                    "--no-heal",
+                    "--project-root",
+                    root.as_posix(),
+                ],
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+                check=False,
+            )
+            assert result.returncode in (0, 1), result.stderr
+            values.append(json.loads(result.stdout)["project_root"])
+
+        assert values[0] == str(roots[0].resolve())
+        assert values[1] == str(roots[1].resolve())
+        assert values[0] != values[1]
+        assert roots[0].name == roots[1].name
+
+    def test_existing_keys_unchanged_types_and_values(self, tmp_path, monkeypatch):
+        """Existing JSON keys remain compatible while project_root is added."""
+        ac = self._neutralize_validate(tmp_path, monkeypatch)
+        from io import StringIO
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            exit_code = ac._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old_stdout
+
+        data = json.loads(captured.getvalue())
+        existing_keys = {
+            "errors",
+            "warnings",
+            "total_errors",
+            "total_warnings",
+            "flt_versionable",
+        }
+        assert exit_code == 0
+        assert existing_keys <= data.keys()
+        assert isinstance(data["errors"], dict)
+        assert isinstance(data["warnings"], dict)
+        assert isinstance(data["total_errors"], int)
+        assert data["total_errors"] == 0
+        assert isinstance(data["total_warnings"], int)
+        assert data["total_warnings"] == 0
+        assert "flt_versionable" in data
+
+
 # ======================================================================
 # WOT-2026-019d: PII regression tests for the 12 str(exc)/{exc} sites
 # corrected to compose their detail via scope_gate._relativize_scope_path

@@ -6863,10 +6863,19 @@ def _collect_deliverable_type_warnings(plan_content: str) -> dict[str, list[str]
 def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: C901
     """Handle --validate flag.
 
+    Before: el validador resuelve el project_root activo para ejecutar sus
+        comprobaciones.
+    During: agrega los resultados de las comprobaciones y, en JSON, publica el
+        project_root absoluto resuelto que se valido.
+    After: devuelve 0 si no hay errores; el campo project_root JSON es aditivo.
+
     Aggregates many independent validators (state files, scope, bus drift,
     deliverable_type, ticket_prose). Each branch is simple; the function is intentionally
     a thin coordinator. Splitting it further would harm readability.
     """
+    # WOT-2026-044s: el sujeto validado es el mismo que resolvieron los
+    # validadores en esta corrida.
+    project_root = PROJECT_ROOT.resolve()
     errors = validate_state_files()
     warnings = {}
 
@@ -7046,6 +7055,8 @@ def _handle_validate(json_output: bool, no_heal: bool = False) -> int:  # noqa: 
         # WOT-2026-069a: denominador del gate de versionabilidad del FLT
         # (clave aditiva; None cuando el modulo del gate no esta disponible).
         output["flt_versionable"] = flt_gate
+        # WOT-2026-044s: clave aditiva; no altera el exit code ni claves previas.
+        output["project_root"] = str(project_root)
         print(json.dumps(output, indent=2))
     else:
         if total_errors == 0 and total_warnings == 0:
