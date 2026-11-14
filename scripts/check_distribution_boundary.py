@@ -36,6 +36,20 @@ STALE. This direction is deliberately NOT wired into pre-commit in this flight.
 2026-10-23: the `doc-optimization` entry was resolved via path (1) of the
 WOT-2026-043c criterion (`prompts/doc_optimization.md` entered
 MANIFEST.distribute) and removed from `_FROZEN_DEBT`; 13 entries remain frozen.
+
+Direction 3 (WOT-2026-043m, closure): every source file that TRAVELS is scanned
+for references to existing `prompts/` and `scripts/` artifacts. A reference is
+closed only when the referenced file also travels. The pre-existing census is
+frozen by reference at the declared cutoff. A NEW file citing an already frozen
+reference does not fail; hardening to frozen `(file, ref)` pairs is a proposal
+for a later ticket.
+
+Before: the manifest and git index define the published traveling set.
+During: closure resolves existing prompt/script references from every traveling
+source file using the published denominator.
+After: the guard reports the measured frontier and fails on an unclosed,
+unfrozen reference. Un fichero NUEVO que cite una ref ya congelada NO falla;
+endurecer a congelado por PAR (fichero,ref) es PROPUESTA de ticket posterior.
 """
 
 from __future__ import annotations
@@ -56,6 +70,110 @@ from check_distribution_agnostic import (
 
 
 MOTOR_ROOT = Path(__file__).resolve().parent.parent
+
+_CENSUS_CUTOFF = "2026-11-14"
+_REF_RX = re.compile(r"(?:prompts|scripts)/[A-Za-z0-9_./-]+\.(?:md|py|yaml)")
+_SOURCE_SUFFIXES = frozenset({".md", ".py", ".yaml", ".txt"})
+_FROZEN_TRAVEL_REFS: tuple[str, ...] = (
+    "prompts/_shared/artifact_ownership.md",
+    "prompts/_shared/finding_triage_protocol.md",
+    "prompts/_shared/loop_budget.md",
+    "prompts/_shared/loop_readiness.md",
+    "prompts/_shared/loop_run_log.md",
+    "prompts/_shared/memory_bootstrap.md",
+    "prompts/_shared/topology_artifact_locations.md",
+    "prompts/agents_md_optimization_4layer_loop.md",
+    "prompts/audit_autonomous_ticket_batch.md",
+    "prompts/audit_cf_ticket_contract.md",
+    "prompts/audit_goal_completion.md",
+    "prompts/audit_pipeline_codeonly.md",
+    "prompts/audit_portability_legacy_surface.md",
+    "prompts/audit_post_change_system_health.md",
+    "prompts/backlog_admit.md",
+    "prompts/backlog_triage.md",
+    "prompts/builder_invocation_contract.md",
+    "prompts/contract_formation_pipeline.md",
+    "prompts/ensemble_loop.md",
+    "prompts/escalate_to_motor.md",
+    "prompts/manager_orchestrator_loop.md",
+    "prompts/manager_orchestrator_loop_adapter_motor.md",
+    "prompts/manager_orchestrator_loop_backlog.md",
+    "prompts/memory_upload.md",
+    "prompts/orchestrator_autonomous_ticket_batch.md",
+    "prompts/orchestrator_child_dispatch_cross_claude.md",
+    "prompts/orchestrator_destination_batch.md",
+    "prompts/orchestrator_pipeline_codeonly.md",
+    "prompts/orchestrator_prepare_and_launch_ticket.md",
+    "prompts/orchestrator_session_bootstrap_design.md",
+    "prompts/orchestrator_session_close_full_audit.md",
+    "prompts/revisor_agent_filesystem_contract.md",
+    "prompts/session_hop.md",
+    "prompts/suite_optimization.md",
+    "prompts/t3_role_session_relief.md",
+    "scripts/archive_execution_log.py",
+    "scripts/backlog_db_compare.py",
+    "scripts/backlog_reconcile.py",
+    "scripts/batch_destination_controller.py",
+    "scripts/builder_agent.py",
+    "scripts/check_audit_report.py",
+    "scripts/check_backlog_admission.py",
+    "scripts/check_backlog_commits_landed.py",
+    "scripts/check_backlog_contract.py",
+    "scripts/check_batch_run_accounting.py",
+    "scripts/check_claude_settings_portability.py",
+    "scripts/check_deliverables_exist.py",
+    "scripts/check_destino_publish_ready.py",
+    "scripts/check_encoding_guard.py",
+    "scripts/check_flt_versionable.py",
+    "scripts/check_guard_wiring.py",
+    "scripts/check_loop_bundle_protocol.py",
+    "scripts/check_loop_execution.py",
+    "scripts/check_manager_role_for_suite.py",
+    "scripts/check_process_decision_search.py",
+    "scripts/check_reference_keys.py",
+    "scripts/check_role_models_distinct.py",
+    "scripts/check_roster_matches_acting_thread.py",
+    "scripts/check_skill_collisions.py",
+    "scripts/check_suite_freshness.py",
+    "scripts/check_ticket_nomenclature.py",
+    "scripts/check_worktree_topology.py",
+    "scripts/collect_session_state.py",
+    "scripts/collect_system_health.py",
+    "scripts/create_checkpoint.py",
+    "scripts/dedupe_audit_findings.py",
+    "scripts/discover_loops.py",
+    "scripts/discover_skills.py",
+    "scripts/encoding_guard.py",
+    "scripts/encoding_post_write_hook.py",
+    "scripts/ensemble_dispatch.py",
+    "scripts/filter_lens_output.py",
+    "scripts/find_similar_signals.py",
+    "scripts/flight_roster_writer.py",
+    "scripts/init_session_scratch.py",
+    "scripts/manager_review_bridge.py",
+    "scripts/measure_agents_md_units.py",
+    "scripts/memory_context.py",
+    "scripts/mutation_cycle.py",
+    "scripts/orquestador.py",
+    "scripts/pip_audit_project.py",
+    "scripts/pre_handoff_guard.py",
+    "scripts/prefix_resolver.py",
+    "scripts/preflight_closeout.py",
+    "scripts/preflight_codeonly_pipeline.py",
+    "scripts/prepush_check.py",
+    "scripts/reconcile_ticket.py",
+    "scripts/session_close_observations.py",
+    "scripts/session_closeout.py",
+    "scripts/suite_regression_report.py",
+    "scripts/sync_principal.py",
+    "scripts/test_selection.py",
+    "scripts/ticket_supervisor.py",
+    "scripts/tools/run_and_exit.py",
+    "scripts/validate_batch_dag.py",
+    "scripts/validate_contract_formation.py",
+    "scripts/validate_observations.py",
+    "scripts/work_plan_authority.py",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +431,104 @@ def audit_skill_citations(
     )
 
 
+def audit_travel_refs(
+    root: Path, frozen_refs: tuple[str, ...] | None = None
+) -> tuple[int, list[str]]:
+    """Audit closure from every traveling source file to motor artifacts.
+
+    Before: ``root`` is a motor tree with a non-empty manifest and a working
+        git denominator; ``frozen_refs`` optionally replaces the measured
+        baseline. The baseline is exactly the 98 references censused on
+        2026-11-14 and stored in ``_FROZEN_TRAVEL_REFS``.
+    During: expands the published denominator through ``build_denominator``,
+        scans traveling ``.md/.py/.yaml/.txt`` files, deduplicates references
+        per file, and keeps only references whose target exists on disk.
+        Existing references absent from the traveling set are violations unless
+        frozen. A NEW file citing a frozen reference does not fail; hardening
+        to frozen ``(file, ref)`` pairs is a proposal for a later ticket. Un
+        fichero NUEVO que cite una ref ya congelada NO falla; endurecer a
+        congelado por PAR (fichero,ref) es PROPUESTA de ticket posterior.
+    After: always publishes denominator and method. Returns 1 for a failed
+        denominator, no source files, an unexempt violation, or a stale frozen
+        reference, including a frozen reference whose target no longer exists
+        on disk (prompt deleted or constant typo); returns 0 for an inspected
+        source set with no such defect.
+    """
+    frozen = set(_FROZEN_TRAVEL_REFS if frozen_refs is None else frozen_refs)
+    n_entries, travels, err = build_denominator(root)
+    if err is not None:
+        return 1, [
+            f"[dist-boundary-closure] SKIP EXPLICITO: {err}; 0 ficheros fuente "
+            "auditados; NO es un PASS.",
+            f"[dist-boundary-closure] {n_entries} entradas -> 0 ficheros que viajan",
+        ]
+
+    source_files = [
+        rel for rel in travels if Path(rel).suffix.lower() in _SOURCE_SUFFIXES
+    ]
+    if not source_files:
+        return 1, [
+            "[dist-boundary-closure] SKIP EXPLICITO: 0 ficheros fuente en los "
+            "ficheros que viajan; NO es un PASS.",
+            f"[dist-boundary-closure] {n_entries} entradas -> {len(travels)} "
+            "ficheros que viajan",
+        ]
+
+    pairs: set[tuple[str, str]] = set()
+    missing: set[tuple[str, str]] = set()
+    for rel in source_files:
+        try:
+            text = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            text = ""
+        for ref in sorted(set(_REF_RX.findall(text))):
+            pair = (rel, ref)
+            if (root / ref).is_file():
+                pairs.add(pair)
+            else:
+                missing.add(pair)
+
+    travels_set = set(travels)
+    violations = sorted((file, ref) for file, ref in pairs if ref not in travels_set)
+    frozen_fired = {ref for _file, ref in violations if ref in frozen}
+    unexempt = [(file, ref) for file, ref in violations if ref not in frozen]
+    stale = sorted(ref for ref in frozen if ref not in frozen_fired)
+    out = [
+        f"[dist-boundary-closure] {n_entries} entradas -> {len(travels)} "
+        f"ficheros que viajan -> {len(source_files)} ficheros fuente -> "
+        f"{len(pairs)} pares (fichero,ref) -> {len({ref for _f, ref in pairs})} "
+        f"referencias distintas ({len(violations)} fuera del manifiesto, "
+        f"{len(frozen_fired)} congeladas)",
+        "[dist-boundary-closure] METODO: refs=(prompts|scripts)/[A-Za-z0-9_./-]+\\.(md|py|yaml); "
+        "dedupe POR FICHERO; solo refs existentes en disco; violacion = existe en "
+        "el motor y no esta en MANIFEST.distribute; cutoff congelado=_CENSUS_CUTOFF "
+        f"({_CENSUS_CUTOFF})",
+        f"[dist-boundary-closure] {len(missing)} citas filtradas por no existir en disco",
+    ]
+    if unexempt:
+        out.append(
+            "[dist-boundary-closure] ERROR: referencias existentes en el motor "
+            "pero ausentes de MANIFEST.distribute:"
+        )
+        out.extend(f"      {file} -> {ref}" for file, ref in unexempt)
+    if stale:
+        out.append(
+            "[dist-boundary-closure] ERROR: referencias STALE en "
+            "_FROZEN_TRAVEL_REFS; se eliminan de _FROZEN_TRAVEL_REFS cuando dejan "
+            "de reproducir la violacion:"
+        )
+        out.extend(f"      {ref}" for ref in stale)
+        out.append(
+            "  Revalidacion: python scripts/check_distribution_boundary.py "
+            "--motor-root ."
+        )
+        out.append(
+            "  Tests focales: python scripts/run_pytest_safe.py "
+            "tests/unit/test_check_distribution_boundary_closure.py"
+        )
+    return (1 if unexempt or stale else 0), out
+
+
 def _git_ls_files(root: Path, entry: str) -> tuple[int, list[str]]:
     """(returncode, matched tracked paths) for `git ls-files -- <entry>`."""
     git = shutil.which("git")
@@ -333,47 +549,59 @@ def _git_ls_files(root: Path, entry: str) -> tuple[int, list[str]]:
 
 
 def audit(root: Path) -> tuple[int, list[str]]:
-    """Return (exit_code, output_lines). Publishes denominator on every path."""
+    """Run direction 1 and closure, preserving direction-1 output verbatim.
+
+    Before: ``root`` is the motor tree selected by the existing CLI.
+    During: checks manifest entries first, then runs ``audit_travel_refs`` so
+        the default hook covers both frontier directions.
+    After: returns 1 when either direction fails and publishes both reports.
+    """
     out: list[str] = []
+    direction_one_code = 0
 
     entries = manifest_entries(root)
     if not entries:
         out.append("[dist-boundary] ERROR: MANIFEST.distribute is missing or empty")
         out.append("[dist-boundary] 0 entradas -> 0 ficheros (FAIL-CLOSED)")
-        return 1, out
+        direction_one_code = 1
+    else:
+        n_entries, files, err = build_denominator(root)
+        if err is not None:
+            out.append(f"[dist-boundary] ERROR: {err}")
+            out.append(
+                f"[dist-boundary] {n_entries} entradas -> 0 ficheros versionados "
+                "auditados (FAIL-CLOSED)"
+            )
+            direction_one_code = 1
+        else:
+            out.append(
+                f"[dist-boundary] {n_entries} entradas -> {len(files)} ficheros versionados "
+                "auditados"
+            )
 
-    n_entries, files, err = build_denominator(root)
-    if err is not None:
-        out.append(f"[dist-boundary] ERROR: {err}")
-        out.append(
-            f"[dist-boundary] {n_entries} entradas -> 0 ficheros versionados "
-            "auditados (FAIL-CLOSED)"
-        )
-        return 1, out
+            stale_entries: list[str] = []
+            for entry in entries:
+                rc, matched = _git_ls_files(root, entry)
+                if rc != 0:
+                    stale_entries.append(f"  {entry} (git ls-files failed, rc={rc})")
+                elif not matched:
+                    stale_entries.append(f"  {entry} (0 tracked files)")
 
-    out.append(
-        f"[dist-boundary] {n_entries} entradas -> {len(files)} ficheros versionados "
-        "auditados"
-    )
+            if stale_entries:
+                out.append(
+                    "[dist-boundary] ERROR: stale manifest entry (resolves to 0 tracked "
+                    "files = hole in the frontier):"
+                )
+                out.extend(stale_entries)
+                direction_one_code = 1
+            else:
+                out.append(
+                    "[dist-boundary] OK: all manifest entries resolve to tracked files."
+                )
 
-    stale_entries: list[str] = []
-    for entry in entries:
-        rc, matched = _git_ls_files(root, entry)
-        if rc != 0:
-            stale_entries.append(f"  {entry} (git ls-files failed, rc={rc})")
-        elif not matched:
-            stale_entries.append(f"  {entry} (0 tracked files)")
-
-    if stale_entries:
-        out.append(
-            "[dist-boundary] ERROR: stale manifest entry (resolves to 0 tracked "
-            "files = hole in the frontier):"
-        )
-        out.extend(stale_entries)
-        return 1, out
-
-    out.append("[dist-boundary] OK: all manifest entries resolve to tracked files.")
-    return 0, out
+    closure_code, closure_lines = audit_travel_refs(root)
+    out.extend(closure_lines)
+    return max(direction_one_code, closure_code), out
 
 
 def main(argv: list[str] | None = None) -> int:

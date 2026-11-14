@@ -102,12 +102,13 @@ def test_boundary_expands_directory(fake_motor: Path):
 
 
 # ---------------------------------------------------------------- T-BOUNDARY-PUBLICA
-def test_publishes_the_count(fake_motor: Path):
+def test_publishes_the_count(fake_motor: Path, monkeypatch: pytest.MonkeyPatch):
     _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\npkg/\n")
     _wb(fake_motor / "AGENTS.md", "hi\n")
     _wb(fake_motor / "pkg" / "a.py", "a\n")
     _wb(fake_motor / "pkg" / "b.py", "b\n")
     _commit_all(fake_motor)
+    monkeypatch.setattr(cdb, "_FROZEN_TRAVEL_REFS", ())
     code, lines = cdb.audit(fake_motor)
     assert code == 0
     assert any("2 entradas -> 3 ficheros" in ln for ln in lines), lines
@@ -140,13 +141,16 @@ def test_empty_manifest_fails(fake_motor: Path):
 
 
 # ---------------------------------------------------------------- T-BOUNDARY-INSIDE
-def test_tracked_file_inside_manifest_passes(fake_motor: Path):
+def test_tracked_file_inside_manifest_passes(
+    fake_motor: Path, monkeypatch: pytest.MonkeyPatch
+):
     """A tracked file covered by a manifest entry -> pass."""
     _wb(fake_motor / "MANIFEST.distribute", "AGENTS.md\npkg/\n")
     _wb(fake_motor / "AGENTS.md", "ok\n")
     _wb(fake_motor / "pkg" / "mod.py", "x = 1\n")
     _commit_all(fake_motor)
 
+    monkeypatch.setattr(cdb, "_FROZEN_TRAVEL_REFS", ())
     code, lines = cdb.audit(fake_motor)
     assert code == 0, "\n".join(lines)
 
@@ -175,3 +179,17 @@ def test_real_repo_is_green():
     joined = "\n".join(lines)
     assert "ficheros versionados auditados" in joined, joined
     assert code == 0, joined
+
+
+def test_default_audit_includes_closure(fake_motor: Path):
+    """The wired default path fails when a traveling source cites an absent ref."""
+    _wb(fake_motor / "MANIFEST.distribute", "src/\n")
+    _wb(fake_motor / "src" / "a.md", "prompts/orphan.md\n")
+    _wb(fake_motor / "prompts" / "orphan.md", "prompt\n")
+    _commit_all(fake_motor)
+
+    code, lines = cdb.audit(fake_motor)
+    text = "\n".join(lines)
+    assert code == 1
+    assert "[dist-boundary-closure]" in text
+    assert "src/a.md" in text and "prompts/orphan.md" in text
