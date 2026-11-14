@@ -711,15 +711,18 @@ def main(argv: list[str] | None = None) -> int:
     diagnostic = args.allow_diagnostic or os.environ.get("WORKTREE_GUARD_BYPASS") == "1"
 
     cwd = Path.cwd()
+    # Normalize arguments during parsing (WOT-2026-043r).
     motor_root = (
-        Path(args.motor_root)
+        Path(args.motor_root).resolve()
         if args.motor_root
         else prefix_resolver.discover_motor_root(cwd)
     )
     if motor_root is None:
         print("[ERROR] Cannot discover motor_root (use --motor-root)", file=sys.stderr)
         return 0 if diagnostic else 2
-    project_root = Path(args.project_root) if args.project_root else Path.cwd()
+    project_root = (
+        Path(args.project_root).resolve() if args.project_root else Path.cwd()
+    )
 
     exit_code, message = check_topology(args.ticket, cwd, motor_root, project_root)
 

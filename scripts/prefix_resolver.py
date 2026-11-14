@@ -892,8 +892,15 @@ def guard(ticket_or_project: str, cwd: Path, motor_root: Path) -> int:
 
 
 def _get_motor_root(args: argparse.Namespace) -> Path | None:
+    """Before: receive the optional motor root argument.
+
+    During: normalize it while parsing (WOT-2026-043r) so relative and
+    absolute forms of the same root produce the same return code.
+
+    After: return a resolved motor root or discover it from the current path.
+    """
     if args.motor_root:
-        return Path(args.motor_root)
+        return Path(args.motor_root).resolve()
     return discover_motor_root(Path.cwd())
 
 
@@ -910,7 +917,7 @@ def cmd_resolve(args: argparse.Namespace) -> int:
         print(f"[ERROR] Malformed prefix: {prefix}", file=sys.stderr)
         return 2
     project_root = getattr(args, "project_root", None)
-    known = Path(project_root) if project_root else None
+    known = Path(project_root).resolve() if project_root else None
     resolution = resolve_prefix_known(prefix, motor_root, known)
     if resolution.path is None:
         print(

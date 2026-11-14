@@ -973,11 +973,13 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    motor_root = args.motor_root.resolve() if args.motor_root else None
+    project_root = args.project_root.resolve() if args.project_root else None
     artifacts = EXPECTED_CLOSEOUT_RUNTIME_ARTIFACTS if args.closeout_mode else None
     return run_delivery_hygiene_check(
-        project_root=args.project_root,
+        project_root=project_root,
         check_tree=not args.no_tree_check,
-        motor_root=args.motor_root,
+        motor_root=motor_root,
         expected_artifacts=artifacts,
     )
 

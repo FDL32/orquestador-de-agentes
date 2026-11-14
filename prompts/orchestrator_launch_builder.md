@@ -155,6 +155,8 @@ tocar codigo:
 python <MOTOR_ROOT>/scripts/check_worktree_topology.py --ticket {{TICKET_ID}} --motor-root <MOTOR_ROOT> --project-root <DESTINO>
 ```
 
+Pasa `--motor-root` y `--project-root` como rutas absolutas o relativas: los scripts normalizan el argumento con `.resolve()` en el parseo (WOT-2026-043r), asi que desde el mismo estado el rc es identico con las dos formas. Si el par relativo/absoluto diverge, es un defecto del script: reportalo.
+
 Si el exit code no es 0, detente con `WORKTREE_TOPOLOGY_VIOLATION` y reporta
 el output exacto al Orquestador (exit 1 = topologia incorrecta -- ej. ticket
 `WOT` trabajado desde el checkout principal detached en vez de la worktree
