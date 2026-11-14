@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """Detect duplicate skill `name:` or `triggers:` across bundle and host skills.
 
+Before: the guard discovers SKILL.md files in the bundle and host surfaces.
+During: it parses frontmatter, reports collisions, and publishes how many
+    SKILL.md files were inspected, including files without frontmatter.
+After: it returns 1 for denied collisions or invalid trigger formats, 0 for a
+    clean non-empty surface, and 0 with an explicit non-PASS skip marker for
+    an empty surface.
+
 Adapted from wshobson/agents tools/check_agent_name_collisions.py (MIT)
 with two changes:
   - glob target switched from plugins/*/agents/*.md to skills/*/SKILL.md and
@@ -18,7 +25,7 @@ from collections import defaultdict
 from pathlib import Path
 
 
-FRONTMATTER_RE = re.compile(r"\A﻿?---\n(?P<frontmatter>.*?)\n---", re.DOTALL)
+FRONTMATTER_RE = re.compile(r"\A\ufeff?---\n(?P<frontmatter>.*?)\n---", re.DOTALL)
 NAME_RE = re.compile(r"^name:\s*(?P<name>.+?)\s*$", re.MULTILINE)
 TRIGGERS_LIST_RE = re.compile(r"^triggers:\s*\[(?P<triggers>.+?)\]\s*$", re.MULTILINE)
 # Revisor finding (WOT-2026-118a, Codex): a scalar `triggers: foo` (no [...])
@@ -128,15 +135,16 @@ def _extract_triggers(frontmatter: str) -> list[str]:
 
 
 def scan_skills(root: Path) -> tuple[dict[str, list[Path]], dict[str, list[Path]]]:
-    """Return (names_by_path, triggers_by_path) maps for collision analysis."""
+    """Return (names_by_path, triggers_by_path) maps for collision analysis.
+
+    Before: ``root`` names the repository surface to inspect.
+    During: discovers every eligible SKILL.md and parses frontmatter-bearing
+        files while retaining the historical two-map return shape.
+    After: returns name and trigger maps keyed by their declared values.
+    """
     names: dict[str, list[Path]] = defaultdict(list)
     triggers: dict[str, list[Path]] = defaultdict(list)
-    skill_paths = sorted(
-        {
-            *root.glob("skills/*/SKILL.md"),
-            *root.glob(".agent/skills/*/SKILL.md"),
-        }
-    )
+    skill_paths = discover_skill_files(root)
     for skill_path in skill_paths:
         frontmatter = _read_frontmatter(skill_path)
         if frontmatter is None:
@@ -147,6 +155,22 @@ def scan_skills(root: Path) -> tuple[dict[str, list[Path]], dict[str, list[Path]
         for trigger in _extract_triggers(frontmatter):
             triggers[trigger].append(skill_path)
     return names, triggers
+
+
+def discover_skill_files(root: Path) -> list[Path]:
+    """Return the sorted union of bundle and host SKILL.md files.
+
+    Before: ``root`` is the repository root supplied to the CLI.
+    During: collects one-level ``SKILL.md`` files from both supported skill
+        surfaces and removes duplicates deterministically.
+    After: returns every discovered file, including files without frontmatter.
+    """
+    return sorted(
+        {
+            *root.glob("skills/*/SKILL.md"),
+            *root.glob(".agent/skills/*/SKILL.md"),
+        }
+    )
 
 
 def _report_duplicates(label: str, mapping: dict[str, list[Path]], root: Path) -> int:
@@ -189,6 +213,14 @@ def _report_trigger_conflicts(
 
 
 def main() -> int:
+    """Run the collision guard and publish its audited-surface denominator.
+
+    Before: parses the root, policy, and duplicate-waiver CLI options.
+    During: discovers all eligible SKILL.md files, scans their frontmatter,
+        and reports collisions or an explicit empty-surface skip.
+    After: returns the historical collision/format status, while a zero-file
+        surface returns 0 without printing the normal OK verdict.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Detect duplicate skill name: or triggers: across skills/*/SKILL.md "
@@ -215,6 +247,12 @@ def main() -> int:
     args = parser.parse_args()
 
     root = args.root.resolve()
+    skill_paths = discover_skill_files(root)
+    print(
+        "[skill-collisions] "
+        f"{len(skill_paths)} elementos auditados "
+        "(skills/*/SKILL.md + .agent/skills/*/SKILL.md)"
+    )
     names, triggers = scan_skills(root)
 
     dup_names = _report_duplicates("name", names, root)
@@ -226,6 +264,12 @@ def main() -> int:
             print(f"  {trigger!r}")
             for path in paths:
                 print(f"    - {path.relative_to(root)}")
+
+    if not skill_paths:
+        print(
+            "[skill-collisions] SKIP EXPLICITO: 0 elementos auditados. No es un PASS."
+        )
+        return 0
 
     if dup_names == 0 and denied_triggers == 0 and not invalid_format:
         print("OK: no skill name or trigger collisions")

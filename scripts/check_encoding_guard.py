@@ -287,9 +287,10 @@ def main() -> int:
     After: publica la linea estructurada de 4 campos y la LISTA de saltados en
         stderr en TODOS los caminos, mas la senal del caso: vacuo (via hook,
         0 auditables, exit 0 por universo SIN MATERIA, autorizado por
-        DEC-047S-001 con denominador publicado), medicion FALLIDA (via
-        explicita, 0 resueltos, exit 1), diagnostico de errores (exit 1), o
-        verde limpio (exit 0). Nunca un exit 0 mudo.
+        DEC-047S-001 con denominador publicado, con marcador SKIP EXPLICITO
+        que declara que no es un PASS), medicion FALLIDA (via explicita, 0
+        resueltos, exit 1), diagnostico de errores (exit 1), o verde limpio
+        (exit 0). Nunca un exit 0 mudo.
     """
     from scripts.encoding_guard import iter_staged_files
 
@@ -336,6 +337,11 @@ def main() -> int:
         print(
             "[encoding-guard] 0 ficheros auditados (universo: indice staged, "
             "0 entradas). Verde VACUO: no se audito nada.",
+            file=sys.stderr,
+        )
+        print(
+            "[encoding-guard] SKIP EXPLICITO: 0 elementos auditados "
+            "(universo: indice staged). No es un PASS.",
             file=sys.stderr,
         )
         return 0
