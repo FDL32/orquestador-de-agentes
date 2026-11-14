@@ -1,0 +1,453 @@
+# Declaracion explicita: la clase no se infiere del codigo del guard; cada entrada la declara.
+# no_denominator: el guard decide sobre UNA condicion, UN escalar o UN fichero FIJO del motor y no enumera un conjunto de elementos, de modo que no existe un denominador N que publicar ni un universo que pueda quedar vacio (si falta el fichero o el dato, falla cerrado o decide con un mensaje).
+# fixed_denominator: el guard ancla su universo a un conjunto CERRADO del propio motor (resuelto desde __file__, MANIFEST.distribute o una lista literal versionada) y lo enumera; publica N, y N=0 solo puede significar que el arbol del motor esta roto, nunca un destino sin materia.
+# staged_files: la clase la define QUIEN DECIDE EL UNIVERSO: lo entrega el propio hook de git en ese commit (indice staged o fichero de mensaje de commit), no lo que el guard descubre. NO se afirma que el vacio se publique siempre: lo que cada guard publica lo DECLARA skip_explicito.
+# external_targets: el llamador aporta la raiz o el fichero (--project-root, posicional, --root, --config) y el universo es lo que exista en esa superficie externa, que puede faltar o estar vacia legitimamente; la policy declara si ese vacio publica marcador (skip_explicito: si) o falla cerrado (skip_explicito: no).
+# Desempate modo dual: clasifica el modo que corre en el camino automatico (pre-commit/pre-push); el otro va en nota y no crea segunda entrada.
+# Desempate fichero unico: pasado por el llamador = external_targets; fijo del motor = no_denominator.
+# Las clases y skip_explicito se DECLARAN; este fichero no pretende inferirlos.
+
+version: 1
+guards:
+  scripts/check_agent_write_enforced.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: universo = perfiles del agents.json pasado (default relativo al cwd); OK
+      sin N
+  scripts/check_agents_accessible.py:
+    clase: fixed_denominator
+    skip_explicito: desconocido
+    nota: universo = ensemble_profiles del agents.json del motor (anclado a __file__);
+      no se leyo la rama de 0 perfiles
+  scripts/check_archive_hygiene.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: --root admite motor o destino (default motor); duda F vs E
+  scripts/check_arranque_material_paths.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: publica denominador N ficheros en TODOS los caminos; raiz inexistente =>
+      rc 1 fail-closed, no SKIP
+  scripts/check_arranques_index.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: 'SKIP: no existe _archive/, json {"ok":true,"skip":..}; no usa el literal
+      SKIP EXPLICITO'
+  scripts/check_audit_process.py:
+    clase: external_targets
+    skip_explicito: desconocido
+    nota: ticket posicional; sus SKIP son de FASES de auditoria, no de universo vacio
+  scripts/check_audit_report.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: HALLAZGOS_<lane>.md pasados por el llamador
+  scripts/check_audit_skips.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: sello ausente => SKIP (docstring "A missing seal is SKIP"); sin literal
+      SKIP EXPLICITO
+  scripts/check_backlog_admission.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: universo = rango git base..head sobre backlog del destino; SKIP nombrado
+      si el rango no resuelve
+  scripts/check_backlog_commits_landed.py:
+    clase: external_targets
+    skip_explicito: desconocido
+    nota: sin SKIP de universo vacio; EXIT_SKIPPED_REQUIRED=5 es otra cosa (fila terminal
+      sin evidencia)
+  scripts/check_backlog_contract.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: SKIP solo para merge-base no resoluble, no para universo vacio
+  scripts/check_backlog_debt_ownership.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: 'print SKIP: cuando falta workspace/destino (,215)'
+  scripts/check_backlog_dependency_graph.py:
+    clase: external_targets
+    skip_explicito: desconocido
+    nota: backlog.md del destino; el SKIP se modela con CheckResult.skipped (campo
+      de otro modulo), no verificado aqui
+  scripts/check_batch_run_accounting.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: batch_run_<ts>.json pasado por el llamador
+  scripts/check_builder_cli_privacy_preflight.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: prompt posicional (un fichero)
+  scripts/check_builder_dispatch_prompt.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: prompt posicional (un fichero)
+  scripts/check_builder_prompt_obligations.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: rglob de <project_root>/.agent/planning
+  scripts/check_bundle_receipts.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: bundle pasado por el llamador
+  scripts/check_child_closeout_report.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: --report = un informe CIERRE_PARCIAL
+  scripts/check_claude_settings_portability.py:
+    clase: fixed_denominator
+    skip_explicito: desconocido
+    nota: pre-commit sin args => .claude/settings.json tracked del motor (1 fichero);
+      --fleet => destinos externos ("empty inspected set" = RED en fleet); modo dual
+      F/E
+  scripts/check_closeout_reconciliation.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: backlog vs bus del workspace del destino
+  scripts/check_closure_adversarial_pass.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: sidecar JSON pasado por el llamador
+  scripts/check_collaboration_state_clean.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: git ls-files de .agent/collaboration/ del motor + MANIFEST.distribute; no
+      publica N
+  scripts/check_collector_ruff_nofix.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: un solo fichero fijo (collect_system_health.py, --target override); ausente
+      => rc 1 fail-closed; duda N vs F(N=1)
+  scripts/check_commit_message_encoding.py:
+    clase: staged_files
+    skip_explicito: 'no'
+    nota: universo = fichero de mensaje que pre-commit pasa en stage commit-msg; M
+      porque no son ficheros staged literales
+  scripts/check_commit_worktree.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: condicion sobre el checkout actual (detached o no); sin conjunto
+  scripts/check_contract_backlog_reconcile.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: ticket_contracts.md vs backlog del destino
+  scripts/check_contract_clause_coverage.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: --artifact + --contract; "NO verificable por marcadores" pero no es SKIP
+      de universo vacio
+  scripts/check_contract_full_read.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: 'NO CABE LIMPIO: sin args el universo es el artefacto de .agent/planning/
+      mas reciente por ventana de mtime (clase extra propuesta ambient_state); 0 citas
+      => imprime "PASS: no citations found (nothing to verify)" (verde mudo con texto
+      PASS, sin SKIP)'
+  scripts/check_cuspide_growth_and_drift.py:
+    clase: staged_files
+    skip_explicito: 'no'
+    nota: '3 fases: pre-commit (diff --cached), commit-msg (mensaje), post-commit;
+      0 diff => sin marcador'
+  scripts/check_dec_receipt.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: 'literal SKIP EXPLICITO: 0 fichas a validar; patron de referencia de 043l'
+  scripts/check_deliverables_exist.py:
+    clase: external_targets
+    skip_explicito: desconocido
+    nota: deliverables declarados en el work_plan del project root (TEST_PROJECT_ROOT/runtime);
+      rama sin work_plan no leida
+  scripts/check_destination_pii_leak.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: descubre destinos enlazados y hace git ls-files en cada uno; imprime discovery-skip
+      por destino, no SKIP global
+  scripts/check_destino_publish_ready.py:
+    clase: external_targets
+    skip_explicito: desconocido
+    nota: --project-root; lee STATE; duda E vs N (condicion sobre un estado)
+  scripts/check_distributable_planning_clean.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: entradas de MANIFEST.distribute (rglob, no git ls-files,); sin SKIP
+  scripts/check_distribution_agnostic.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: publica "N entradas -> M ficheros"; denominador vacio => stderr + exit 1
+      (fail-closed); el SKIPPED de es del needle de usuario, no del universo
+  scripts/check_distribution_boundary.py:
+    clase: fixed_denominator
+    skip_explicito: si
+    nota: literal SKIP EXPLICITO x3 (,461,471)
+  scripts/check_document_self_contradiction.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: documento posicional
+  scripts/check_dod_metric_freshness.py:
+    clase: external_targets
+    skip_explicito: desconocido
+    nota: backlog del workspace via --project-root/--backlog; rama sin backlog no
+      verificada
+  scripts/check_encoding_guard.py:
+    clase: staged_files
+    skip_explicito: si
+    nota: 'REFERENCIA: literal SKIP EXPLICITO con indice staged vacio + denominador
+      publicado; args explicitos irresolubles => rc 1'
+    probe:
+      comando:
+      - '{python}'
+      - '{root}/scripts/check_encoding_guard.py'
+      cwd: '{tmpdir}'
+      preparacion:
+      - git-init
+      marcador: SKIP EXPLICITO
+      flujo: both
+      timeout_s: 60
+  scripts/check_ensemble_registry_classification.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: default = agents.json del motor (--config override); backend_keys vacio
+      => NO VERIFICABLE rc 2 (fail-closed, no SKIP); publica N endpoints
+  scripts/check_escalation_receipt_resolution.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: 'literal SKIP EXPLICITO: 0 fichas a validar'
+  scripts/check_expected_operational_delta.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: delta JSON del llamador + git status del destino; duda E vs N (compara estado
+      con lo esperado)
+  scripts/check_flight_plan_collision.py:
+    clase: external_targets
+    skip_explicito: desconocido
+    nota: --queued-dir; docstring declara fail-closed explicito con prefix "nunca
+      un verde mudo"; rama de 0 planes no verificada
+  scripts/check_flt_versionable.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: 'SKIP nombrado: plan ausente/vacio/seed-neutral (,288); universo = FLT
+      del work_plan activo'
+  scripts/check_ghost_ticket_ids.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: SKIP explicito exit 0 si no hay git o no existe collab (,168,174); sin
+      literal SKIP EXPLICITO
+  scripts/check_gitleaks_seed_divergence.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: seed del motor vs config del destino (--target/--destino); compara 2 ficheros
+  scripts/check_guard_wiring.py:
+    clase: fixed_denominator
+    skip_explicito: si
+    nota: universo = guards del motor por ls-files; SKIPEA e IMPRIME si no hay destino
+      resoluble (docstring)
+  scripts/check_handoff_committed.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: condicion sobre un working tree (limpio/anclado a commit); duda N vs E
+  scripts/check_handoff_state_sha.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: ARRANQUE_*.md del destino
+  scripts/check_high_impact_action_consent.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: --artifact posicional
+  scripts/check_hook_delivery.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: 'imprime OK:/WARN:/SKIP: y exit 0 siempre; universo = transcripts de sesiones'
+  scripts/check_hook_interpreter.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: .git/hooks del repo (default motor, --repo-root override); hook ausente
+      con config presente = FALLO, no SKIP
+  scripts/check_inbox_drainage.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: 'SKIP: 0 fichas pendientes en el canonico. No es un PASS y SKIP move-strays'
+  scripts/check_launch_prompt_paths.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: rglob *.md + planning del destino
+  scripts/check_loop_bundle_protocol.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: bundle posicional
+  scripts/check_loop_execution.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: '"[loop-exec] SKIP: no --commit-sha dado (nada que verificar)"; universo
+      = commit + scorecard del destino'
+  scripts/check_manager_role_for_suite.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: un solo fichero TURN.md; ausente => permite con mensaje (sin bus vivo)
+  scripts/check_memory_health.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: por raiz (--project-root/--motor-root)
+  scripts/check_model_id_crystallization.py:
+    clase: staged_files
+    skip_explicito: 'no'
+    nota: fichero de mensaje de commit (commit-msg), no ficheros staged literales
+  scripts/check_motor_destination_integration.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: wrapper que delega en checks vivos sobre --project-root
+  scripts/check_motor_pristine.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: 'git status/diff del --motor-root + snapshot JSON; 043l: rc 0 con args obligatorios
+      ausentes es OTRO defecto'
+  scripts/check_no_history_truncation.py:
+    clase: staged_files
+    skip_explicito: 'no'
+    nota: pass silently DELIBERADO (043l lo deja fuera de alcance); universo = diff
+      --cached de execution_log.md
+  scripts/check_operational_artifact_paths.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: rglob de superficies operativas del destino
+  scripts/check_override_registry.py:
+    clase: staged_files
+    skip_explicito: 'no'
+    nota: 'dos fases de .pre-commit: pre-commit (git diff --cached) y commit-msg (message_path)'
+  scripts/check_portable_memory_archive_schema.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: archives trackeados del motor (anclado a __file__)
+  scripts/check_portable_memory_promotion.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: observations.jsonl del runtime del --project-root vs archives del --repo
+  scripts/check_process_decision_search.py:
+    clase: staged_files
+    skip_explicito: 'no'
+    nota: 'pre-commit pass_filenames:true con files: regex (prompts/.rules); artefactos
+      posicionales'
+  scripts/check_prompt_bias.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: --prompt-file (un texto)
+  scripts/check_prompt_gitignored_paths.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: motor prompts listed by git ls-files; empty universe is RuntimeError fail-closed,
+      not SKIP
+  scripts/check_prompt_line_budget.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: --check-all = NORMATIVE_PROMPTS fijos (2); modo paths posicional = externo;
+      sin args => help rc 2
+  scripts/check_prompt_load_bearing_refs.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: entradas de MANIFEST.distribute expandidas por ls-files (anclado a __file__)
+  scripts/check_prompt_parity.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: lista cerrada de contratos; publica "N contrato(s) auditado(s)" siempre;
+      sin marcador SKIP
+  scripts/check_prompt_wired_invocations.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: prompts/*.md + skills/*/SKILL.md del motor
+  scripts/check_publication_gate.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: --repo-root requerido + --sibling
+  scripts/check_push_authority.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: 'hook pre-push: lee session registry/estado, decide por tipo de sesion;
+      sin conjunto de ficheros'
+  scripts/check_reference_keys.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: AGENTS.md + .agent/rules/common/*.md del --project-root (default motor)
+  scripts/check_role_models_distinct.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: compara 2 campos escalares role_models.BUILDER/REVISOR; imprime ambos valores
+  scripts/check_roster_matches_acting_thread.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: compara active_roles del roster con el hilo actuante; duda N vs E
+  scripts/check_ruff_hook_scope.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: un solo fichero fijo .pre-commit-config.yaml; ausente => rc 1 (no rc 0);
+      duda N vs F(N=1)
+  scripts/check_seal_staleness.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: recibo posicional + prompt sellado
+  scripts/check_settings_canonical_drift.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: censo de destinos (--destino-root/AGENT_DESTINOS_ROOT); siempre rc 0 (WARN
+      no bloqueante) y publica evaluated/healthy; sin SKIP
+  scripts/check_skill_collisions.py:
+    clase: fixed_denominator
+    skip_explicito: si
+    nota: 'REFERENCIA 043l: SKIP EXPLICITO: 0 elementos auditados. No es un PASS +
+      denominador'
+    probe:
+      comando:
+      - '{python}'
+      - '{root}/scripts/check_skill_collisions.py'
+      - --root
+      - '{tmpdir}'
+      cwd: '{tmpdir}'
+      preparacion: []
+      marcador: SKIP EXPLICITO
+      flujo: both
+      timeout_s: 60
+  scripts/check_stale_operational_note.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: publica "N fichero(s) normativos" en OK; con N=0 imprime OK 0 fichero(s)
+      (sin SKIP)
+  scripts/check_state_integrity.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: 'imprime SKIP: <skip_reason> si no hay baseline'
+  scripts/check_suite_freshness.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: compara last-run.json con HEAD; aviso, exit 0
+  scripts/check_suite_running.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: estado del lock de la suite; exit 0 siempre
+  scripts/check_ticket_nomenclature.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: rglob prompts/, skills/, scripts/ del motor; publica conteos por bucket;
+      sin SKIP
+  scripts/check_triage_outputs.py:
+    clase: external_targets
+    skip_explicito: si
+    nota: SKIP nombrado si no hay triaje candidato salvo --require-artifact
+  scripts/check_worktree_topology.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: condicion sobre topologia git (worktree) + work_plan; duda N vs E
+  scripts/flight/check_cell_conformance.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: --registry JSON + --store SQLite read-only
+  scripts/flight/check_latido_alert_wiring.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: --latido-file del llamador
+  scripts/flight/check_quota_index_drift.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: compara roster vs protocolo (2 ficheros del llamador); duda E vs N
+  scripts/check_guard_denominator_policy.py:
+    clase: no_denominator
+    skip_explicito: 'no'
+    nota: "publica N como toda entrada, pero aplica D-B: universo 0 => SKIP EXPLICITO
+      rc 0 (vacuidad aprobada), por eso no se declara fixed_denominator; se aplica
+      su propia vara exigiendo su propia entrada"

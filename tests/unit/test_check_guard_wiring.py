@@ -253,6 +253,8 @@ EXPECTED_WIRED_REAL = {
     # tests/test_agent_controller.py::TestFltVersionableGateWiring.
     "check_flt_versionable",
     "check_guard_wiring",
+    # WOT-2026-167a: cableado via hook local always_run en .pre-commit-config.yaml.
+    "check_guard_denominator_policy",
     "check_handoff_committed",  # WOT-2026-040t(P1): cableado en prepush_check.py (closeout, BLOQUEANTE)
     # Diseno v6 (2026-10-23): cableado via import de nivel de funcion en
     # prepush_check.py::run_hook_delivery_check (todo push, WARN, Claude-only).

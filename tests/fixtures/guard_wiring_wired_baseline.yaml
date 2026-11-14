@@ -44,6 +44,8 @@ wired_baseline:
     - .pre-commit-config.yaml
   check_guard_wiring:
     - .pre-commit-config.yaml
+  check_guard_denominator_policy:
+    - .pre-commit-config.yaml
   check_prompt_gitignored_paths:
     - .pre-commit-config.yaml
   check_launch_prompt_paths:

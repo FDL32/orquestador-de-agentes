@@ -101,6 +101,16 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # always_run es necesario: un commit de solo borrados o sin nombres de fichero
+      # no debe saltarse la declaracion completa de superficies de todos los guards.
+      - id: check-guard-denominator-policy
+        name: check guard denominator policy (cada guard declara que superficie mira)
+        entry: uv run python scripts/check_guard_denominator_policy.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # WOT-2026-042z: un prompt/contrato citado por ruta => se leyo entero.
       # Un grep/diff sobre el fichero NO cuenta como lectura. Muestreo
       # declarado (:X-Y con "riesgo") pasa con WARN; muestreo silencioso ->
