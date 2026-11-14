@@ -263,6 +263,15 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # WOT-2026-044m: executable prompt citations must not depend on ignored paths.
+      - id: check-prompt-gitignored-paths
+        name: check prompt gitignored paths
+        entry: uv run python scripts/check_prompt_gitignored_paths.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # Guard: enforce MANIFEST.distribute frontier as a MECHANISM (WOT-2026-025i).
       # Every manifest entry must resolve to >=1 tracked file (no stale entries =
       # no holes in the frontier). Always_run + pass_filenames:false because the
