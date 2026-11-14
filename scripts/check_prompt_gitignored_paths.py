@@ -3,11 +3,11 @@
 Before: The motor contains canonical Markdown prompts and may contain ignored
 destination paths in their examples or operational instructions.
 During: Extract inline-code and fenced-code citations, classify program-shaped
-paths using their execution context, and resolve candidates in one
+paths using the route's adjacent clause, and resolve candidates in one
 ``git check-ignore --no-index -v -z --stdin`` batch.
 After: Always publish the denominator, citation classes, and method. Existing
-executable debt born on or before the fixed introduction cutoff is WARN-only;
-new or unmeasurable executable debt fails closed.
+executable debt introduced at or before the guard introduction commit is
+WARN-only; new or unmeasurable executable debt fails closed.
 
 Only ``prompts/`` is measured. ``skills/`` and AGENTS.md are proposed future
 surfaces, not part of this denominator. EXEC examples include ``python
@@ -25,7 +25,6 @@ Proposal (not implemented here): exclude venv interpreters from the denominator.
 from __future__ import annotations
 
 import argparse
-import datetime as _datetime
 import re
 import subprocess
 import sys
@@ -33,7 +32,16 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-_INTRO_CUTOFF_DATE = _datetime.date(2026, 11, 14)
+_GUARD_INTRO_COMMIT = "fa3bf8da69382bded237fc80b0bfdfc679dd2bdf"
+"""Before: Identify the commit that introduced this guard.
+
+During: The default is a fixed commit, so author dates, ``--no-verify``, and
+local clock manipulation cannot grandfather a newly introduced executable
+line. A rebase or squash can make this commit unavailable in a clone.
+
+After: An unresolvable default or explicit introduction commit fails closed;
+operators must provide a valid replacement with ``--intro-commit``.
+"""
 _PROGRAM_SUFFIXES = (".py", ".sh", ".ps1", ".bat", ".cmd", ".exe")
 _ROLE_PREFIXES = (
     "<workspace>/",
@@ -189,23 +197,56 @@ def _ignored(root: Path, citations: list[Citation]) -> dict[str, tuple[str, str]
     return matches
 
 
-def _classify(citation: Citation) -> str:
-    """Classify an ignored citation as EXEC, ILLUS, or MENTION."""
+def _classify(citation: Citation) -> str:  # noqa: C901 - clause classifier
+    """Classify one citation using only its adjacent clause.
+
+    Before: Receive an ignored route citation and its source line.
+    During: Bound context at sentence punctuation, parentheses, or semicolons;
+    an illustrative marker wins, while an execution signal wins over data.
+    After: Return exactly EXEC, ILLUS, or MENTION without changing reporting.
+    """
 
     context = citation.text.replace("\\", "/")
     span = citation.span.replace("\\", "/")
     for prefix in _ROLE_PREFIXES:
         context = context.replace(prefix, "")
         span = span.replace(prefix, "")
-    lower = context.lower()
-    if _ILLUS.search(context):
+    span_start = context.find(span)
+    if span_start < 0:
+        span_start = context.find(citation.route)
+    if span_start < 0:
+        span_start = 0
+    left = span_start
+    right = span_start + len(span)
+    while left > 0:
+        char = context[left - 1]
+        if char in "!?;()":
+            break
+        if char == "." and (
+            left == 1 or context[left].isspace() or context[left] in "\"'"
+        ):
+            break
+        left -= 1
+    while right < len(context):
+        char = context[right]
+        if char in "!?;()":
+            break
+        if char == "." and (
+            right + 1 == len(context)
+            or context[right + 1].isspace()
+            or context[right + 1] in "\"'"
+        ):
+            break
+        right += 1
+    adjacent = context[left:right]
+    lower = adjacent.lower()
+    if _ILLUS.search(adjacent):
         return "ILLUS"
-    if lower.startswith(
-        ("no ", "don't ", "do not ", "prohibido ")
-    ) or _DATA_CONTEXT.search(context):
+    if lower.strip().startswith(("no ", "don't ", "do not ", "prohibido ")):
         return "MENTION"
+    has_data = _DATA_CONTEXT.search(adjacent)
     route = re.escape(citation.route)
-    execution_context = f"{context}\n{span}"
+    execution_context = f"{adjacent}\n{span}"
     has_launcher = re.search(
         r"\b(?:python|python3|uv\s+run\s+python|bash|sh|pwsh|cmd)\b",
         execution_context,
@@ -216,17 +257,25 @@ def _classify(citation: Citation) -> str:
         span,
         re.I,
     )
-    verb_object = _EXEC_VERBS.search(context) and re.search(route, context, re.I)
-    via_object = _VIA.search(context) and re.search(route, context, re.I)
-    return (
-        "EXEC"
-        if has_launcher or starts_route or verb_object or via_object
-        else "MENTION"
+    has_execution = bool(
+        has_launcher
+        or (starts_route and not has_data)
+        or (_EXEC_VERBS.search(adjacent) and re.search(route, adjacent, re.I))
+        or (_VIA.search(adjacent) and re.search(route, adjacent, re.I))
     )
+    if has_data and not has_execution:
+        return "MENTION"
+    return "EXEC" if has_execution else "MENTION"
 
 
-def _blame_date(root: Path, citation: Citation) -> _datetime.date:
-    """Read the author date for one prompt line, failing closed on any gap."""
+def _line_commit(root: Path, citation: Citation) -> str:
+    """Read the committed SHA for one prompt line, failing closed on any gap.
+
+    Before: Verify that the cited prompt line is present in HEAD.
+    During: Read the forty-hex SHA from git blame's porcelain header.
+    After: Return the line's introducing commit; a later edit deliberately
+    counts as new even if the old line existed before the guard.
+    """
 
     head = _run(root, ["show", f"HEAD:{citation.prompt}"])
     if head.returncode != 0:
@@ -263,24 +312,23 @@ def _blame_date(root: Path, citation: Citation) -> _datetime.date:
         raise RuntimeError(
             f"blame has no committed revision for {citation.prompt}:{citation.line}"
         )
-    match = re.search(rb"^author-time (\d+)$", result.stdout, re.MULTILINE)
-    if not match:
-        raise RuntimeError(
-            f"blame has no author-time for {citation.prompt}:{citation.line}"
-        )
-    return _datetime.datetime.fromtimestamp(
-        int(match.group(1)), _datetime.timezone.utc
-    ).date()
+    return sha.decode("ascii")
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestration and reporting
-    """Audit prompts and return zero only for clean or grandfathered findings."""
+    """Audit prompts and return zero only for clean or grandfathered findings.
+
+    Before: Parse the selected motor root and optional inventory destination.
+    During: Extract, classify, resolve, and ancestry-check ignored citations.
+    After: Publish stable denominator/method lines and return a fail-closed rc.
+    """
 
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--motor-root", type=Path, default=Path(__file__).resolve().parent.parent
     )
     parser.add_argument("--inventory", type=Path)
+    parser.add_argument("--intro-commit", default=_GUARD_INTRO_COMMIT)
     args = parser.parse_args(argv)
     root = args.motor_root.resolve()
     try:
@@ -290,9 +338,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
     except RuntimeError as exc:
         print(f"[prompt-gitignored] ERROR: {exc}")
         return 1
-    unique_citations = list(
-        {(c.prompt, c.line, c.route): c for c in citations}.values()
-    )
+    citation_groups: dict[tuple[str, int, str], list[Citation]] = {}
+    for citation in citations:
+        citation_groups.setdefault(
+            (citation.prompt, citation.line, citation.route), []
+        ).append(citation)
+    unique_citations = [group[0] for group in citation_groups.values()]
     annotated = [
         Citation(
             c.prompt,
@@ -308,8 +359,32 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
     classes = {name: 0 for name in ("EXEC", "ILLUS", "MENTION")}
     errors: list[str] = []
     inventory_lines: list[str] = []
+    severity = {"MENTION": 0, "ILLUS": 1, "EXEC": 2}
+    citation_kinds = {
+        key: max(
+            (_classify(variant) for variant in variants),
+            key=severity.__getitem__,
+        )
+        for key, variants in citation_groups.items()
+        if key[2] in ignored
+    }
+    exec_citations = [
+        citation
+        for citation in annotated
+        if citation.ignored
+        and citation_kinds[(citation.prompt, citation.line, citation.route)] == "EXEC"
+    ]
+    intro_error = None
+    if exec_citations:
+        intro = _run(root, ["cat-file", "-e", f"{args.intro_commit}^{{commit}}"])
+        if intro.returncode != 0:
+            intro_error = f"intro commit {args.intro_commit} not resolvable"
     for citation in annotated:
-        kind = _classify(citation) if citation.ignored else "-"
+        kind = (
+            citation_kinds[(citation.prompt, citation.line, citation.route)]
+            if citation.ignored
+            else "-"
+        )
         if citation.ignored:
             classes[kind] += 1
         inventory_lines.append(
@@ -317,20 +392,39 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901 - CLI orchestratio
             f"{citation.prompt}:{citation.line}:{citation.route}"
         )
         if kind == "EXEC":
+            if intro_error:
+                errors.append(
+                    f"{citation.prompt}:{citation.line}:{citation.route} ({intro_error})"
+                )
+                continue
             try:
-                birth = _blame_date(root, citation)
+                line_commit = _line_commit(root, citation)
             except RuntimeError as exc:
                 errors.append(
                     f"{citation.prompt}:{citation.line}:{citation.route} ({exc})"
                 )
                 continue
-            if birth <= _INTRO_CUTOFF_DATE:
+            ancestry = _run(
+                root,
+                [
+                    "merge-base",
+                    "--is-ancestor",
+                    line_commit,
+                    args.intro_commit,
+                ],
+            )
+            if ancestry.returncode == 0:
                 print(
-                    f"WARN {citation.prompt}:{citation.line}:{citation.route} (born {birth.isoformat()})"
+                    f"WARN {citation.prompt}:{citation.line}:{citation.route} (commit {line_commit})"
+                )
+            elif ancestry.returncode == 1:
+                errors.append(
+                    f"{citation.prompt}:{citation.line}:{citation.route} (commit {line_commit})"
                 )
             else:
                 errors.append(
-                    f"{citation.prompt}:{citation.line}:{citation.route} (born {birth.isoformat()})"
+                    f"{citation.prompt}:{citation.line}:{citation.route} "
+                    f"(merge-base failed rc={ancestry.returncode})"
                 )
     print(
         f"[prompt-gitignored] denominator: {len(prompts)} prompts; citations: {len(unique_citations)}; "
