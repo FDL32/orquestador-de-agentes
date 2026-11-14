@@ -634,7 +634,9 @@ NOT_THE_LINK = {
 # clean file or one more exemption above), never edited just to silence the assertion.
 # 211 -> 212: WOT-2026-160p added scripts/espera_checklist_mode.py (clean file: it never
 # names motor_destination_link, so no new exemption); the bump was missed in that commit.
-SCRIPTS_COUNT = 212
+# 212 -> 213: WOT-2026-044m added scripts/check_prompt_gitignored_paths.py (clean file: it never
+# names motor_destination_link, so no new exemption); the bump was missed in that commit.
+SCRIPTS_COUNT = 213
 CENSUS_DENOMINATOR = SCRIPTS_COUNT + 1
 
 # MEASURED on the 212 files (211 scripts/*.py + .agent/motor_checkpoint.py), 2026-11-02:
