@@ -34,6 +34,11 @@ from scripts.prepush_check import (
     run_validate_all,
 )
 
+from tests.unit.test_047g_fixture_format_excluded_path import (
+    assert_ruff_reads_fixture,
+    write_unformatted_fixture,
+)
+
 
 class TestDeliveryHygieneCheck:
     """Tests for delivery_hygiene_check integration."""
@@ -167,48 +172,17 @@ class TestRuffFormatOptOut:
     def _write_unformatted(self, root: Path) -> None:
         """Deja un fichero que `ruff format --check` rechaza con seguridad.
 
-        Control positivo obligatorio, y no es ceremonia: `tmp_path` en esta
-        suite NO es el de pytest, es un factory re-enraizado DENTRO del arbol
-        del motor (`conftest.py::tmp_path` / `SESSION_RUNTIME_ROOT`), que
-        cuelga de `tests/sandbox`. Y el `pyproject.toml` del motor lista
-        `tests/sandbox` en `extend-exclude`, asi que ruff descubre esa
-        configuracion "via parent" y DESCARTA el fixture entero antes de
-        mirarlo: contesta rc=0 con "No Python files found".
-
-        Medido con `ruff -v` desde el propio fixture:
-            Using configuration file (via parent) at: <motor>/pyproject.toml
-            Ignored path via `extend-exclude`: <motor>/tests/sandbox
-        Ese rc=0 es indistinguible de un opt-out que funciona, de modo que
-        sin este control positivo los tests de abajo pasarian sin ejercitar
-        nada.
-
-        LIMITE DECLARADO (cazado por la lente Codex del bucle L700): este
-        probe usa `--isolated` y el gate real NO -- corre `uv run ruff format
-        --check .`, sin aislar. NO son la misma ruta. Lo que el control
-        positivo prueba es que el fixture esta REALMENTE sucio, o sea que un
-        rc=0 posterior no puede atribuirse a un arbol limpio; no prueba que el
-        gate mida igual. Esa segunda mitad la cubre el assert de
-        "Would reformat" del test negativo, que exige que ruff HAYA LEIDO el
-        fichero. Una version anterior de este docstring afirmaba que el gate
-        usaba `--isolated`: era falso.
+        Before: `tmp_path` se re-enraiza bajo `tests/sandbox`, una ruta que
+        Ruff excluye mediante el `pyproject.toml` padre.
+        During: El helper compartido escribe el fixture, crea un escudo local
+        solo si no existe y afirma con la ruta real que Ruff lo lee.
+        After: El control positivo ejercita la misma discovery de config que
+        el gate y falla si el fixture queda excluido sin escudo.
         """
-        (root / "sample.py").write_text(
-            "x = {'a':1,   'b':2}\ndef f( a ,b ):\n  return a+b\n",
-            encoding="utf-8",
-        )
-        probe = subprocess.run(
-            ["ruff", "format", "--check", "--isolated", "."],
-            cwd=root,
-            capture_output=True,
-            text=True,
-            check=False,
-            encoding="utf-8",
-            errors="replace",
-        )
-        assert probe.returncode != 0, (
-            "control positivo fallido: el fixture deberia estar sin formatear, "
-            f"pero ruff lo acepta.\nstdout={probe.stdout}\nstderr={probe.stderr}"
-        )
+        write_unformatted_fixture(root)
+        if not (root / "ruff.toml").exists():
+            (root / "ruff.toml").write_text("line-length = 88\n", encoding="utf-8")
+        assert_ruff_reads_fixture(root)
 
     def test_optout_declarado_convierte_el_fallo_en_skip(self, tmp_path: Path) -> None:
         """Con el opt-out declarado, un arbol sin formatear NO bloquea.
