@@ -23,7 +23,7 @@ Cobertura medida por raiz: en `D:/flight_archive_kilo` [externa] hay 14 filas de
 
 Las familias pasan por USO, ARCHIVADO y ELIMINACION. El archivado conserva zip, manifiesto y fila; la eliminacion es una transicion P7 con lista aprobada. La interface completa vive en `docs/protocol/rotacion_disco_vuelo.md`; este documento no copia su contrato. La herramienta versionada que ejecuta el contrato es `scripts/flight/p7_retire.py`, con primitivas en `scripts/flight/p7_common.py`; sus 23 funciones `test_` estan en `tests/unit/test_p7_retire.py`.
 
-El limite verificable es concreto: lineas 180-182 de `scripts/flight/p7_retire.py` exigen ficheros regulares, por lo que no recorre un clon como arbol; lineas 433-445 de `scripts/flight/p7_common.py` revalidan cada entrada de fichero. Ademas, lineas 301-308 de `scripts/flight/p7_retire.py` saltan ficheros versionados como `SALTADA_VERSIONADA`, y lineas 224-225 de `scripts/flight/p7_common.py` revalidan mtime. Por eso no es la herramienta que retira clones de Kilo. La deuda de una herramienta propia versionada del archivador es WOT-2026-175b. El comprobador L-6 y su cableado quedan sin ticket: motivo: el STOP de degeneracion exige una herramienta propia.
+El limite verificable es concreto: lineas 180-182 de `scripts/flight/p7_retire.py` exigen ficheros regulares, por lo que no recorre un clon como arbol; lineas 433-445 de `scripts/flight/p7_common.py` revalidan cada entrada de fichero. Ademas, lineas 301-308 de `scripts/flight/p7_retire.py` saltan ficheros versionados como `SALTADA_VERSIONADA`, y lineas 224-225 de `scripts/flight/p7_common.py` revalidan mtime. Por eso no es la herramienta que retira clones de Kilo. Esa limitacion queda resuelta por WOT-2026-175b, que versiona el archivador hermano. El comprobador L-6 y su cableado quedan sin ticket: motivo: el STOP de degeneracion exige una herramienta propia.
 
 La implementacion P7 si ofrece lista aprobada y hash (lineas 411-430 de `scripts/flight/p7_common.py`), comprobacion de manifiesto (lineas 205-227 de `scripts/flight/p7_common.py`), aborto antes de retirar (lineas 403-408 de `scripts/flight/p7_retire.py`), lock y cwd (lineas 346-386 de `scripts/flight/p7_common.py`), registro fuera del origen (lineas 90-96 y 311-319 de `scripts/flight/p7_retire.py`) y dry-run por defecto (lineas 343-345 y 384-399 de `scripts/flight/p7_retire.py`). Para clones no cumple la clausula de retirada por la razon anterior (lineas 180-182 y 301-308 de `scripts/flight/p7_retire.py`).
 
@@ -37,6 +37,18 @@ Enumeracion m-01 para `p7_retire.py` y su modulo comun:
 (6) CUMPLE: dry-run por defecto (lineas 343-345 y 384-399 de `scripts/flight/p7_retire.py`).
 (7) CUMPLE: es el dueno declarado del contrato y reutiliza el modulo comun `scripts/flight/p7_common.py` (importacion en la linea 27 de `scripts/flight/p7_retire.py`; uso de sus primitivas en las lineas 371-374), con 23 funciones `test_` en `tests/unit/test_p7_retire.py`.
 (8) NO CUMPLE para clones: la lista aprobada es de FICHEROS (lineas 180-182 de `scripts/flight/p7_retire.py`) y salta los versionados por git (lineas 301-308 de `scripts/flight/p7_retire.py`). Por eso la retirada de clones es la excepcion de la seccion 4.
+
+### Receta del archivador versionado
+
+El modo seguro es siempre el predeterminado:
+
+```text
+python scripts/flight/archive_tree.py --origin ORIGIN --archive-root ARCHIVE
+```
+
+Para aplicar una lista aprobada, la lista JSON contiene objetos `rel` y `sha256` del arbol de cada clon; se calcula su SHA-256 exacto y se pasa con `--list` y `--list-sha256` junto con `--apply`. `--apply-archive` solo escribe zip, manifiesto y ARCHIVADO; `--apply-retire` consume una familia ya verificada; `--apply` hace ambas fases. `--recover-retirement` consume `retirement_recovery.json`. Los parametros disponibles son `--min-dias` (0), `--max-bytes` (-1, sin limite), `--min-libre` (0), `--hilos` (4), `--tamano-lote` (0), `--prefijo-familia` (`clone_archive`) y `--umbral-hilo` (1048576). La raiz de archivo debe existir para aplicar: si falta o no cumple `--min-libre`, el rc es 4 sin crearla; errores de contrato devuelven 1 y argumentos invalidos devuelven 2.
+
+Cada familia contiene zip y manifiesto atomicos. El zip se relee y sus nombres y hashes se comparan antes de escribir `ARCHIVADO`; la retirada vuelve a comparar tamano, mtime, hash, ficheros extra, directorios vacios, enlaces y permisos antes de borrar. En apply, los clones pasan primero a `.p7_stage_<prefijo>` bajo el padre del origen; una ejecucion con stage pendiente exige `--resume`. Un registro `IN_PROGRESS` queda en la raiz para `--recover-retirement` y solo se transforma en `RETIRADO` cuando el origen ha desaparecido. La recuperacion limpia temporales, conserva el zip y manifiesto y nunca escribe RETIRADO con ficheros presentes.
 
 ### Limites unicos L-1 a L-8
 
@@ -63,20 +75,24 @@ Snapshot fechado medido el 2026-11-15 10:51:17 CET: 83 zips, 37.661.340.108 byte
 
 Snapshot fechado del sobrecoste de los 14 lotes ZIP_STORED: 36.600.681.652 bytes de zip frente a 36.044.189.876 bytes de origen, 1,544 por ciento. Conviven lotes DEFLATED y STORED; L-4 exige zip, manifiesto y hash, no una falsa uniformidad de metodo de compresion. La cifra es medicion, no criterio.
 
-## 4. Excepcion de los clones de Kilo
+## 4. Excepcion de los clones de Kilo (finalizada)
 
 - Alcance: el archivador propio de clones de Kilo, no futuras herramientas ni otras familias.
-- Herramienta: `D:/flight_archive_tools/run_fast.py` [externa], apoyada por `D:/flight_archive_tools/run_tramo1.py` [externa]; no esta versionada; es la excepcion a la regla de que toda retirada pasa por P7, amparada por la autorizacion expresa del usuario, messageId 47d968d6-cd95-4f46-b563-f15ba49d7edd (pasada 1) y messageId 8ffd3f81-6d76-4aed-a1d2-7459be0a8df1 (pasada 2).
+- Herramienta: `scripts/flight/archive_tree.py`, versionada en el motor y hermana de `p7_retire.py`; la excepcion de los clones termina con WOT-2026-175b. El archivador mantiene dry-run por defecto, lock P7, lista aprobada, manifiesto y registro en la raiz.
 - Autoridad: messageId 47d968d6-cd95-4f46-b563-f15ba49d7edd (pasada 1) y messageId 8ffd3f81-6d76-4aed-a1d2-7459be0a8df1 (pasada 2), citados solo en su parte operativa y sin texto privado.
-- Condicion de fin: una herramienta versionada, deuda WOT-2026-175b, o la revocacion del usuario.
-- Por que no p7_retire para clones: la lista aprobada es de FICHEROS regulares (lineas 180-182 de `scripts/flight/p7_retire.py`), salta los ficheros versionados por git como `SALTADA_VERSIONADA` (lineas 301-308), incrusta todas las entradas en la fila del indice (lineas 233-244) y re-comprueba mtime (lineas 224-225 de `scripts/flight/p7_common.py`). Ademas, hoy p7_retire.py falla cerrado con rc 1 sobre `D:/flight_archive` [externa] porque `reconcile_index` solo cuenta filas ARCHIVADO y hay 66 RETIRADO_LOCAL; migrarlas sin ensanchar `reconcile_index` es deuda WOT-2026-175d.
+- Condicion de fin: cumplida por WOT-2026-175b. La ejecucion real contra una raiz de trabajo sigue requiriendo aprobacion posterior del usuario.
+- Por que no p7_retire para clones: su lista aprobada es de FICHEROS regulares y salta ficheros versionados. `archive_tree.py` recibe arboles de clones, pero escribe el mismo `index.jsonl` y reutiliza `p7_common` para lock, hashes y reconciliacion.
 - Efecto de P7 en la raiz principal `D:/flight_archive` [externa]: `p7_common.reconcile_index` solo cuenta filas `ARCHIVADO` (lineas 271-310 de `scripts/flight/p7_common.py`, filtro en la linea 286), asi que `scripts/flight/p7_retire.py` falla cerrado con rc 1 por las 66 filas `RETIRADO_LOCAL`; migrarlas sin ensanchar `reconcile_index` es deuda WOT-2026-175d.
 
 Enumeracion m-01 para el archivador, medida en los ficheros externos con estas lineas: (1) exenta: no conserva una lista aprobada con hash de la lista; deriva la lista y hashea fichero a fichero (lineas 12-16 y 24-30 de `D:/flight_archive_tools/run_fast.py` [externa]); (2) exigible de forma parcial: guarda tamano, sha256 y nombres y comprueba extras, pero no mtime (lineas 65-68 de `D:/flight_archive_tools/run_fast.py` [externa]); (3) exigible: aborta sin borrar ante discrepancia (lineas 59-68 de `D:/flight_archive_tools/run_fast.py` [externa]); (4) exigible de forma parcial: guarda de proceso vivo con exclusion de shells y `claude.exe`, sin guarda de cwd ni lock (linea 37 de `D:/flight_archive_tools/run_tramo1.py` [externa]); (5) exigible de forma parcial: el registro queda fuera del arbol retirado, pero es temporal (linea 79 de `D:/flight_archive_tools/run_fast.py` [externa]); (6) exenta: no ofrece dry-run; (7) exenta: no es el dueno P7; (8) exenta por esta excepcion: no toda retirada pasa por P7. Las partes exigibles se limitan a lo que el archivador realmente mide; la deuda restante no se presenta como cubierta.
 
 ## 5. Recuperacion reproducible
 
-La receta corregida es: detectar la raiz y leer su indice; localizar zip, manifiesto y `zip_sha256`; crear una carpeta nueva y vacia FUERA de las carpetas de trabajo y de cualquier repo; ejecutar `python -I -m zipfile -e ZIP CARPETA` con el interprete del motor; y ejecutar el script parametrizado siguiente. El nombre depende del escritor: `kilo_mut_pilot3-20261115T000628Z.zip` fue escrito por P7 y `kilo_mut_f_t108.zip` por el archivador. El comando no restaura mtime: si hiciera falta, se aplica desde el campo `mtime` del manifiesto despues de la comprobacion.
+La receta corregida es: detectar la raiz y leer su indice; localizar zip, manifiesto y `zip_sha256`; crear una carpeta nueva y vacia FUERA de las carpetas de trabajo y de cualquier repo; ejecutar `python -I -m zipfile -e ZIP CARPETA` con el interprete del motor; restaurar, en un paso separado, cada `mtime` del manifiesto con `os.utime` antes de verificar; y ejecutar el script parametrizado siguiente. El nombre depende del escritor: `kilo_mut_pilot3-20261115T000628Z.zip` fue escrito por P7 y `kilo_mut_f_t108.zip` por el archivador. La extraccion no restaura mtime por si sola: el verificador debe comparar el valor restaurado, nunca fijarlo durante la comprobacion.
+
+La receta/verificador tambien debe comprobar que los ficheros de solo lectura conservan bytes, tamano y mtime. Una junction o reparse point se detecta como discrepancia/elemento inseguro; no se archiva una junction en el origen porque la fila b-05 exige abortar ante enlaces, mientras b-11 pide cubrir junction en el round trip. Esa exigencia de b-11 es, por tanto, contradictoria con archivar una junction de origen: se cubre verificando su deteccion, no forzando su entrada en un lote valido.
+
+En Windows, si la consulta de procesos falla, devuelve codigo distinto de cero, o agota el tiempo, el archivador reintenta una vez (10 s y 30 s) y despues aborta cerrado con `cannot list processes`. Fuera de Windows la herramienta no dispone de esa tabla y conserva el limite documentado de devolver una lista vacia.
 
 El lote mas pequeno citado por escritor es `kilo_mut_pilot3-20261115T000628Z.zip`, 283.166.939 bytes, 25.398 ficheros, DEFLATED, con manifiesto hermano; el lote menor del archivador es `kilo_mut_f_t108.zip`, 660.388.511 bytes, 43.185 ficheros, STORED. Los dos recibos siguientes se reprodujeron en carpetas nuevas y vacias bajo una ruta temporal que se borra despues, con el script de comparacion del bloque anterior copiado sin modificarlo; D: no se toco. Los reprodujo el revisor del ticket, no el autor: el verificador independiente V1 no entrego transcripcion y se declara NO VERIFICABLE por tercero.
 
@@ -139,7 +155,7 @@ La comprobacion la hace el comparador de este documento, codigo distinto del que
 
 ## 6. Deudas y contacto
 
-- Archivador propio versionado: WOT-2026-175b.
+- Archivador propio versionado: WOT-2026-175b, resuelto por `scripts/flight/archive_tree.py`; la deuda restante es la operacion real con aprobacion posterior.
 - Comprobador L-6 y su cableado: sin ticket: motivo: el STOP de degeneracion exige una herramienta propia.
 - Migracion de filas `RETIRADO_LOCAL` sin ensanchar `reconcile_index`: WOT-2026-175d.
 - Purga por caducidad: WOT-2026-175c.
