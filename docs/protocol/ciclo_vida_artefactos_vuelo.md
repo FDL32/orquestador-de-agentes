@@ -15,6 +15,7 @@ Una raiz vigente es una carpeta que contiene zips y al menos un indice maquina d
 | `D:/flight_archive_tools` [externa] | ninguno | herramientas, sin zips | NO-RAIZ |
 
 El `INDEX.md` es un indice humano cuando existe. El indice maquina no es unico en la raiz de clones: `index_kilo.jsonl` cubre las filas del archivador y `index.jsonl` cubre la fila P7 de `kilo_mut_pilot3`; no se afirma que ninguno cubra todos los lotes. Cada carpeta de familia lleva el zip y el manifiesto hermano. Para encontrar una entrada, localizar primero su familia y fecha en el indice de su raiz, resolver la ruta del zip relativa a esa raiz y verificar `zip_sha256` antes de extraer.
+- El `INDEX.md` de `D:/flight_archive_kilo` [externa] solo lista el lote de P7 (`kilo_mut_pilot3`), no los lotes del archivador de clones: el 2026-11-15 tiene 1 fila frente a 15 carpetas de lote; ninguno de los indices cubre todos los lotes.
 
 Cobertura medida por raiz: en `D:/flight_archive_kilo` [externa] hay 14 filas de `index_kilo.jsonl` y 1 fila `ARCHIVADO` de `index.jsonl`; en `D:/flight_archive` [externa] hay 66 filas `RETIRADO_LOCAL` y 2 `ARCHIVADO` en su `index.jsonl`. La cobertura `RETIRADO_LOCAL` no satisface al reconciliador P7: `p7_common.reconcile_index` solo cuenta filas `ARCHIVADO` (lineas 271-310 de `scripts/flight/p7_common.py`; filtro en linea 286), y el cierre medido encontro 78 hallazgos en `reconcile` y 54 en `reports`. Migrar esas filas sin ensanchar el reconciliador es deuda WOT-2026-175d. Cualquier zip sin fila se declara `sin fila: motivo` y bloquea la afirmacion de cobertura completa; la sonda reproducible es leer cada indice y comparar sus rutas con los zips de cada familia.
 
@@ -71,7 +72,7 @@ Enumeracion m-01 para el archivador, medida en los ficheros externos con estas l
 
 ## 5. Recuperacion reproducible
 
-La receta corregida es: detectar la raiz y leer su indice; localizar zip, manifiesto y `zip_sha256`; crear una carpeta nueva y vacia fuera de cualquier repo; ejecutar `python -I -m zipfile -e ZIP CARPETA` con el interprete del motor; y ejecutar el script parametrizado siguiente. El nombre depende del escritor: `kilo_mut_pilot3-20261115T000628Z.zip` fue escrito por P7 y `kilo_mut_f_t108.zip` por el archivador.
+La receta corregida es: detectar la raiz y leer su indice; localizar zip, manifiesto y `zip_sha256`; crear una carpeta nueva y vacia FUERA de las carpetas de trabajo y de cualquier repo; ejecutar `python -I -m zipfile -e ZIP CARPETA` con el interprete del motor; y ejecutar el script parametrizado siguiente. El nombre depende del escritor: `kilo_mut_pilot3-20261115T000628Z.zip` fue escrito por P7 y `kilo_mut_f_t108.zip` por el archivador. El comando no restaura mtime: si hiciera falta, se aplica desde el campo `mtime` del manifiesto despues de la comprobacion.
 
 El lote mas pequeno citado por escritor es `kilo_mut_pilot3-20261115T000628Z.zip`, 283.166.939 bytes, 25.398 ficheros, DEFLATED, con manifiesto hermano; el lote menor del archivador es `kilo_mut_f_t108.zip`, 660.388.511 bytes, 43.185 ficheros, STORED. Los dos recibos siguientes se reprodujeron en carpetas nuevas y vacias bajo una ruta temporal que se borra despues, con el script de comparacion del bloque anterior copiado sin modificarlo; D: no se toco. Los reprodujo el revisor del ticket, no el autor: el verificador independiente V1 no entrego transcripcion y se declara NO VERIFICABLE por tercero.
 
@@ -130,7 +131,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-El script compara existencia, tamano, sha256, conjunto restaurado y conjunto del manifiesto, y el sha256 del zip con `zip_sha256` del indice. No compara mtime: `zipfile -e` no restaura mtime. Si `D:/flight_archive_kilo` o `D:/flight_archive` [externa] no existe o no es carpeta, se detecta antes de leer el indice, se para y se informa a `flight_roster.json` [externa] -> `active_roles.orquestador`; nunca se cae a C:.
+La comprobacion la hace el comparador de este documento, codigo distinto del que archivo. El script compara existencia, tamano, sha256, conjunto restaurado y conjunto del manifiesto, y el sha256 del zip con `zip_sha256` del indice. No compara mtime: `zipfile -e` no restaura mtime. Si `D:/flight_archive_kilo` o `D:/flight_archive` [externa] no existe o no es carpeta, se detecta antes de leer el indice, se para y se informa a `flight_roster.json` [externa] -> `active_roles.orquestador`, y si `active_roles.orquestador` no resuelve a nadie se informa al usuario; nunca se cae a C:.
 
 ## 6. Deudas y contacto
 
