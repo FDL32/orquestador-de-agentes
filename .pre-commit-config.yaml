@@ -111,6 +111,15 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      # WOT-2026-171a: protege el censo de scripts y los presupuestos normativos.
+      - id: check-counter-budget-gate
+        name: check counter and prompt budget gate
+        entry: uv run python scripts/check_counter_budget_gate.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # WOT-2026-042z: un prompt/contrato citado por ruta => se leyo entero.
       # Un grep/diff sobre el fichero NO cuenta como lectura. Muestreo
       # declarado (:X-Y con "riesgo") pasa con WARN; muestreo silencioso ->

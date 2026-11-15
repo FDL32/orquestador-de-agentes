@@ -25,6 +25,7 @@ Matriz DoD (clausula, test citado POR NOMBRE, conteo esperado, conteo medido, co
 - Si el cambio toca AGENTS.md, el FLT de arriba incluye tambien sus derivados llms-full.txt y llms.txt (el hook check-llms-full-sync los regenera y los exige sincronizados).
 - No pidas encoding-guard explicito (`scripts/check_encoding_guard.py` con ficheros como argumento) sobre ficheros .txt generados: GLOB_PATTERNS no los cubre y el modo explicito da una falsa alarma.
 - No copies cifras de cupo ni otras cifras de estado de la fuente al entregable: remite siempre a la fuente unica, nunca las transcribas.
+- Si el FLT toca scripts/ o prompts/, el focal lista tests/unit/test_152b2_link_readers_bom.py y tests/unit/test_check_prompt_line_budget.py.
 - Antes de invocar `scripts/tools/run_and_exit.py`, fija `PYTHONIOENCODING=utf-8` en la consola: sin eso falla con UnicodeEncodeError en consola cp1252 y el rc reportado deja de ser el real.
 - Cada commit lleva el trailer EXACTO `Co-Authored-By: Claude <noreply@anthropic.com>`, SIN version de modelo (un trailer con version de modelo lo rechaza el hook).
 

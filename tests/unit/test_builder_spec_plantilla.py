@@ -65,6 +65,9 @@ RULE_LINES_REQUIRED = (
     "GLOB_PATTERNS no los cubre y el modo explicito da una falsa alarma.",
     "- No copies cifras de cupo ni otras cifras de estado de la fuente al "
     "entregable: remite siempre a la fuente unica, nunca las transcribas.",
+    "- Si el FLT toca scripts/ o prompts/, el focal lista "
+    "tests/unit/test_152b2_link_readers_bom.py y "
+    "tests/unit/test_check_prompt_line_budget.py.",
     "Un solo informe por hito, con estos campos fijos, en este orden exacto:",
     "Pega aqui el DoD LITERAL completo de la fila (sin resumir ni parafrasear):",
 )
@@ -233,6 +236,21 @@ def assert_rule_lines_present(text: str) -> None:
     for line in RULE_LINES_REQUIRED:
         if line not in text:
             raise ValueError(f"missing exact rule line starting: {line[:30]!r}")
+
+
+def assert_counter_tests_are_focal_when_surface_touched(text: str) -> None:
+    """Require both counter tests whenever scripts or prompts are in the FLT."""
+    rule = next(
+        (line for line in text.splitlines() if line.startswith("- Si el FLT toca ")),
+        "",
+    )
+    required = (
+        "scripts/" in rule and "prompts/" in rule,
+        "tests/unit/test_152b2_link_readers_bom.py" in rule,
+        "tests/unit/test_check_prompt_line_budget.py" in rule,
+    )
+    if not all(required):
+        raise ValueError("missing counter tests focal rule for scripts or prompts")
 
 
 def assert_has_dod_literal_and_matrix_sections(text: str) -> None:
@@ -479,6 +497,62 @@ def test_real_template_mentions_exact_diff_precommit() -> None:
 def test_real_template_has_all_rule_lines_exact() -> None:
     """The real template contains every required hard-rule line verbatim."""
     assert_rule_lines_present(TEMPLATE_PATH.read_text(encoding="utf-8"))
+
+
+def test_real_template_requires_counter_tests_for_scripts_or_prompts() -> None:
+    """The real rule names both counter tests and its triggering surfaces."""
+    assert_counter_tests_are_focal_when_surface_touched(
+        TEMPLATE_PATH.read_text(encoding="utf-8")
+    )
+
+
+def test_counter_focal_rule_missing_one_test_fails() -> None:
+    """Removing either required test name is rejected."""
+    text = TEMPLATE_PATH.read_text(encoding="utf-8")
+    candidate = mutate_once(text, "tests/unit/test_152b2_link_readers_bom.py", "")
+    with pytest.raises(ValueError, match="counter tests focal"):
+        assert_counter_tests_are_focal_when_surface_touched(candidate)
+
+
+def test_counter_focal_rule_missing_surface_condition_fails() -> None:
+    """Removing the scripts/prompts condition is rejected."""
+    text = TEMPLATE_PATH.read_text(encoding="utf-8")
+    candidate = mutate_once(
+        text, "Si el FLT toca scripts/ o prompts/", "Si el FLT toca"
+    )
+    with pytest.raises(ValueError, match="counter tests focal"):
+        assert_counter_tests_are_focal_when_surface_touched(candidate)
+
+
+def _remove_from_focal_rule(text: str, fragment: str) -> str:
+    """Remove one fragment from the focal rule without touching other rules."""
+    lines = text.splitlines(keepends=True)
+    index = next(
+        i for i, line in enumerate(lines) if line.startswith("- Si el FLT toca ")
+    )
+    assert fragment in lines[index]
+    lines[index] = lines[index].replace(fragment, "", 1)
+    return "".join(lines)
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        "tests/unit/test_152b2_link_readers_bom.py",
+        "tests/unit/test_check_prompt_line_budget.py",
+        "scripts/",
+        "prompts/",
+    ],
+)
+def test_counter_focal_rule_missing_each_required_token_fails(missing: str) -> None:
+    """Each focal surface and test name is independently mandatory."""
+    text = TEMPLATE_PATH.read_text(encoding="utf-8")
+    if missing in {"scripts/", "prompts/"}:
+        candidate = _remove_from_focal_rule(text, missing)
+    else:
+        candidate = mutate_once(text, missing, "")
+    with pytest.raises(ValueError, match="counter tests focal"):
+        assert_counter_tests_are_focal_when_surface_touched(candidate)
 
 
 def test_precommit_rule_line_weakened_fails_explicitly() -> None:

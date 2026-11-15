@@ -14,6 +14,10 @@ guards:
     skip_explicito: 'no'
     nota: universo = perfiles del agents.json pasado (default relativo al cwd); OK
       sin N
+  scripts/check_counter_budget_gate.py:
+    clase: staged_files
+    skip_explicito: 'si'
+    nota: 'modo dual: pre-commit = indice staged (el universo lo entrega el hook); --range A..B clasifica el rango y queda en esta nota; publica SKIP EXPLICITO con "No es un PASS" cuando el diff no toca scripts/ de primer nivel ni NORMATIVE_PROMPTS; sin probe (D1: probes solo para los 2 guards de 043l)'
   scripts/check_agents_accessible.py:
     clase: fixed_denominator
     skip_explicito: desconocido

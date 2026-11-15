@@ -68,6 +68,8 @@ _EMPTY_POLICY = {"known_unwired": {}, "extra_guards": {}, "wired_via": {}}
 # The COUNT is not the invariant -- the SAME set is (a classifier that drops a real
 # call-site and picks up a bogus one prints the same number).
 EXPECTED_WIRED_REAL = {
+    # WOT-2026-171a: cableado via hook local always_run en .pre-commit-config.yaml.
+    "check_counter_budget_gate",
     # WOT-2026-044m: cableado via hook local en .pre-commit-config.yaml
     "check_prompt_gitignored_paths",
     "pretooluse_bash_wait_guard",
