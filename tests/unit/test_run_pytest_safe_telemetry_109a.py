@@ -456,3 +456,58 @@ class TestDurationsHeaderShape:
         ):
             out = rps._cap_durations_table_echo([header, *rows], limit=25)
             assert sum(" call " in ln for ln in out) == 25
+
+
+class TestSleepAcParser:
+    def test_localized_powercfg_output_uses_the_penultimate_hex_value(self) -> None:
+        text = (
+            "Minima 0x00000000\n"
+            "Maxima 0xffffffff\n"
+            "Incremento 0x00000001\n"
+            "Indice de configuracion de corriente alterna actual: 0x00000000\n"
+            "Indice de configuracion de corriente continua actual: 0x00004650\n"
+        )
+        assert rps._parse_sleep_ac_output(text) == 0
+
+    @pytest.mark.parametrize("text", ["0x00000000", "", "texto sin valores"])
+    def test_missing_hex_values_are_not_measured(self, text: str) -> None:
+        assert rps._parse_sleep_ac_output(text) is None
+
+
+class TestClockGapVerdict:
+    def test_normal_deltas_are_not_detected(self) -> None:
+        assert rps._clock_gap_verdict([1.0, 1.1643], 30.0) == {
+            "detected": False,
+            "max_gap_s": 1.164,
+            "threshold_s": 30.0,
+        }
+
+    def test_large_delta_is_detected(self) -> None:
+        assert rps._clock_gap_verdict([1.0, 3641.0], 30.0)["detected"] is True
+
+    def test_no_deltas_are_not_measured(self) -> None:
+        assert rps._clock_gap_verdict([], 30.0) is None
+
+
+class TestClockGapMonitorInjected:
+    def test_injected_clock_and_wait_detect_a_synthetic_gap(self) -> None:
+        samples = iter([0.0, 1.0, 3642.0])
+        waits = iter([False, False, True])
+        monitor = rps._ClockGapMonitor(
+            clock=lambda: next(samples), wait=lambda timeout: next(waits)
+        ).start()
+        monitor._thread.join(timeout=1.0)
+        verdict = monitor.stop()
+        assert verdict == {
+            "detected": True,
+            "max_gap_s": 3641.0,
+            "threshold_s": 30.0,
+        }
+
+    def test_clock_exception_degrades_to_none(self) -> None:
+        def broken_clock():
+            raise RuntimeError("clock unavailable")
+
+        monitor = rps._ClockGapMonitor(clock=broken_clock, wait=lambda _: True).start()
+        monitor._thread.join(timeout=1.0)
+        assert monitor.stop() is None

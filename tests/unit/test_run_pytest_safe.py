@@ -70,6 +70,7 @@ def load_runner_module():
     # test_run_pytest_safe_telemetry_109a.py, which imports the module directly.
     module._probe_cpu_load = lambda window_s=0.3: (None, [])
     module._probe_foreign_pytest = lambda: (None, [])
+    module._probe_sleep_ac = lambda: (0, [])
     # WOT-2026-022g: structural anti-contamination. If the autouse fixture has
     # installed a redirect, EVERY freshly loaded runner points its run-history /
     # last-run write paths at the per-test tmp. A new harness that calls main()
@@ -1988,6 +1989,48 @@ class TestRunHistoryInSummary:
         assert rec["tested_commit_sha"] == "deadbeef"
         assert rec["level"] == "all"
 
+    def test_clock_gap_reaches_the_history_line(self, tmp_path, monkeypatch) -> None:
+        """A monitor verdict reaches the same history row as the run."""
+        rps = load_runner_module()
+
+        class FakeMonitor:
+            def stop(self):
+                return {"detected": True, "max_gap_s": 3641.0, "threshold_s": 30.0}
+
+        monkeypatch.setattr(
+            rps, "_start_clock_gap_monitor", lambda level: FakeMonitor()
+        )
+        _, lines = self._stub_main_with_log(
+            rps, tmp_path, monkeypatch, _REAL_SUMMARY_LOG
+        )
+        assert json.loads(lines[0])["clock_gap"]["detected"] is True
+
+    def test_sleep_ac_field_reaches_the_history_line(
+        self, tmp_path, monkeypatch
+    ) -> None:
+        """The startup sleep field is preserved by append_run_history."""
+        rps = load_runner_module()
+        _, lines = self._stub_main_with_log(
+            rps, tmp_path, monkeypatch, _REAL_SUMMARY_LOG
+        )
+        assert json.loads(lines[0])["environment_at_start"]["sleep_ac_seconds"] == 0
+
+    def test_clock_gap_is_none_when_monitor_fails(self, tmp_path, monkeypatch) -> None:
+        """A failing monitor cannot suppress the run or its history row."""
+        rps = load_runner_module()
+
+        class FailingMonitor:
+            def stop(self):
+                raise RuntimeError("clock failed")
+
+        monkeypatch.setattr(
+            rps, "_start_clock_gap_monitor", lambda level: FailingMonitor()
+        )
+        _, lines = self._stub_main_with_log(
+            rps, tmp_path, monkeypatch, _REAL_SUMMARY_LOG
+        )
+        assert json.loads(lines[0])["clock_gap"] is None
+
     def test_contention_fields_reach_the_history_line(
         self, tmp_path: Path, monkeypatch
     ) -> None:
@@ -2667,7 +2710,7 @@ class TestStampSurvivesMutatingHooks:
 
         WOT-2026-079c: the live surfaces from pre_handoff_guard::LIVE_SURFACES_REL
         ALWAYS enter ignore_paths (independent of the seal location), so the set
-        is never empty — only the seal paths change.
+        is never empty -- only the seal paths change.
         """
         from scripts.pre_handoff_guard import LIVE_SURFACES_REL
 
@@ -2784,7 +2827,7 @@ class TestStampSurvivesMutatingHooks:
 
         # Create tracked files that simulate what session-close writes.
         # Some LIVE_SURFACES_REL entries end with '/' (directories): skip them
-        # for write_text — the ignore_paths set covers the directory prefix so
+        # for write_text -- the ignore_paths set covers the directory prefix so
         # any file under it is already excluded.
         tracked_files: dict[str, str] = {}
         viva_paths_in_repo: list[str] = []
@@ -3282,6 +3325,95 @@ class TestEmitEnvPreflight:
         rps._emit_env_preflight(env)
         captured = capsys.readouterr()
         assert "WARN" not in captured.out
+
+
+def test_sleep_preflight_warns_and_records_when_ac_nonzero(capsys) -> None:
+    """An active AC timeout is visible and remains non-blocking."""
+    rps = load_runner_module()
+    env = {"probe_errors": []}
+    rps._apply_sleep_preflight("all", env, probe=lambda: (1800, []))
+    output = capsys.readouterr().out
+    assert "1800" in output
+    assert "powercfg /change standby-timeout-ac 0" in output
+    assert env["sleep_ac_seconds"] == 1800
+
+
+def test_sleep_preflight_silent_and_records_zero_when_ac_zero(capsys) -> None:
+    """A measured zero timeout records zero without a warning or skip."""
+    rps = load_runner_module()
+    env = {"probe_errors": []}
+    rps._apply_sleep_preflight("all", env, probe=lambda: (0, []))
+    output = capsys.readouterr().out
+    assert "WARN" not in output
+    assert "SKIP" not in output
+    assert env["sleep_ac_seconds"] == 0
+
+
+def test_sleep_preflight_does_nothing_when_not_level_all(capsys) -> None:
+    """Non-canonical levels do not consult or add the sleep field."""
+    rps = load_runner_module()
+    called = False
+
+    def probe():
+        nonlocal called
+        called = True
+        return 1800, []
+
+    env = {"probe_errors": []}
+    rps._apply_sleep_preflight("unit", env, probe=probe)
+    assert called is False
+    assert "sleep_ac_seconds" not in env
+    assert capsys.readouterr().out == ""
+
+
+def test_sleep_preflight_skip_declares_reason(capsys) -> None:
+    """A missing powercfg probe is explicitly recorded as unverified."""
+    rps = load_runner_module()
+    env = {"probe_errors": []}
+    rps._apply_sleep_preflight(
+        "all", env, probe=lambda: (None, ["sleep_ac: powercfg no encontrado"])
+    )
+    output = capsys.readouterr().out
+    assert "SKIP" in output
+    assert "sleep_ac: powercfg no encontrado" in output
+    assert env["sleep_ac_seconds"] is None
+    assert env["probe_errors"][-1] == "sleep_ac: powercfg no encontrado"
+
+
+def test_sleep_preflight_fail_open_when_probe_raises(capsys) -> None:
+    """A raising sleep probe leaves a None field and an explicit SKIP."""
+    rps = load_runner_module()
+
+    def probe():
+        raise RuntimeError("probe exploded")
+
+    env = {"probe_errors": []}
+    rps._apply_sleep_preflight("all", env, probe=probe)
+    output = capsys.readouterr().out
+    assert "SKIP" in output
+    assert "sleep_ac: RuntimeError" in output
+    assert env["sleep_ac_seconds"] is None
+    assert env["probe_errors"][-1] == "sleep_ac: RuntimeError"
+
+
+def test_append_run_history_carries_clock_gap(tmp_path, monkeypatch) -> None:
+    """The clock-gap field is whitelisted and absent summaries become None."""
+    rps = load_runner_module()
+    history = tmp_path / "run_history.jsonl"
+    monkeypatch.setattr(rps, "RUN_HISTORY_JSONL", history)
+    rps.append_run_history(
+        {
+            "clock_gap": {
+                "detected": True,
+                "max_gap_s": 3641.0,
+                "threshold_s": 30.0,
+            }
+        }
+    )
+    rps.append_run_history({})
+    rows = [json.loads(line) for line in history.read_text().splitlines()]
+    assert rows[0]["clock_gap"]["detected"] is True
+    assert rows[1]["clock_gap"] is None
 
 
 class TestEmitCwdMaxpathWarn:

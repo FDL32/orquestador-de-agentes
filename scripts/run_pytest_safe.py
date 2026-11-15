@@ -27,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from collections.abc import Iterable
 from datetime import datetime, timezone
@@ -165,6 +166,11 @@ EX_ROLE_NOT_PERMITTED = 77
 # fail-open (a tracker failure never aborts a pytest run).
 RUN_HISTORY_JSONL = _LazyPath(lambda: RUNTIME_DIR.resolve() / "run_history.jsonl")
 RUN_HISTORY_MAX = 500
+
+# Umbral medido como 30 s = 182x el sobrepaso maximo medido del tick (0.1643 s
+# con la maquina cargada); el incidente fue 3641 s.
+_CLOCK_GAP_TICK_S = 1.0
+_CLOCK_GAP_THRESHOLD_S = 30.0
 
 
 def _detect_mismatched_agent_dir() -> str | None:
@@ -531,6 +537,162 @@ def _run_cmd(
             env=env,
         )
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+
+
+def _parse_sleep_ac_output(text: str) -> int | None:
+    """Parse the AC sleep index from localized powercfg output.
+
+    Before: *text* is the complete output of ``powercfg /query``.
+    During: extracts every hexadecimal setting and selects the penultimate
+        value, because the localized labels are not a stable interface.
+    After: returns the AC index in seconds, or None when fewer than two
+        hexadecimal values are present.
+    """
+    values = re.findall(r"0x([0-9a-fA-F]{1,8})", text)
+    if len(values) < 2:
+        return None
+    return int(values[-2], 16)
+
+
+def _probe_sleep_ac() -> tuple[int | None, list[str]]:
+    """Read the AC inactivity timeout without changing power settings.
+
+    Before: the process may run on Windows or another operating system.
+    During: invokes only ``powercfg /query`` with a list of arguments and
+        converts failures into an explicit probe error.
+    After: returns seconds plus an empty error list on success, otherwise a
+        fail-open None value and one ``sleep_ac:`` reason.
+    """
+    if os.name != "nt":
+        return None, ["sleep_ac: no es Windows (sin powercfg)"]
+    result = _run_cmd(
+        ["powercfg", "/query", "SCHEME_CURRENT", "SUB_SLEEP", "STANDBYIDLE"],
+        timeout=5.0,
+    )
+    if result is None:
+        return None, ["sleep_ac: powercfg no encontrado"]
+    if result.returncode != 0:
+        return None, [f"sleep_ac: powercfg rc={result.returncode}"]
+    seconds = _parse_sleep_ac_output(result.stdout)
+    if seconds is None:
+        return None, ["sleep_ac: salida no parseable"]
+    return seconds, []
+
+
+def _apply_sleep_preflight(level: str, env: dict, probe=None) -> None:
+    """Probe and report the AC sleep timeout for the canonical suite level.
+
+    Before: *env* is the startup environment snapshot and *level* is the
+        requested runner level.
+    During: resolves the probe at call time, records its value or reason, and
+        emits only the required non-blocking WARN or explicit SKIP.
+    After: mutates *env* with ``sleep_ac_seconds`` only for ``all``; probe
+        failures never propagate or alter the runner exit code.
+    """
+    if level != "all":
+        return
+    if probe is None:
+        probe = _probe_sleep_ac
+    try:
+        seconds, reasons = probe()
+    except Exception as exc:
+        seconds = None
+        reasons = [f"sleep_ac: {type(exc).__name__}"]
+    env["sleep_ac_seconds"] = seconds
+    if reasons:
+        env.setdefault("probe_errors", []).extend(reasons)
+        print(
+            "[pytest-safe] SKIP: no se pudo consultar la suspension por inactividad "
+            f"en AC ({reasons[0]}). No se avisa ni se asume 0: el ajuste queda NO "
+            "VERIFICADO en esta maquina."
+        )
+    elif seconds != 0:
+        print(
+            "[pytest-safe] WARN: suspension por inactividad en AC activa: indice "
+            f"{seconds} s (distinto de 0). Si el PC se suspende durante la suite, "
+            "un test de reloj puede dar un rojo falso (incidente 2026-11-14: "
+            "3641.73 s). Remedio: powercfg /change standby-timeout-ac 0. WARN "
+            "no bloqueante: no cambia exit codes."
+        )
+
+
+def _clock_gap_verdict(deltas_s, threshold_s: float) -> dict | None:
+    """Summarize measured inter-tick gaps against a threshold.
+
+    Before: *deltas_s* contains elapsed ``perf_counter`` intervals.
+    During: computes the maximum once and rounds it for stable telemetry.
+    After: returns None without samples, otherwise the detected/max/threshold
+        dictionary.
+    """
+    if not deltas_s:
+        return None
+    max_gap_s = max(deltas_s)
+    return {
+        "detected": bool(max_gap_s > threshold_s),
+        "max_gap_s": round(max_gap_s, 3),
+        "threshold_s": threshold_s,
+    }
+
+
+class _ClockGapMonitor:
+    """Daemon heartbeat that records unusually long perf-counter gaps.
+
+    Before: a monotonic high-resolution clock and optional wait seam are
+        available; no machine suspension is induced by this monitor.
+    During: a daemon thread samples the injected clock once per tick and keeps
+        inter-sample gaps; every exception is contained.
+    After: ``stop`` returns a verdict or None and never raises.
+    """
+
+    def __init__(self, clock=None, wait=None, tick_s: float = _CLOCK_GAP_TICK_S):
+        self._clock = clock if clock is not None else time.perf_counter
+        self._stop_event = threading.Event()
+        self._wait = wait if wait is not None else self._stop_event.wait
+        self._tick_s = tick_s
+        self._deltas_s: list[float] = []
+        self._thread: threading.Thread | None = None
+
+    def _run(self) -> None:
+        try:
+            previous = self._clock()
+            while not self._wait(self._tick_s):
+                current = self._clock()
+                self._deltas_s.append(current - previous)
+                previous = current
+        except Exception:
+            return
+
+    def start(self):
+        try:
+            self._thread = threading.Thread(target=self._run, daemon=True)
+            self._thread.start()
+        except Exception:
+            self._thread = None
+        return self
+
+    def stop(self) -> dict | None:
+        try:
+            self._stop_event.set()
+            if self._thread is not None:
+                self._thread.join(timeout=self._tick_s + 1.0)
+            return _clock_gap_verdict(self._deltas_s, _CLOCK_GAP_THRESHOLD_S)
+        except Exception:
+            return None
+
+
+def _start_clock_gap_monitor(level: str):
+    """Start the clock-gap monitor only for ``--level all``.
+
+    Before: *level* is the parsed runner level.
+    During: constructs the monitor with the call-time ``perf_counter`` seam.
+    After: returns a started monitor for ``all`` or None otherwise, fail-open.
+    """
+    if level != "all":
+        return None
+    try:
+        return _ClockGapMonitor(clock=time.perf_counter).start()
+    except Exception:
         return None
 
 
@@ -1968,6 +2130,7 @@ def append_run_history(summary: dict) -> None:
             # Included so run_history.jsonl entries are self-contained:
             # every row allows diagnosing slow runs without measuring the machine.
             "environment_at_start": summary.get("environment_at_start"),
+            "clock_gap": summary.get("clock_gap"),
         }
         line = json.dumps(record, ensure_ascii=False)
 
@@ -2566,6 +2729,8 @@ def main() -> int:  # noqa: C901
         f"[pytest-safe] {suite_eta_note(RUN_HISTORY_JSONL, args.level, args_mode)}",
         file=sys.stderr,
     )
+    env_at_start = _collect_environment()
+    _apply_sleep_preflight(args.level, env_at_start)
     summary = {
         "started_at": iso_now(),
         # WOT-2026-069g (I1): el interprete usado, como clase (venv-local u
@@ -2638,12 +2803,13 @@ def main() -> int:  # noqa: C901
         "status": "started",
         # WOT-2026-062e (Pieza A): environment snapshot at run start.
         # Written with fsync so it persists even if the process is killed.
-        "environment_at_start": _collect_environment(),
+        "environment_at_start": env_at_start,
     }
     write_json(LAST_RUN_JSON, summary, fsync=True)
 
     # WOT-2026-062e (Pieza C): preflight RAM warning (non-blocking).
     _emit_env_preflight(summary.get("environment_at_start", {}))
+    _clock_monitor = _start_clock_gap_monitor(args.level)
 
     try:
         if args.dry_run:
@@ -2833,6 +2999,12 @@ def main() -> int:  # noqa: C901
                 cleanup_after["failed"].append({"path": str(run_dir), "error": error})
         summary["finished_at"] = iso_now()
         summary["cleanup_after"] = cleanup_after
+        try:
+            summary["clock_gap"] = (
+                _clock_monitor.stop() if _clock_monitor is not None else None
+            )
+        except Exception:
+            summary["clock_gap"] = None
         write_json(LAST_RUN_JSON, summary)
         # WOT-2026-021w: append this run to the run-history evolutivo. Placed
         # AFTER last-run.json is written and is fully fail-open (its own

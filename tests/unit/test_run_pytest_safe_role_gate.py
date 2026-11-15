@@ -31,6 +31,7 @@ def load_runner_module():
     spec.loader.exec_module(module)
     module._probe_cpu_load = lambda window_s=0.3: (None, [])
     module._probe_foreign_pytest = lambda: (None, [])
+    module._probe_sleep_ac = lambda: (0, [])
     return module
 
 
