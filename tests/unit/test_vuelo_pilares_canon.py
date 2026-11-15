@@ -39,6 +39,16 @@ BASE_ROW = (
 )
 
 P28_MESSAGE_ID = "71ce07a9-cadf-4882-85bb-b408632139ec"
+USER_MESSAGE_ID = "0c6b4e16-2fc0-4ec9-96d0-a12cf7bfc45c"
+P1_COLUMN_MESSAGE_ID = "c38d20f3-796a-4f56-ae3d-50c09952ce25"
+P1_CHANGE_SUFFIX = f"(CAMBIO 2026-11-15; id {USER_MESSAGE_ID})"
+EXPECTED_RATIFIED_MESSAGE_IDS = {
+    "P1": (P1_COLUMN_MESSAGE_ID, USER_MESSAGE_ID),
+    "P2": (USER_MESSAGE_ID,),
+    "P10": (USER_MESSAGE_ID,),
+    "P28": (P28_MESSAGE_ID,),
+    "P29": (P28_MESSAGE_ID,),
+}
 P28_FIXTURE_ROW = (
     "| P28 | Regla de prueba P28 | RATIFICADA | "
     f"{P28_MESSAGE_ID} | fuente.md | mecanismo | coordinadora activa |"
@@ -316,10 +326,29 @@ def test_real_canon_pillar_ids_are_contiguous() -> None:
     assert numbers == list(range(1, max(numbers) + 1))
 
 
-@pytest.mark.parametrize("pillar", ["P28", "P29"])
-def test_real_canon_pillar_is_ratified_with_message_id(pillar: str) -> None:
+def test_real_canon_pillar_is_ratified_with_message_id() -> None:
+    """Enforce the explicit ratification map in both directions.
+
+    Before: the real canonical index contains ratified and non-ratified rows.
+    During: verify every expected row and then verify every ratified row not
+    listed in the map has a valid UUID; P1 also carries the change UUID suffix.
+    After: the map is exact for its rows and exhaustive for ratified rows.
+    """
     text = CANON_PATH.read_text(encoding="utf-8")
-    assert_pillar_ratified(text, pillar, P28_MESSAGE_ID)
+    rows = {row["pillar"]: row for row in load_canon(text)}
+
+    for pillar, expected_ids in EXPECTED_RATIFIED_MESSAGE_IDS.items():
+        row = rows[pillar]
+        assert row["state"] == "RATIFICADA"
+        assert row["message_id"] == expected_ids[0]
+        if pillar == "P1":
+            assert row["phrase"].endswith(P1_CHANGE_SUFFIX)
+            assert USER_MESSAGE_ID in row["phrase"]
+            assert expected_ids[1] == USER_MESSAGE_ID
+
+    for pillar, row in rows.items():
+        if row["state"] == "RATIFICADA" and pillar not in EXPECTED_RATIFIED_MESSAGE_IDS:
+            assert UUID_RE.fullmatch(row["message_id"])
 
 
 @pytest.mark.parametrize("pillar", ["P28", "P29"])
