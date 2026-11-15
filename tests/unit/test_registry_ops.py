@@ -1,6 +1,7 @@
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -3912,3 +3913,100 @@ def test_alta_asiento_status_activa_acepta_predicado(tmp_path, command, status):
     stored = next(item for item in data["sessions"] if item["code"] == expected_code)
     assert stored["status"] == status
     assert ledger.exists()
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_triaje_alta_requires_canonical_cell_in_dry_run_and_apply(tmp_path, apply):
+    """Validate the canonical TR cell shape in both registry write modes.
+
+    Before: a TR alta accepted any non-empty cell dictionary, including the
+        legacy triador dictionary plus supervisor alias.
+    During: the shared alta validation requires textual triador and revisor
+        values matching the checker-owned regular expressions.
+    After: legacy input returns rc 2 without writing, while canonical input
+        succeeds and only apply persists the new session.
+    """
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "ledger.jsonl"
+    write_registry(registry)
+    common = [
+        "alta",
+        "--code",
+        "TR-PROBE",
+        "--role",
+        "triaje",
+        "--slot",
+        "triaje-1",
+        "--thread-id",
+        "thread-probe",
+        "--started",
+        "2026-11-14T10:00:00+01:00",
+        "--status",
+        "ACTIVA",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    ]
+    legacy = json.dumps(
+        {
+            "triador": {"name": "opencode nan/gemma4 hijo"},
+            "supervisor": "opencode nan/mimo-v2.6-flash",
+        }
+    )
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        *(common + ["--celda", legacy] + (["--apply"] if apply else [])),
+        ledger=ledger,
+    )
+    assert result.returncode == 2
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+
+    canonical = json.dumps(
+        {
+            "triador": "opencode nan/gemma4",
+            "revisor": "opencode nan/mimo-v2.6-flash",
+            "extra": "preserved",
+        }
+    )
+    result = run_cli(
+        registry,
+        *(common + ["--celda", canonical] + (["--apply"] if apply else [])),
+        ledger=ledger,
+    )
+    assert result.returncode == 0
+    if apply:
+        stored = json.loads(registry.read_text(encoding="utf-8"))["sessions"][0]
+        assert stored["celda"]["extra"] == "preserved"
+    else:
+        assert registry.read_bytes() == before
+        assert not ledger.exists()
+
+
+def test_triaje_cell_requirements_reuse_checker_regexes_and_keep_cell_immutable(
+    monkeypatch,
+):
+    """Keep cell outside mutable fields and source its models from checker.
+
+    Before: registry_ops validated only that the cell was a non-empty dict.
+    During: the requirement reuses the dynamically loaded checker constants
+        and checks canonical textual model values.
+    After: the cell remains an alta-only optional field and the IM path keeps
+        its pre-existing non-empty-dict behavior.
+    """
+    assert "celda" not in _REGISTRY_OPS_MODULE.MUTABLE_FIELDS
+    checker = _REGISTRY_OPS_MODULE._load_cell_checker()
+    monkeypatch.setattr(checker, "RE_TRIADOR", re.compile(r"only-triador"))
+    monkeypatch.setattr(checker, "RE_REVISOR_TR", re.compile(r"only-revisor"))
+    item = {
+        "role": "triaje",
+        "status": "ACTIVA",
+        "celda": {"triador": "only-triador", "revisor": "only-revisor"},
+    }
+    _REGISTRY_OPS_MODULE._validate_cell_requirements(item, require_cell=True)
+    _REGISTRY_OPS_MODULE._validate_cell_requirements(
+        {"role": "implantacion", "status": "ACTIVA", "celda": {"legacy": True}},
+        require_cell=True,
+    )

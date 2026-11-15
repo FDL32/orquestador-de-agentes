@@ -579,8 +579,9 @@ def _validate_cell_requirements(item, *, require_cell=False):
     """Aplica las obligaciones de celda y lentes de una sesion proyectada.
 
     Before: ``item`` es la sesion actual o resultante, sin mutar el registry.
-    During: exige celda en IM/TR solo cuando ``require_cell`` es verdadero y
-        exige dos veredictos al pasar a ASENTADA en cualquier proyeccion.
+    During: exige celda en IM/TR solo cuando ``require_cell`` es verdadero;
+        TR altas usan los modelos y regex del checker canonico, and exige dos
+        veredictos al pasar a ASENTADA en cualquier proyeccion.
     After: retorna ``None`` si conforme o lanza ``RegistryError`` rc 2.
     """
     _check_activa_status(item.get("status"))
@@ -588,6 +589,21 @@ def _validate_cell_requirements(item, *, require_cell=False):
         cell = item.get("celda")
         if not isinstance(cell, dict) or not cell:
             raise RegistryError("alta de IM/TR exige celda", RC_INVALID)
+        if item.get("role") == "triaje":
+            checker = _load_cell_checker()
+            triador = cell.get("triador")
+            revisor = cell.get("revisor")
+            if (
+                not isinstance(triador, str)
+                or not triador.strip()
+                or not checker.RE_TRIADOR.search(triador.casefold())
+                or not isinstance(revisor, str)
+                or not revisor.strip()
+                or not checker.RE_REVISOR_TR.search(revisor.casefold())
+            ):
+                raise RegistryError(
+                    "alta de triaje exige celda canonica triador/revisor", RC_INVALID
+                )
     role_requires_lenses = item.get("role") in ("implantacion", "triaje")
     status = str(item.get("status", "")).strip().casefold()
     started = item.get("started")

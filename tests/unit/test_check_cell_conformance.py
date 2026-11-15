@@ -445,6 +445,76 @@ def test_check_tr_revisor_glm_rc2(fixtures, revisor):
     assert _run(registry, store, "--check-tr") == 2
 
 
+def test_check_tr_accepts_legacy_triador_dict_and_supervisor_alias(fixtures):
+    """Accept the legacy TR cell shape without weakening model boundaries.
+
+    Before: legacy TR cells used a ``triador`` dictionary and ``supervisor``
+        alias instead of the canonical flat fields.
+    During: check_tr reads the builder-style name and the reviewer alias only
+        when the explicit reviewer key is absent.
+    After: the legacy shape passes while a reviewer model with a bad boundary
+        remains a violation.
+    """
+    registry, store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "TR-legacy",
+                "triaje",
+                celda={
+                    "triador": {"name": "opencode nan/gemma4 hijo"},
+                    "supervisor": "opencode nan/mimo-v2.6-flash",
+                },
+            )
+        ],
+    )
+    assert _run(registry, store, "--check-tr") == 0
+    registry.write_text(
+        json.dumps(
+            {
+                "sessions": [
+                    _session(
+                        "TR-legacy",
+                        "triaje",
+                        celda={
+                            "triador": {"name": "gemma4"},
+                            "revisor": "nan/mimo-v2.6-flashfree",
+                            "supervisor": "nan/mimo-v2.6-flash",
+                        },
+                    )
+                ]
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert _run(registry, store, "--check-tr") == 2
+
+
+def test_check_lenses_prefers_session_entries_and_normalizes_dicts(fixtures):
+    """Use session lenses first and normalize its supported entry shapes.
+
+    Before: check_lenses inspected only ``celda.lentes`` and counted strings.
+    During: it selects a non-empty session list, then reads ``modelo`` or
+        ``lente`` from dictionaries while preserving textual entries.
+    After: two distinct session models pass even when the cell fallback has
+        only one lens, and a one-entry session list still fails.
+    """
+    registry, store = fixtures
+    session = _session(
+        "TR-lenses",
+        "triaje",
+        lentes=[{"modelo": "Model-A"}, {"lente": "model-b"}],
+        celda={"lentes": ["only-fallback"]},
+    )
+    _write_registry(registry, [session])
+    assert _run(registry, store, "--check-lenses") == 0
+    session["lentes"] = [{"modelo": "Model-A"}]
+    _write_registry(registry, [session])
+    assert _run(registry, store, "--check-lenses") == 2
+
+
 def test_check_lenses_dos_rc0(fixtures):
     registry, store = fixtures
     _write_registry(registry, [_session("IM-1", celda=_cell())])

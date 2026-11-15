@@ -298,9 +298,9 @@ def check_tr(sessions, cutoff):
     """Comprueba el par TR gemma4 y mimo-v2.6-flash.
 
     Before: cada celda TR declara ``triador`` y ``revisor`` sin validar.
-    During: exige texto en ambos y el modelo con frontera de palabra, la misma
-        que se aplica a ``codex`` y ``sol``; la subcadena dejaba pasar
-        "antigemma4" y "antimimo-v2.6-flash" (CO-69 ronda 9).
+    During: accepts the historical triador dictionary through ``_builder_name``
+        and reads ``supervisor`` only when ``revisor`` is absent; both models
+        still require their word-boundary regular expressions.
     After: 2 si alguna celda TR incumple el par, 0 si todas lo cumplen y 3 si no
         hay celdas medibles.
     """
@@ -312,11 +312,13 @@ def check_tr(sessions, cutoff):
     for session in measured:
         cell = _cell(session) or {}
         triador = cell.get("triador")
-        revisor = cell.get("revisor")
+        revisor = cell["revisor"] if "revisor" in cell else cell.get("supervisor")
+        triador_text = _builder_name(triador)
         if (
-            not isinstance(triador, str)
-            or not RE_TRIADOR.search(triador.casefold())
+            not triador_text
+            or not RE_TRIADOR.search(triador_text.casefold())
             or not isinstance(revisor, str)
+            or not revisor.strip()
             or not RE_REVISOR_TR.search(revisor.casefold())
         ):
             return RC_VIOLATION
@@ -328,10 +330,9 @@ def check_lenses(sessions, cutoff):
 
     Before: cada celda puede declarar ``lentes`` como lista de cualquier cosa
         (texto, nulos, numeros u objetos) o no declararlo.
-    During: cuenta solo los elementos que son ``str`` no vacios tras ``strip``
-        y compara sus formas ``casefold``; ``None``, cadenas vacias o de solo
-        espacios, numeros y objetos NO son lentes identificables (c-04, CO-69
-        ronda 6: antes ``str(item)`` hacia pasar ``[None, ""]``).
+    During: uses a non-empty ``session.lentes`` list first, normalizing its
+        string entries or dictionary ``modelo``/``lente`` values; otherwise it
+        falls back to the cell list and compares casefolded names.
     After: 2 si alguna celda medible no tiene dos lentes distintas, 0 si todas
         las tienen y 3 si no hay celdas medibles.
     """
@@ -343,14 +344,24 @@ def check_lenses(sessions, cutoff):
     if not measured:
         return RC_NOT_MEASURED
     for session in measured:
-        lenses = (_cell(session) or {}).get("lentes")
+        session_lenses = session.get("lentes")
+        if isinstance(session_lenses, list) and session_lenses:
+            lenses = session_lenses
+        else:
+            lenses = (_cell(session) or {}).get("lentes")
         if not isinstance(lenses, list):
             return RC_VIOLATION
-        named = {
-            item.strip().casefold()
-            for item in lenses
-            if isinstance(item, str) and item.strip()
-        }
+        named = set()
+        for item in lenses:
+            if isinstance(item, str):
+                name = item.strip()
+            elif isinstance(item, dict):
+                candidate = item.get("modelo", item.get("lente"))
+                name = candidate.strip() if isinstance(candidate, str) else ""
+            else:
+                name = ""
+            if name:
+                named.add(name.casefold())
         if len(named) < 2:
             return RC_VIOLATION
     return RC_OK
