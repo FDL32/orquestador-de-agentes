@@ -37,6 +37,12 @@ R7: the ``para el salto {own_new} -> {own_new}`` correction is applied only to
 unprotected source pieces, never to protected cascade, postcompaction, or
 judgement spans.
 
+The versioned tick-block migration uses the strict predecessor marker
+``<!-- LATIDO_TICK_BLOCK_VERSION: 1 -->``. A predecessor that already contains
+the three required command signatures is accepted; one without them is
+rejected unless that exact marker is present, in which case the block is
+injected from the versioned LATIDO template in the repository.
+
 Limitation: predecessor-dated filenames (for example
 ``LATIDO_CO-xx_v7.1_20261108.md``) are copied as-is without correcting their
 date. A handoff on another day must correct that date manually; this is out
@@ -64,6 +70,17 @@ from typing import Any
 
 _CASCADE_START = "la cascada es "
 _CASCADE_END = " LATIDO DE PROGRESO"
+_TICK_VERSION_MARKER = "<!-- LATIDO_TICK_BLOCK_VERSION: 1 -->"
+_TICK_BLOCK_END = "<!-- END LATIDO_TICK_BLOCK_VERSION: 1 -->"
+_TICK_REQUIRED_SIGNATURES = (
+    "check_roster_matches_acting_thread.py",
+    "flight_stall_check.py",
+    "tick_trace.py",
+)
+_TICK_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "prompts/vuelo_pilares_templates/LATIDO_PLANTILLA.md"
+)
 _R3_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])(fila b|Go relevo 24h |Go_Relevo_)(\d+)(?![A-Za-z0-9])"
 )
@@ -100,6 +117,78 @@ def predecessor_sha12(predecessor: str | Path) -> str:
 def _read_predecessor(predecessor: str | Path) -> str:
     with Path(predecessor).open(encoding="utf-8", newline="") as handle:
         return handle.read()
+
+
+def _tick_block_present(text: str) -> bool:
+    """Return whether text contains the complete tick command block.
+
+    Before: ``text`` is the predecessor heartbeat text decoded without
+    newline normalization.
+    During: require each command signature that makes the guard executable;
+    incidental prose mentioning only one command does not satisfy the check.
+    After: return ``True`` only when all three required signatures are present.
+    """
+
+    return all(signature in text for signature in _TICK_REQUIRED_SIGNATURES)
+
+
+def _template_tick_block() -> str:
+    """Read and extract the versioned tick block from the canonical template.
+
+    Before: the repository template exists and contains paired version markers.
+    During: read UTF-8 text and extract only the marked block, then verify its
+    three command signatures before returning it.
+    After: return the canonical LF-delimited block or raise ``ValueError`` with
+    an explicit migration diagnostic.
+    """
+
+    try:
+        template = _TICK_TEMPLATE_PATH.read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as exc:
+        raise ValueError(
+            f"no se pudo leer la plantilla del bloque de tick: {exc}"
+        ) from exc
+    start = template.find(_TICK_VERSION_MARKER)
+    end = template.find(_TICK_BLOCK_END, start + len(_TICK_VERSION_MARKER))
+    if start < 0 or end < 0:
+        raise ValueError(
+            "la plantilla no contiene el bloque de tick versionado completo"
+        )
+    block = template[start : end + len(_TICK_BLOCK_END)]
+    if not _tick_block_present(block):
+        raise ValueError(
+            "la plantilla del bloque de tick no contiene sus tres comandos"
+        )
+    return block
+
+
+def _ensure_tick_block(text: str) -> str:
+    """Validate or explicitly migrate the predecessor tick command block.
+
+    Before: ``text`` is a predecessor whose basic header has already passed
+    validation; its line endings must be preserved.
+    During: accept a complete block unchanged, or inject the canonical block
+    only when the exact version marker occurs once. Without that marker, fail
+    closed with a named ``DIFERENCIAS`` diagnostic at the caller.
+    After: return text with a present block, preserving CRLF predecessors.
+    """
+
+    if _tick_block_present(text):
+        return text
+    if text.count(_TICK_VERSION_MARKER) != 1:
+        raise ValueError(
+            "bloque de tick ausente: falta el bloque versionado y la marca "
+            f"{_TICK_VERSION_MARKER}"
+        )
+    block = _template_tick_block()
+    line_ending = "\r\n" if "\r\n" in text else "\n"
+    block = block.replace("\r\n", "\n").replace("\n", line_ending)
+    anchor = f"{line_ending}13."
+    position = text.find(anchor)
+    if position < 0:
+        separator = "" if text.endswith(("\n", "\r")) else line_ending
+        return f"{text}{separator}{block}{line_ending}"
+    return f"{text[:position]}{line_ending}{block}{text[position:]}"
 
 
 def _judgement_spans(text: str) -> dict[str, tuple[int, int]]:
@@ -426,6 +515,9 @@ def render_latido(  # noqa: C901
         problems.extend(roster_errors)
         if problems:
             return 2, _failure(text, problems)
+        # Preserve the predecessor-header error before checking/injecting the tick block.
+        judgement_spans = _judgement_spans(text)
+        text = _ensure_tick_block(text)
         judgement_spans = _judgement_spans(text)
         judgement_inputs = {
             name: (juicios or {}).get(name)

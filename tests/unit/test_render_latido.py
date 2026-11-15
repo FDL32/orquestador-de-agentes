@@ -2069,3 +2069,93 @@ def test_fixtures_sin_identificadores_reales() -> None:
     assert all(uuid.startswith("00000000-0000-4000-8000-") for uuid in uuids)
     assert re.findall(r"[0-9a-fA-F]{32}", combined) == []
     assert len(uuids) >= 60
+
+
+def _without_tick_block(text: str) -> str:
+    """Remove every line carrying one of the versioned tick signatures.
+
+    Before: ``text`` is the real predecessor fixture from this repository.
+    During: remove command and explanatory lines that mention the three
+    required signatures, leaving all derivation anchors intact.
+    After: return a predecessor that exercises the missing-block branch.
+    """
+
+    signatures = render_latido_module._TICK_REQUIRED_SIGNATURES
+    return "".join(
+        line
+        for line in text.splitlines(keepends=True)
+        if not any(signature in line for signature in signatures)
+    )
+
+
+def test_predecessor_tick_block_is_required_with_explicit_difference(
+    tmp_path: Path,
+) -> None:
+    """Reject a real-fixture copy when its tick block is absent and unmarked."""
+
+    predecessor = tmp_path / "without-tick.md"
+    predecessor.write_text(
+        _without_tick_block(PREDECESSOR.read_text(encoding="utf-8")),
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "bloque de tick ausente" in output
+    assert "LATIDO_TICK_BLOCK_VERSION" in output
+
+
+def test_marked_predecessor_gets_tick_block_from_real_template(tmp_path: Path) -> None:
+    """Inject the canonical block only for an explicitly marked predecessor."""
+
+    predecessor = tmp_path / "marked-migration.md"
+    source = _without_tick_block(PREDECESSOR.read_text(encoding="utf-8"))
+    source = source.replace(
+        "]\n",
+        "] " + render_latido_module._TICK_VERSION_MARKER + "\n",
+        1,
+    )
+    predecessor.write_text(source, encoding="utf-8")
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 0
+    for signature in render_latido_module._TICK_REQUIRED_SIGNATURES:
+        assert signature in output
+
+
+def test_template_tick_mutant_fails_marked_migration(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A copied template without its block cannot satisfy migration."""
+
+    copied_template = tmp_path / "template-copy.md"
+    template = (ROOT / "prompts/vuelo_pilares_templates/LATIDO_PLANTILLA.md").read_text(
+        encoding="utf-8"
+    )
+    start = template.index(render_latido_module._TICK_VERSION_MARKER)
+    end = template.index(render_latido_module._TICK_BLOCK_END, start)
+    copied_template.write_text(
+        template[:start] + template[end + len(render_latido_module._TICK_BLOCK_END) :],
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(render_latido_module, "_TICK_TEMPLATE_PATH", copied_template)
+    predecessor = tmp_path / "marked-migration.md"
+    source = _without_tick_block(PREDECESSOR.read_text(encoding="utf-8"))
+    predecessor.write_text(
+        source.replace(
+            "]\n",
+            "] " + render_latido_module._TICK_VERSION_MARKER + "\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+
+    rc, output = render_latido(predecessor, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "plantilla no contiene el bloque de tick versionado completo" in output

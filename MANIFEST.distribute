@@ -40,6 +40,8 @@ scripts/classify_publication.py
 # PROTOCOLO DE VUELO (scripts/flight/, WOT-2026-160d)
 # =============================================================================
 scripts/flight/
+# WOT-2026-178a: plantilla versionada consumida por scripts/flight/render_latido.py.
+prompts/vuelo_pilares_templates/LATIDO_PLANTILLA.md
 
 # =============================================================================
 # PROMPTS OPERATIVOS REFERENCIADOS POR SKILLS / BOOTSTRAP (o por otros prompts

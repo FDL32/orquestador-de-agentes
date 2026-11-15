@@ -23,11 +23,9 @@
 5. Comprueba la rama del vuelo con `git -C {{MOTOR_ROOT}} rev-parse HEAD`.
    El HEAD autorizado es el de la última entrada de OPERACION_EN_CURSO.
 
-6. Ejecuta el guard de roster y conserva su rc literal:
-   `{{PYTHON}} {{MOTOR_ROOT}}/scripts/check_roster_matches_acting_thread.py
-   --roster-path {{FLIGHT_DIR}}/flight_roster.json --acting-thread
-   {{HILO_PROPIO}}`. Las operaciones corrientes quedan registradas en
-   {{OPS_DIR}} y respetan una cadencia de {{CADENCIA_MIN}} minutos.
+6. Ejecuta el guard de roster y conserva su rc literal en el bloque de tick
+   del paso 12. Las operaciones corrientes quedan registradas en {{OPS_DIR}} y
+   respetan una cadencia de {{CADENCIA_MIN}} minutos.
 
 7. Mide cupo y cuenta con `{{COMANDO_CUPO_OPCIONAL}}`. Si queda vacío o no
    hay proveedor configurado, declara «NO MEDIDO» con aviso: nunca verde
@@ -51,6 +49,16 @@
 
 12. Ante avisos de parada, emite órdenes con rc literal y rutas mediante los
     marcadores disponibles.
+
+    <!-- LATIDO_TICK_BLOCK_VERSION: 1 -->
+    ```text
+    cd {{MOTOR_ROOT}}
+    {{PYTHON}} scripts/check_roster_matches_acting_thread.py --roster-path {{FLIGHT_DIR}}/flight_roster.json --acting-thread {{HILO_PROPIO}}
+    {{PYTHON}} scripts/flight/flight_stall_check.py --ops-dir {{OPS_DIR}} --flight-dir {{FLIGHT_DIR}}
+    {{PYTHON}} scripts/flight/flight_stall_check.py --ops-dir {{OPS_DIR}} --flight-dir {{FLIGHT_DIR}} --self-check
+    {{PYTHON}} scripts/flight/tick_trace.py --ops-dir {{OPS_DIR}} --coordinator {{ID_PROPIO}} --unmeasured roster_sha12=MEDIR_EN_ESTE_TICK --unmeasured guard_rc=MEDIR_EN_ESTE_TICK --unmeasured quota_rc=MEDIR_EN_ESTE_TICK --unmeasured quota_summary=MEDIR_EN_ESTE_TICK
+    ```
+    <!-- END LATIDO_TICK_BLOCK_VERSION: 1 -->
 
     Si eres supervisora: aplica P25 (RATIFICADA, vinculante). El
     REGISTRY (`session_registry.json`) sigue siendo una petición ESCRITA a
