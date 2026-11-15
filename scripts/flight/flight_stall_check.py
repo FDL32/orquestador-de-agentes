@@ -81,7 +81,15 @@ FLIGHT_ROSTER_NAME = "flight_roster.json"
 STATE_NAME = "stall_state.json"
 TASK_REGISTERED_NAME = "task_registered.json"
 TASK_STATE_NAME = "task_state.json"
-OWNED_PREFIXES = ("cupo-", "cola-", "git-", "disco", "hook-", "detector-")
+OWNED_PREFIXES = (
+    "cupo-",
+    "cola-",
+    "git-",
+    "disco",
+    "hook-",
+    "detector-",
+    "celda-",
+)
 GIT_MARKERS = ("index.lock", "MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD")
 
 _CA = None
@@ -95,6 +103,7 @@ DETECTOR_NAMES = (
     "tarea",
     "im-ocioso",
     "cola-despachable",
+    "celda",
 )
 _CELL_CHECKER = None
 
@@ -800,6 +809,53 @@ def check_im_ocioso(out, st):
     return []
 
 
+def check_celda(out, st):
+    """Checks prospective triaje cell conformance without mutating flight state.
+
+    Before: ``CFG.registry`` points to the registry selected by ``--flight-dir``.
+    During: loads the shared checker, measures only prospective triaje sessions, applies
+        TR checks to every status and lens checks only to non-active sessions.
+    After: returns an AVISO for blindness or non-conformance, otherwise no finding; all
+        checker exceptions outside registry readability are propagated to ``_detect``.
+    """
+    del st
+    if CFG.registry is None or not CFG.registry.is_file():
+        out["ciego_celda"] = True
+        return [
+            ("detector-ciego-celda", "AVISO", "Detector celda sin registry legible")
+        ]
+    checker = _load_cell_checker()
+    try:
+        sessions = checker._registry(CFG.registry)
+    except checker.MeasurementError as exc:
+        del exc
+        out["ciego_celda"] = True
+        return [
+            ("detector-ciego-celda", "AVISO", "Detector celda con registry ilegible")
+        ]
+    prospective = [
+        session
+        for session in checker._sessions_for_measure(sessions, "2026-11-15")
+        if session.get("role") == "triaje"
+    ]
+    tr_rc = checker.check_tr(prospective, "2026-11-15")
+    non_active = [
+        session
+        for session in prospective
+        if not checker.is_activa(session.get("status"))
+    ]
+    lenses_rc = checker.check_lenses(non_active, "2026-11-15")
+    if tr_rc == checker.RC_VIOLATION or lenses_rc == checker.RC_VIOLATION:
+        return [
+            (
+                "celda-no-conforme",
+                "AVISO",
+                "Celda triaje no conforme; reproduzca con --test-detector celda",
+            )
+        ]
+    return []
+
+
 def _free_gb_min(cfg, raw):
     """Fija el umbral de disco a partir de la configuracion textual.
 
@@ -1056,6 +1112,7 @@ def _detect(out, st, only=None):
         "tarea": lambda: check_tarea(out),
         "im-ocioso": lambda: check_im_ocioso(out, st),
         "cola-despachable": lambda: check_cola_despachable(out, st),
+        "celda": lambda: check_celda(out, st),
     }
     selected = [only] if only else list(DETECTOR_NAMES)
     for name in selected:
@@ -1121,6 +1178,7 @@ def _reconcile(ca, out, found, a):
         "cola-": out.get("ciego_cola"),
         "git-": out.get("ciego_git"),
         "hook-": out.get("ciego_hook"),
+        "celda-": out.get("ciego_celda"),
     }
     prefixes = tuple(p for p in OWNED_PREFIXES if not blind.get(p))
     cleared = ca.reconcile(prefixes, {k for k, _, _ in found}, a.dry_run, owner="stall")

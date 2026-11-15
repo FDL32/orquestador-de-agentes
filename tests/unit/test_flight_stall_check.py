@@ -81,6 +81,9 @@ class Box:
         self.wt = root / "motor" / "wt"
         self.ops.mkdir()
         (self.flight / "diseno").mkdir(parents=True)
+        (self.flight / "session_registry.json").write_text(
+            json.dumps({"sessions": []}), encoding="utf-8"
+        )
         self.cola = self.flight / "diseno" / "COLA_PARA_USUARIO.md"
         self.cola.write_text("# cola\n", encoding="utf-8")
         self.quota = self.ops / "quota_last.txt"
@@ -2413,6 +2416,7 @@ def test_go_tick_fallo_y_exito_no_duplica_aviso(box):
 
 def test_detector_ciego_im_ocioso_no_duplica_aviso(box):
     box.cola.write_text("# cola\n" + ABIERTA + "\n", encoding="utf-8")
+    (box.flight / "session_registry.json").unlink()
     first = box.tick()
     sent = len(box.sent)
     second = box.tick()
@@ -2629,3 +2633,133 @@ def test_cola_despachable_cupo_contraste_cuenta(box):
     )
     healthy_found = box.m.check_cola_despachable({}, {})
     assert "OTRO" in healthy_found[0][2] and "NO_MEDIDO" in healthy_found[0][2]
+
+
+def _set_celda_registry(box, sessions):
+    """Before: ``sessions`` describes a synthetic prospective registry.
+
+    During: write the registry in the temporary flight directory and resolve production paths.
+    After: return the configured module and leave all source fixtures untouched.
+    """
+    registry = box.flight / "session_registry.json"
+    registry.write_text(json.dumps({"sessions": sessions}), encoding="utf-8")
+    args = types.SimpleNamespace(
+        flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+    )
+    box.m.CFG, _, _ = box.m._resolve_paths(args, box.ops)
+    return box.m
+
+
+def _prospective_tr(status="ASENTADA", started="2026-11-15T10:00:00+01:00", valid=True):
+    """Before: a status/date pair and a cell validity choice are supplied.
+
+    During: construct one realistic triaje session with the dual-read cell shape.
+    After: return a new dictionary suitable for a temporary registry.
+    """
+    return {
+        "code": "TR-TEST",
+        "role": "triaje",
+        "started": started,
+        "status": status,
+        "celda": {
+            "triador": "opencode nan/gemma4 hijo",
+            "revisor": "opencode nan/mimo-v2.6-flash",
+            "lentes": [],
+        }
+        if valid
+        else {
+            "triador": "opencode nan/qwen3.8-flash hijo",
+            "revisor": "mimo-v2.6-flash",
+        },
+        "lentes": [
+            {"modelo": "nan/deepseek-v4-flash"},
+            {"modelo": "nan/glm5.3-flash"},
+        ]
+        if valid
+        else [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("session", "expected"),
+    [
+        (_prospective_tr(valid=False), "celda-no-conforme"),
+        (_prospective_tr(status="ACTIVA", valid=False), "celda-no-conforme"),
+        (_prospective_tr(valid=True), None),
+        (_prospective_tr(status="ACTIVA", valid=True), None),
+        (_prospective_tr(started="2026-11-14T10:00:00+01:00", valid=False), None),
+    ],
+)
+def test_celda_prospectivo_cubre_las_cinco_ramas(box, session, expected):
+    """Before: one real registry fixture represents each prospective branch.
+
+    During: run the celda detector with the production path resolver.
+    After: only red active-invalid branches emit the AVISO violation.
+    """
+    module = _set_celda_registry(box, [session])
+    found = module.check_celda({}, {})
+    assert (found[0][0] if found else None) == expected
+    if expected:
+        assert found[0][1] == "AVISO"
+        assert "--test-detector celda" in found[0][2]
+
+
+def test_celda_registry_ausente_e_ilegible_es_ceguera_visible(box):
+    """Before: the flight directory has no readable session registry.
+
+    During: invoke the detector once for absence and once for malformed JSON.
+    After: both invocations expose the dedicated celda blindness key.
+    """
+    args = types.SimpleNamespace(
+        flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+    )
+    box.m.CFG, _, _ = box.m._resolve_paths(args, box.ops)
+    (box.flight / "session_registry.json").unlink()
+    out = {}
+    assert box.m.check_celda(out, {})[0][0] == "detector-ciego-celda"
+    assert out["ciego_celda"]
+    (box.flight / "session_registry.json").write_text("{bad", encoding="utf-8")
+    out = {}
+    assert box.m.check_celda(out, {})[0][0] == "detector-ciego-celda"
+    assert out["ciego_celda"]
+
+
+def test_celda_sin_prospectivos_no_es_ciega_ni_hallazgo(box):
+    """Before: a readable registry contains no sessions eligible for the detector.
+
+    During: run both checker modes through ``check_celda``.
+    After: the two NOT_MEASURED results produce no finding and no blindness flag.
+    """
+    module = _set_celda_registry(box, [])
+    out = {}
+    assert module.check_celda(out, {}) == []
+    assert "ciego_celda" not in out
+
+
+def test_celda_nombre_owner_y_blind_reconcile(box):
+    """Before: the celda detector is registered and marked blind for this tick.
+
+    During: reconcile the owned prefixes with a spy alert ledger.
+    After: celda is an owned prefix but blindness prevents clearing its alerts.
+    """
+    assert "celda" in box.m.DETECTOR_NAMES
+    assert "celda-" in box.m.OWNED_PREFIXES
+    calls = []
+
+    class Alert:
+        def reconcile(self, prefixes, found, dry, owner):
+            calls.append((prefixes, found, dry, owner))
+            return []
+
+        def load_state(self):
+            return {}
+
+        def resolve(self, key, dry):
+            raise AssertionError(key)
+
+    box.m._reconcile(
+        Alert(), {"ciego_celda": True}, [], types.SimpleNamespace(dry_run=True)
+    )
+    assert "celda-" not in calls[0][0]
+    box.m._reconcile(Alert(), {}, [], types.SimpleNamespace(dry_run=True))
+    assert "celda-" in calls[1][0]

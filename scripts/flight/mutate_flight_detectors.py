@@ -807,6 +807,24 @@ m("A9d", "2A", "if toks\n", "if False\n")
 
 
 # ---------------- WOT-2026-163a P1/P4 controls ----------------
+m(
+    "F1a",
+    "2A",
+    '    "celda",\n',
+    "",
+)
+m(
+    "F1b",
+    "2A",
+    '        out["ciego_celda"] = True\n        return [\n            ("detector-ciego-celda", "AVISO", "Detector celda sin registry legible")\n        ]',
+    '        out["ciego_celda"] = True\n        return []',
+)
+m(
+    "F1c",
+    "2A",
+    '    "celda-",\n',
+    "",
+)
 q("P1A", '"QUOTA_JSON_SCHEMA": QUOTA_JSON_SCHEMA', '"QUOTA_JSON_SCHEMA": 1')
 q("P1B", "process_rc = 9 if missing else RC[state]", "process_rc = RC[state]")
 q("P1C", 'if quality not in ("OK", "RESERVA") or not _is_real(value):', "if False:")
@@ -826,8 +844,8 @@ q("P1G", 'limits = data["rateLimits"]', 'limits = payload["rateLimits"]')
 m(
     "P4A",
     "2A",
-    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "cola-despachable",\n)',
-    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n)',
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "cola-despachable",\n    "celda",\n)',
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "celda",\n)',
 )
 m("P4B", "2A", "if len(streak) < DIAG_TICKS:", "if len(streak) < 1:")
 m(
