@@ -60,7 +60,7 @@ Snapshot fechado del sobrecoste de los 14 lotes ZIP_STORED: 36.600.681.652 bytes
 
 ## 4. Excepcion de los clones de Kilo
 
-El alcance de la excepcion es el archivador propio de clones de Kilo, no futuras herramientas ni otras familias. La autoridad operativa se documenta con los dos messageId indicados en la seccion 3, citando solo la parte operativa y sin texto privado. La herramienta actual es `D:/flight_archive_tools/run_fast.py` [externa], apoyada por `D:/flight_archive_tools/run_tramo1.py` [externa], y no esta versionada. La excepcion termina cuando exista una herramienta versionada, deuda WOT-2026-175b, o si el usuario la revoca.
+El alcance de la excepcion es el archivador propio de clones de Kilo, no futuras herramientas ni otras familias. La autoridad operativa son los messageId 47d968d6-cd95-4f46-b563-f15ba49d7edd (pasada 1) y 8ffd3f81-6d76-4aed-a1d2-7459be0a8df1 (pasada 2), citados solo en su parte operativa y sin texto privado. Consecuencia medida: `p7_common.reconcile_index` solo cuenta filas `ARCHIVADO` (lineas 271-310 de `scripts/flight/p7_common.py`, filtro en la linea 286), asi que `scripts/flight/p7_retire.py` falla cerrado con rc 1 sobre `D:/flight_archive` [externa] por las 66 filas `RETIRADO_LOCAL`; migrarlas sin ensanchar `reconcile_index` es deuda WOT-2026-175d. La herramienta actual es `D:/flight_archive_tools/run_fast.py` [externa], apoyada por `D:/flight_archive_tools/run_tramo1.py` [externa], y no esta versionada. La excepcion termina cuando exista una herramienta versionada, deuda WOT-2026-175b, o si el usuario la revoca.
 
 Enumeracion m-01 para el archivador, medida en los ficheros externos con estas lineas: (1) exenta: no conserva una lista aprobada con hash de la lista; deriva la lista y hashea fichero a fichero (lineas 12-16 y 24-30 de `D:/flight_archive_tools/run_fast.py` [externa]); (2) exigible de forma parcial: guarda tamano, sha256 y nombres y comprueba extras, pero no mtime (lineas 65-68 de `D:/flight_archive_tools/run_fast.py` [externa]); (3) exigible: aborta sin borrar ante discrepancia (lineas 59-68 de `D:/flight_archive_tools/run_fast.py` [externa]); (4) exigible de forma parcial: guarda de proceso vivo con exclusion de shells y `claude.exe`, sin guarda de cwd ni lock (linea 37 de `D:/flight_archive_tools/run_tramo1.py` [externa]); (5) exigible de forma parcial: el registro queda fuera del arbol retirado, pero es temporal (linea 79 de `D:/flight_archive_tools/run_fast.py` [externa]); (6) exenta: no ofrece dry-run; (7) exenta: no es el dueno P7; (8) exenta por esta excepcion: no toda retirada pasa por P7. Las partes exigibles se limitan a lo que el archivador realmente mide; la deuda restante no se presenta como cubierta.
 
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-El script compara existencia, tamano, sha256, conjunto restaurado y conjunto del manifiesto, y el sha256 del zip con `zip_sha256` del indice. No compara mtime: `zipfile -e` no restaura mtime. Si `D:/flight_archive_kilo` o `D:/flight_archive` [externa] no existe o no es carpeta, se detecta antes de leer el indice, se para y se informa a `flight_roster.json` -> `active_roles.orquestador`; nunca se cae a C:.
+El script compara existencia, tamano, sha256, conjunto restaurado y conjunto del manifiesto, y el sha256 del zip con `zip_sha256` del indice. No compara mtime: `zipfile -e` no restaura mtime. Si `D:/flight_archive_kilo` o `D:/flight_archive` [externa] no existe o no es carpeta, se detecta antes de leer el indice, se para y se informa a `flight_roster.json` [externa] -> `active_roles.orquestador`; nunca se cae a C:.
 
 ## 6. Deudas y contacto
 
@@ -135,4 +135,4 @@ El script compara existencia, tamano, sha256, conjunto restaurado y conjunto del
 - Purga por caducidad: WOT-2026-175c.
 - Herramienta de sesiones, `.venv` y `co24_pna`: sin ticket, porque el STOP de degeneracion exige herramienta propia y no forman parte de este deliverable.
 
-Para una duda de estado se pregunta a la coordinadora activa, resuelta desde `flight_roster.json` y su campo `active_roles.orquestador`. Para una discrepancia de indice se conserva el rc y la salida de la sonda de solo lectura; no se corrige el archivo manualmente.
+Para una duda de estado se pregunta a la coordinadora activa, resuelta desde `flight_roster.json` [externa] y su campo `active_roles.orquestador`. Para una discrepancia de indice se conserva el rc y la salida de la sonda de solo lectura; no se corrige el archivo manualmente.
