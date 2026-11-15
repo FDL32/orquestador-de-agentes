@@ -53,6 +53,10 @@ Enumeracion m-01 para `p7_retire.py` y su modulo comun:
 
 La correspondencia con las anclas de `docs/protocol/rotacion_disco_vuelo.md` es: `L1.topes` -> L-2, `L2.indice` y `L2.huerfano` -> L-3, `L3.caducado` -> L-3, `L4.solo_comprimido` -> L-4, `L5.categorias` -> L-5, `L6.comprobador` y `L6.cableado` -> L-6, `L7.fallo_cerrado` -> L-7 y `L8.subida` -> L-8. La raiz que no tiene ancla propia queda en L-1. La prosa de ese documento remite aqui por nombre y numero; las anclas no se han editado. El estado RATIFICADO de este ciclo rige sobre las etiquetas propuesta o pendiente de las anclas porque es el estado canonico ratificado, sin ampliar el alcance de los messageId.
 
+- Las filas del formato del archivador llevan el campo `expires` (fecha ISO, `archived` + 90 dias): snapshot fechado 2026-11-15 de 82 de 82 filas (68 en `D:/flight_archive/index.jsonl` [externa] y 14 en `D:/flight_archive_kilo/index_kilo.jsonl` [externa]), medido con una sonda de solo lectura sobre los dos jsonl; es evidencia fechada, no criterio.
+- La unica fila de formato P7 (`D:/flight_archive_kilo/index.jsonl` [externa]) NO lleva `expires`: sus claves son `entries`, `family`, `list_sha256`, `manifest`, `origin`, `status`, `zip` y `zip_sha256`.
+- `expires` es informativo y NO autoriza retirar ni purgar: L-3 no cambia y la purga por caducidad es la deuda WOT-2026-175c.
+
 ## 3. L-2, volumen y L-4
 
 Snapshot fechado medido el 2026-11-15 10:51:17 CET: 83 zips, 37.661.340.108 bytes, 37,66 GB decimales. `D:/flight_archive_kilo` [externa] suma 36.883.848.591 bytes y `D:/flight_archive` [externa] 777.491.517 bytes. Este dato es evidencia fechada, no criterio. Frente al tope L-2 de 5 GB por vuelo, la excepcion para el volumen archivado queda **pendiente de aprobacion expresa del usuario**. Los messageId `47d968d6-cd95-4f46-b563-f15ba49d7edd` y `8ffd3f81-6d76-4aed-a1d2-7459be0a8df1` se citan solo como aprobacion operativa del volumen archivado y de la excepcion no-P7 de los clones; ninguno se presenta como ratificacion del tope L-2.
