@@ -207,8 +207,8 @@ Frase literal de la clausula: CICLO DE VIDA por familia (SEGUNDA ADENDA 18:42). 
 ### m-11 LIMITES del archivo (L-1 a L-8)
 
 Los ocho limites son propuestas pendientes, no autorizaciones: L-1 presupuesto de 20 GB en
-Internxt, 100 GB en D: y 5 GB por vuelo; L-2 INDEX.md e indice JSON obligatorios, huerfano en
-rojo; L-3 caducidad mediante propuesta P7 con hash; L-4 solo comprimido con manifiesto y hash;
+Internxt, 100 GB en D: y 5 GB por vuelo (doc de ciclo: L-2); L-2 INDEX.md e indice JSON obligatorios, huerfano en
+rojo (doc de ciclo: L-3); L-3 caducidad mediante propuesta P7 con hash (doc de ciclo: L-3); L-4 solo comprimido con manifiesto y hash;
 L-5 categorias con autorizacion expresa; L-6 comprobador solo lectura con rc cableado a
 flight_stall_check o latido; L-7 fallo cerrado sin caida a C:; L-8 subida distinta de copia.
 

@@ -34,7 +34,7 @@ Enumeracion m-01 para `p7_retire.py` y su modulo comun:
 (4) PARCIAL: lock con pid y cwd de sesion (lineas 346-386 de `scripts/flight/p7_common.py`; el cwd se valida en lineas 352-353) y liberacion (lineas 388-396 de `scripts/flight/p7_common.py`); no hay guarda de proceso vivo sobre el origen.
 (5) CUMPLE: registro en el indice de la raiz de archivo (lineas 90-96 de `scripts/flight/p7_retire.py`) mas guarda de no solape archive-root/origin (lineas 49-65 y 357-362 de `scripts/flight/p7_retire.py`).
 (6) CUMPLE: dry-run por defecto (lineas 343-345 y 384-399 de `scripts/flight/p7_retire.py`).
-(7) CUMPLE: es el dueno declarado del contrato y reutiliza el modulo comun `scripts/flight/p7_common.py`, con 23 funciones `test_` en `tests/unit/test_p7_retire.py`.
+(7) CUMPLE: es el dueno declarado del contrato y reutiliza el modulo comun `scripts/flight/p7_common.py` (importacion en la linea 27 de `scripts/flight/p7_retire.py`; uso de sus primitivas en las lineas 371-374), con 23 funciones `test_` en `tests/unit/test_p7_retire.py`.
 (8) NO CUMPLE para clones: la lista aprobada es de FICHEROS (lineas 180-182 de `scripts/flight/p7_retire.py`) y salta los versionados por git (lineas 301-308 de `scripts/flight/p7_retire.py`). Por eso la retirada de clones es la excepcion de la seccion 4.
 
 ### Limites unicos L-1 a L-8

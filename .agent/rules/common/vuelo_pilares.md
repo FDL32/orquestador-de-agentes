@@ -72,4 +72,4 @@ Ejemplos inválidos:
 - `Estado: VIGENTE`
 - `ESTADO VIGENTE` (sin dos puntos)
 
-Esta gramática no aplica al propio `vuelo_pilares.md`, que es un fichero versionado del motor, no un fichero de diseño del vuelo. El validador para estos ficheros será `scripts/flight/check_vuelo_canon.py`, fuera de esta ficha (fase F1b; no se crea aquí).
+Esta gramática no aplica al propio `vuelo_pilares.md`, que es un fichero versionado del motor, no un fichero de diseño del vuelo. El validador para estos ficheros será el de la fase F1b, aun sin fichero, fuera de esta ficha (no se crea aquí).
