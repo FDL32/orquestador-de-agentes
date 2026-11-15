@@ -84,7 +84,7 @@ Frase literal de la clausula: El diseno declara el contrato P7 completo: (1) lis
 
 ### m-02 El diseno no lleva listas de retirada; solo nombra superficies
 
-El texto nombra clones C:/Temp/kilo [externa], co24_pna, statev2.sqlite, kilo.db y jsonl unicamente como
+El texto nombra clones de la carpeta temporal del usuario [externa], co24_pna, statev2.sqlite, kilo.db y jsonl unicamente como
 evidencia o candidatas. co24_pna queda como candidata sin calificar riesgo: antes de proponerla
 se debe verificar si es el unico respaldo existente. El control reproducible se ejecuta sobre
 el documento completo y debe devolver cero.
