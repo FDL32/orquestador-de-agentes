@@ -143,6 +143,6 @@ La comprobacion la hace el comparador de este documento, codigo distinto del que
 - Comprobador L-6 y su cableado: sin ticket: motivo: el STOP de degeneracion exige una herramienta propia.
 - Migracion de filas `RETIRADO_LOCAL` sin ensanchar `reconcile_index`: WOT-2026-175d.
 - Purga por caducidad: WOT-2026-175c.
-- Herramienta de sesiones, `.venv` y `co24_pna`: sin ticket, porque el STOP de degeneracion exige herramienta propia y no forman parte de este deliverable.
+- Herramienta de sesiones, `.venv` y `co24_pna`: sin ticket: motivo: el STOP de degeneracion exige herramienta propia y no forman parte de este deliverable.
 
 Para una duda de estado se pregunta a la coordinadora activa, resuelta desde `flight_roster.json` [externa] y su campo `active_roles.orquestador`. Para una discrepancia de indice se conserva el rc y la salida de la sonda de solo lectura; no se corrige el archivo manualmente.
