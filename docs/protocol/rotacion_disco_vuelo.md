@@ -84,7 +84,7 @@ Frase literal de la clausula: El diseno declara el contrato P7 completo: (1) lis
 
 ### m-02 El diseno no lleva listas de retirada; solo nombra superficies
 
-El texto nombra clones C:/Temp/kilo, co24_pna, statev2.sqlite, kilo.db y jsonl unicamente como
+El texto nombra clones C:/Temp/kilo [externa], co24_pna, statev2.sqlite, kilo.db y jsonl unicamente como
 evidencia o candidatas. co24_pna queda como candidata sin calificar riesgo: antes de proponerla
 se debe verificar si es el unico respaldo existente. El control reproducible se ejecuta sobre
 el documento completo y debe devolver cero.
@@ -162,13 +162,13 @@ Frase literal de la clausula: P5, sesiones (TEXTO LITERAL OBLIGATORIO, N3). El d
 ### m-09 Raiz del archivo
 
 La raiz del archivo es un parametro obligatorio sin valor por defecto y permanece como decision
-pendiente del usuario. El destino primario recomendado es D:/flight_archive, con fallo cerrado si
+pendiente del usuario. El destino primario recomendado es D:/flight_archive [externa], con fallo cerrado si
 D: no esta montado y hash tras escribir. La replica Internxt es opcional y solo contiene zip y
 manifiesto de documentacion; jsonl y mensajes requieren escaneo de secretos y autorizacion por
 categoria. Una copia local verificada por hash no equivale a subida confirmada, que no es
 verificable por script sin comprobacion reproducible del cliente.
 
-Frase literal de la clausula: Raiz del archivo: parametro obligatorio sin valor por defecto (ADENDA 18:30 del usuario). El diseno declara la raiz donde se guardan los veredictos archivados de P2 (y, en la hija de 158c, el zip) como PARAMETRO OBLIGATORIO SIN VALOR POR DEFECTO, DECISION PENDIENTE DEL USUARIO, con: (1) destino primario recomendado D:/flight_archive (disco USB distinto de C:, con FALLO CERRADO si D: no esta montado -- nunca caer a C:-- y verificacion de hash tras escribir); (2) replica OPCIONAL en la carpeta sincronizada de Internxt (cliente 2.6.12 instalado y en marcha; carpeta sincronizada C:/Users/fdl/InternxtDrive, p. ej. C:/Users/fdl/InternxtDrive/vuelo_24h/<fecha>), SOLO para el zip y el manifiesto de la DOCUMENTACION del vuelo -- es el precedente existente C:/Users/fdl/InternxtDrive/vuelo_24h/20261106-1430 (verificado solo lectura por TR-29: directorio_vuelo.zip 3,1 MB, manifiesto_directorio_vuelo.json 110 KB y dos bundles git de 52,4 y 43,8 MB); (3) lo que contenga mensajes del usuario o transcripciones de sesiones (jsonl) NO sale a la nube sin escaneo previo de secretos Y autorizacion expresa del usuario POR CATEGORIA; (4) escribir en la carpeta sincronizada NO prueba que se haya subido: el diseno distingue COPIA LOCAL VERIFICADA POR HASH (comprobable) de SUBIDA CONFIRMADA, y la confirmacion de subida se declara NO VERIFICABLE por script mientras no exista una comprobacion reproducible del cliente (no se inventa ninguna).
+Frase literal de la clausula: Raiz del archivo: parametro obligatorio sin valor por defecto (ADENDA 18:30 del usuario). El diseno declara la raiz donde se guardan los veredictos archivados de P2 (y, en la hija de 158c, el zip) como PARAMETRO OBLIGATORIO SIN VALOR POR DEFECTO, DECISION PENDIENTE DEL USUARIO, con: (1) destino primario recomendado D:/flight_archive (disco USB distinto de C:, con FALLO CERRADO si D: no esta montado -- nunca caer a C:-- y verificacion de hash tras escribir); (2) replica OPCIONAL en la carpeta sincronizada de Internxt (cliente 2.6.12 instalado y en marcha; carpeta sincronizada C:/Users/fdl/InternxtDrive, p. ej. C:/Users/fdl/InternxtDrive/vuelo_24h/<fecha>), SOLO para el zip y el manifiesto de la DOCUMENTACION del vuelo -- es el precedente existente C:/Users/fdl/InternxtDrive/vuelo_24h/20261106-1430 (verificado solo lectura por TR-29: directorio_vuelo.zip 3,1 MB, manifiesto_directorio_vuelo.json 110 KB y dos bundles git de 52,4 y 43,8 MB); (3) lo que contenga mensajes del usuario o transcripciones de sesiones (jsonl) NO sale a la nube sin escaneo previo de secretos Y autorizacion expresa del usuario POR CATEGORIA; (4) escribir en la carpeta sincronizada NO prueba que se haya subido: el diseno distingue COPIA LOCAL VERIFICADA POR HASH (comprobable) de SUBIDA CONFIRMADA, y la confirmacion de subida se declara NO VERIFICABLE por script mientras no exista una comprobacion reproducible del cliente (no se inventa ninguna). [externa]
 
 - scripts/archive_arranques.py L16-17: SE MUEVE, JAMAS SE BORRA; L50 mueve solo ARCHIVABLE, salvo --dry-run.
 
@@ -228,12 +228,12 @@ Frase literal de la clausula: Documentacion para un agente frio. El diseno orden
 
 ### d-01 REGISTRO diario de espacio libre
 
-El registro vivo es C:/Users/fdl/flight_coordination/disk_free_log.csv con columnas ts_local,
+El registro vivo es C:/Users/fdl/flight_coordination/disk_free_log.csv [externa] con columnas ts_local,
 free_gb, used_gb, total_gb y by. El dueno de la automatizacion queda pendiente del usuario;
 la linea base de 14 registros solo informa tasas de crecimiento y nunca convierte una medicion
 en una lista aprobada.
 
-Frase literal de la clausula: REGISTRO diario de espacio libre (medicion viva). El diseno nombra el fichero C:/Users/fdl/flight_coordination/disk_free_log.csv (columnas ts_local, free_gb, used_gb, total_gb, by; iniciado el 2026-11-09 17:25 por CO-62) como registro de linea base; propone como DUENO de la automatizacion diaria (P26) a la coordinadora vigente del vuelo dentro de su latido diario, PENDIENTE de decision del usuario; y aclara que la linea base de 14 registros SOLO condiciona decisiones por tasa de crecimiento, NUNCA las retiradas por lista aprobada (N6/E8/O6).
+Frase literal de la clausula: REGISTRO diario de espacio libre (medicion viva). El diseno nombra el fichero C:/Users/fdl/flight_coordination/disk_free_log.csv (columnas ts_local, free_gb, used_gb, total_gb, by; iniciado el 2026-11-09 17:25 por CO-62) como registro de linea base; propone como DUENO de la automatizacion diaria (P26) a la coordinadora vigente del vuelo dentro de su latido diario, PENDIENTE de decision del usuario; y aclara que la linea base de 14 registros SOLO condiciona decisiones por tasa de crecimiento, NUNCA las retiradas por lista aprobada (N6/E8/O6). [externa]
 
 
 ## Decisiones pendientes del usuario
