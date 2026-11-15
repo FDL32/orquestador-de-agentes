@@ -214,6 +214,8 @@ flight_stall_check o latido; L-7 fallo cerrado sin caida a C:; L-8 subida distin
 
 Frase literal de la clausula: LIMITES del archivo (L-1 a L-8). El diseno declara los ocho limites L-1 a L-8 de la seccion 10: presupuesto con topes (PROPUESTA: 20 GB Internxt, 100 GB en D:, 5 GB por vuelo), indice obligatorio con huerfano=rojo, caducidad con propuesta P7 con hash, solo comprimido con manifiesto y hash, categorias con autorizacion expresa, comprobador de solo lectura con rc cableado a flight_stall_check o latido, fallo cerrado sin caida a C:, y subida distinta de copia.
 
+Remision canonica: los nombres y numeros unicos de los limites ratificados viven en `docs/protocol/ciclo_vida_artefactos_vuelo.md`, seccion "Limites unicos L-1 a L-8": la raiz corresponde a L-1; `L1.topes` corresponde a L-2; `L2.indice`, `L2.huerfano` y `L3.caducado` corresponden a L-3; `L4.solo_comprimido` a L-4; `L5.categorias` a L-5; `L6.comprobador` y `L6.cableado` a L-6; `L7.fallo_cerrado` a L-7; y `L8.subida` a L-8. Esta remision no edita las anclas; el estado RATIFICADO del ciclo es el que rige.
+
 ### m-12 Documentacion para un agente frio
 
 La documentacion fria debe enlazar el ciclo de vida, una fila nueva del pilar y un INDEX.md en
