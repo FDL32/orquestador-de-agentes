@@ -5208,6 +5208,36 @@ def _profile_p50_latency_ms(
     return (latencies[mid - 1] + latencies[mid]) / 2.0
 
 
+# Orden del usuario 2026-11-16: los modelos `nan/*` solo se lanzan por las dos
+# rutas de agente (opencode primero, kilo de respaldo). Dentro de la familia,
+# el hermano por la OTRA ruta se prueba ANTES que cualquier otro candidato y no
+# se le aplica el filtro de latencia (es una preferencia de ruta, no de rapidez).
+_NAN_AGENT_ROUTE_SIBLING = {"opencode": "kilo", "kilo": "opencode"}
+
+
+def _nan_route_sibling_candidates(
+    failed: dict, candidates: list[str], config: dict
+) -> list[str]:
+    """Hermanos `nan/*` de `candidates` por la otra ruta de agente (opencode<->kilo).
+
+    Before: `failed` es el perfil caido; `candidates` son los de su familia.
+    During: solo si el caido es `nan/*` por opencode o kilo; devuelve los
+        candidatos `nan/*` de la ruta contraria, en el orden recibido.
+    After: lista vacia si el caido no es un lente nan por agente (cero efecto
+        sobre el resto de familias).
+    """
+    sibling = _NAN_AGENT_ROUTE_SIBLING.get(failed.get("backend"))
+    if sibling is None or not str(failed.get("model", "")).startswith("nan/"):
+        return []
+    profiles = config.get("ensemble_profiles", {})
+    return [
+        name
+        for name in candidates
+        if profiles.get(name, {}).get("backend") == sibling
+        and str(profiles.get(name, {}).get("model", "")).startswith("nan/")
+    ]
+
+
 def resolve_similar_fallback(
     failed_profile: str,
     *,
@@ -5350,6 +5380,9 @@ def resolve_similar_fallback(
         rows=ronda_rows,
         max_latency_ratio=max_latency_ratio,
     )
+    route_siblings = _nan_route_sibling_candidates(failed, same_family, config)
+    if route_siblings:
+        ordered = route_siblings + [n for n in ordered if n not in route_siblings]
     if not ordered:
         return resolve_fallback_backend(
             failed.get("backend"),

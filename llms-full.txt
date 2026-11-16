@@ -1205,6 +1205,16 @@ corregidos en la misma sesion que fijo esta norma.
 legacy (por que, estado exacto, consecuencia para rutas de seleccion
 nuevas) en `docs/protocol/ensemble_profile_naming_legacy_case.md`.
 
+## Modelos nan: solo por opencode (primero) o kilo (respaldo) -- 2026-11-16
+
+Orden directa del usuario: el backend `nan_api` es **LEGACY** para lentes. Los perfiles
+`challenger_nan_*` (BA10, BA11, BA13, BA15, BA16, BA25) llevan `status: legacy` y las claves
+`nan_api` del registro estan `deprecated`: se conservan por el historico del scorecard, **no se
+eligen**. Sustitutos: `challenger_opencode_*` (BA256-BA260, y BA06 para glm flash) como ruta
+primaria y `challenger_kilo_*` como respaldo; `resolve_similar_fallback` prueba primero el
+hermano nan por la otra ruta de agente (opencode <-> kilo). Medido ese dia: nan_api fallo 13 de
+15 rondas en deepseek y mimo. Un lente frio que necesite un modelo nan elige opencode.
+
 ```
 
 ## .agent/rules/common/builder_relaunch.md

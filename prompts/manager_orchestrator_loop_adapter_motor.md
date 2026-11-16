@@ -50,8 +50,9 @@ medidos (2026-10-08, sesion fria + prompt pegado sin tarea; sesion con tarea que
    - Para lanzar un **Builder real con filesystem** (leer/escribir/implementar, no dar
      veredicto): el comando canonico completo (Kilo CLI, flags, orden exacto) vive en
      `prompts/builder_invocation_contract.md` seccion 1. Los perfiles `nan` ya validados
-     (`challenger_nan_deepseek_flash`, `challenger_nan_qwen`, `challenger_nan_qwen_flash`,
-     `challenger_nan_glm_flash`, `challenger_nan_gemma`, `challenger_nan_mimo_flash`) estan
+     (`challenger_kilo_deepseek_flash`, `challenger_kilo_qwen`, `challenger_kilo_qwen_flash`,
+     `challenger_kilo_glm_flash`, `challenger_kilo_gemma`, `challenger_kilo_mimo_flash`; los
+     `challenger_nan_*` por `nan_api` son LEGACY desde 2026-11-16) estan
      en `.agent/config/agents.json` -> `ensemble_profiles`; no hace falta localizar el
      ejecutable a mano -- el CLI `@kilocode/cli` (npm) lo deja en PATH como `kilo`, y la
      config ya declara `backends.kilo.executable: "kilo.cmd"` (2026-10-09: corregido desde

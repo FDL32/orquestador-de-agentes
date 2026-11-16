@@ -8642,6 +8642,143 @@ def test_resolve_similar_fallback_prefers_fastest_alive_in_same_family(
     )
 
 
+def _nan_route_config() -> dict:
+    return {
+        "ensemble_profiles": {
+            "oc_nan": {"backend": "opencode", "model": "nan/deepseek-v4-flash"},
+            "kilo_nan": {"backend": "kilo", "model": "nan/deepseek-v4-flash"},
+            "nvidia_ds": {"backend": "nvidia_api", "model": "deepseek-ai/v4"},
+        }
+    }
+
+
+def _nan_route_family_map(monkeypatch) -> None:
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {
+            ("opencode", "nan/deepseek-v4-flash"): "deepseek",
+            ("kilo", "nan/deepseek-v4-flash"): "deepseek",
+            ("nvidia_api", "deepseek-ai/v4"): "deepseek",
+        },
+    )
+
+
+def test_resolve_similar_fallback_opencode_nan_falls_back_to_kilo_first(
+    tmp_path, monkeypatch
+):
+    """Un lente nan por opencode cae PRIMERO a su hermano kilo, aunque otro
+    miembro de la familia sea mucho mas rapido y kilo supere el tope de latencia."""
+    _nan_route_family_map(monkeypatch)
+    project_root = _write_scorecard_rows(
+        tmp_path,
+        [
+            {
+                "event": "ronda",
+                "backend": "opencode",
+                "model": "nan/deepseek-v4-flash",
+                "latency_ms": 100_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "kilo",
+                "model": "nan/deepseek-v4-flash",
+                "latency_ms": 900_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "nvidia_api",
+                "model": "deepseek-ai/v4",
+                "latency_ms": 10_000,
+            },
+        ],
+    )
+    asked: list[str] = []
+
+    def check_alive(name, *, config):
+        asked.append(name)
+        return {"alive": True}
+
+    chosen = ed.resolve_similar_fallback(
+        "oc_nan",
+        config=_nan_route_config(),
+        project_root=project_root,
+        check_alive=check_alive,
+    )
+    assert chosen == "kilo_nan", "kilo (ruta hermana) va antes que nvidia (mas rapido)"
+    assert asked == ["kilo_nan"], "no se prueba a nadie antes que el hermano kilo"
+
+
+def test_resolve_similar_fallback_nan_route_sibling_dead_then_rest_of_family(
+    tmp_path, monkeypatch
+):
+    """Si kilo no responde, sigue por el resto de la familia (no se rinde)."""
+    _nan_route_family_map(monkeypatch)
+
+    def check_alive(name, *, config):
+        return {"alive": name != "kilo_nan"}
+
+    chosen = ed.resolve_similar_fallback(
+        "oc_nan",
+        config=_nan_route_config(),
+        project_root=tmp_path,
+        check_alive=check_alive,
+    )
+    assert chosen == "nvidia_ds"
+
+
+def test_resolve_similar_fallback_non_nan_profile_gets_no_route_preference(
+    tmp_path, monkeypatch
+):
+    """Un perfil opencode NO nan (opencode-go) conserva el orden por p50."""
+    monkeypatch.setattr(
+        ed,
+        "MODEL_FAMILY_MAP",
+        {
+            ("opencode", "opencode-go/glm-5.3-flash"): "glm",
+            ("kilo", "nan/glm5.3-flash"): "glm",
+            ("nvidia_api", "z-ai/glm-5.3-flash"): "glm",
+        },
+    )
+    config = {
+        "ensemble_profiles": {
+            "oc_go": {"backend": "opencode", "model": "opencode-go/glm-5.3-flash"},
+            "kilo_glm": {"backend": "kilo", "model": "nan/glm5.3-flash"},
+            "nvidia_glm": {"backend": "nvidia_api", "model": "z-ai/glm-5.3-flash"},
+        }
+    }
+    project_root = _write_scorecard_rows(
+        tmp_path,
+        [
+            {
+                "event": "ronda",
+                "backend": "opencode",
+                "model": "opencode-go/glm-5.3-flash",
+                "latency_ms": 200_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "kilo",
+                "model": "nan/glm5.3-flash",
+                "latency_ms": 300_000,
+            },
+            {
+                "event": "ronda",
+                "backend": "nvidia_api",
+                "model": "z-ai/glm-5.3-flash",
+                "latency_ms": 100_000,
+            },
+        ],
+    )
+    chosen = ed.resolve_similar_fallback(
+        "oc_go",
+        config=config,
+        project_root=project_root,
+        check_alive=lambda name, *, config: {"alive": True},
+    )
+    assert chosen == "nvidia_glm"
+
+
 def test_resolve_similar_fallback_skips_dead_candidate_tries_next_fastest(
     tmp_path, monkeypatch
 ):
