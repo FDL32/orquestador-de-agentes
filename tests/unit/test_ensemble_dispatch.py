@@ -6366,6 +6366,47 @@ def test_legacy_sin_replaced_by_avisa_sin_decir_none(capsys):
 
 # WOT-2026-086f: BA12 (mimo-v2.5) retirado: entrada eliminada de _NAN_MODELS.
 
+
+def test_get_best_nan_for_task_skips_legacy_nan_api_profiles(tmp_path, monkeypatch):
+    """Un perfil nan_api LEGACY no sale ni como lider ni por rotacion PONG; el
+    vivo (no legacy) si. Si TODOS son legacy devuelve (None, None)."""
+    leaders = tmp_path / ed.LEADERS_REL
+    leaders.parent.mkdir(parents=True, exist_ok=True)
+    leaders.write_text(
+        json.dumps(
+            {
+                "por_task_type": {
+                    "prose": {"lider": {"backend": "nan_api", "model": "m-old"}}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    legacy = {
+        "backend": "nan_api",
+        "model": "m-old",
+        "status": "legacy",
+        "replaced_by": "nan_new",
+    }
+    config = {
+        "ensemble_profiles": {
+            "nan_old": legacy,
+            "nan_new": {"backend": "nan_api", "model": "m-new"},
+        }
+    }
+    monkeypatch.setattr(
+        ed, "smoke_profile", lambda name, **_kw: {"alive": True, "outcome": "ok"}
+    )
+    assert ed._get_best_nan_for_task("prose", config=config, project_root=tmp_path) == (
+        "nan_new",
+        "pong_rotacion",
+    ), "el lider legacy no debe elegirse"
+    only_legacy = {"ensemble_profiles": {"nan_old": legacy}}
+    assert ed._get_best_nan_for_task(
+        "prose", config=only_legacy, project_root=tmp_path
+    ) == (None, None)
+
+
 _WOT_025Z_SECTION_MARKER = "# === WOT-2026-025z substantive tests start ==="
 
 _NAN_MODELS = {
@@ -6586,10 +6627,9 @@ def test_review_adversarial_challenger_is_nan_canonical():
     # por kilo u opencode; el canal api directo de deepseek/mimo fallo 13 de 15
     # rondas ese dia. El challenger por defecto sigue siendo un modelo NAN, pero
     # puede llegar por opencode.
-    assert challenger_profile["backend"] in ("nan_api", "opencode")
-    assert str(challenger_profile["model"]).startswith("nan/") or (
-        challenger_profile["backend"] == "nan_api"
-    )
+    assert challenger_profile["backend"] == "opencode"
+    assert str(challenger_profile["model"]).startswith("nan/")
+    assert not ed.is_legacy_profile(challenger_profile)
 
 
 def test_direct_backends_removed_nan_is_sole_api_channel():

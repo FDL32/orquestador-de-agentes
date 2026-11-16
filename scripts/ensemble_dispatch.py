@@ -8644,7 +8644,9 @@ def _get_best_nan_for_task(
             entry = leaders.get("por_task_type", leaders).get(task_type)
             lider = entry.get("lider") if entry else None
             if lider:
-                for name, prof in config.get("ensemble_profiles", {}).items():
+                # Solo perfiles SELECCIONABLES: un nan_api legacy (orden del
+                # usuario 2026-11-16) no se elige por si mismo, ni como lider.
+                for name, prof in selectable_profiles(config).items():
                     if (
                         prof.get("backend") == "nan_api"
                         and prof.get("backend") == lider.get("backend")
@@ -8656,7 +8658,7 @@ def _get_best_nan_for_task(
 
     nan_profiles = [
         name
-        for name, prof in config.get("ensemble_profiles", {}).items()
+        for name, prof in selectable_profiles(config).items()
         if prof.get("backend") == "nan_api"
     ]
 
