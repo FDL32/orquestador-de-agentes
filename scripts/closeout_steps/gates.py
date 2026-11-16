@@ -7,6 +7,7 @@ steps that used to live in the session_closeout monolith.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -256,6 +257,7 @@ def step_roster_matches_acting_thread(
 
 
 _LATIDO_CHECK = "flight/check_latido_alert_wiring.py"
+_HILO_FAILED_DETECTOR = "flight/hilo_failed_detector.py"
 _LATIDO_REPRO_PREFIX = "reproducir y revalidar:"
 
 
@@ -415,6 +417,100 @@ def step_latido_alert_wiring(
             result.stdout or process_diagnostic_fn(result),
             roster_path,
             specs,
+        ),
+        blocking=True,
+    )
+
+
+def step_hilo_failed_detector(  # noqa: C901 - rc mapping and self-service diagnostics
+    project_root: Path,
+    dry_run: bool,
+    *,
+    registry_path: str | None = None,
+    roster_path: str | None = None,
+    run_script_fn,
+    process_diagnostic_fn,
+    step_result_cls: type[StepResult],
+) -> StepResult:
+    """Run the failed-live-session detector as a blocking closeout gate.
+
+    Before: ``project_root`` is the motor root and the detector reads its flight/store
+        configuration from explicit arguments or the inherited environment.
+    During: derives flight context from registry_path or roster_path, invokes the real
+        detector CLI with the same timeout, and translates its rc.
+    After: rc 0 is PASS, rc 1 or 2 is blocking FAIL, rc 3 is non-blocking SKIP;
+        dry-run, timeout, missing script, and other execution errors are handled safely.
+    """
+    name = "hilo_failed_detector"
+    if dry_run:
+        return step_result_cls(
+            name=name,
+            status="SKIP",
+            detail="Not run in dry-run mode: failed-session detector was not verified",
+            blocking=False,
+        )
+    flight_dir = None
+    if registry_path:
+        candidate = Path(registry_path).parent
+        flight_dir = candidate if candidate.is_dir() else None
+    elif roster_path:
+        candidate = Path(roster_path).parent
+        flight_dir = candidate if candidate.is_dir() else None
+    args: list[str] = []
+    if flight_dir is not None:
+        args.extend(["--flight-dir", str(flight_dir)])
+        ops_dir = os.environ.get("FLIGHT_OPS_DIR")
+        if ops_dir:
+            args.extend(["--ops-dir", ops_dir])
+    try:
+        script_root = project_root
+        if not (project_root / "scripts" / _HILO_FAILED_DETECTOR).is_file():
+            script_root = Path(__file__).resolve().parents[2]
+        result = run_script_fn(_HILO_FAILED_DETECTOR, args, script_root, timeout=60)
+    except subprocess.TimeoutExpired:
+        return step_result_cls(
+            name=name,
+            status="FAIL",
+            detail="flight/hilo_failed_detector.py timed out after 60s",
+            blocking=True,
+        )
+    except FileNotFoundError:
+        return step_result_cls(
+            name=name,
+            status="FAIL",
+            detail="flight/hilo_failed_detector.py no existe en scripts/",
+            blocking=True,
+        )
+    except OSError as exc:
+        return step_result_cls(
+            name=name,
+            status="FAIL",
+            detail=f"no se pudo ejecutar flight/hilo_failed_detector.py ({type(exc).__name__}: {exc})",
+            blocking=True,
+        )
+    if result.returncode == 0:
+        return step_result_cls(
+            name=name,
+            status="PASS",
+            detail="No hay sesiones activas con ultima run failed o interrupted",
+            blocking=True,
+        )
+    if result.returncode == 3:
+        return step_result_cls(
+            name=name,
+            status="SKIP",
+            detail="SKIP: sin contexto de vuelo (flight-dir sin declarar): detector no aplicable (N/A)",
+            blocking=False,
+        )
+    return step_result_cls(
+        name=name,
+        status="FAIL",
+        detail=(
+            f"Detector de sesiones activas fallido (exit {result.returncode}): "
+            f"{process_diagnostic_fn(result)}; "
+            f"orden: python scripts/{_HILO_FAILED_DETECTOR} "
+            f"{' '.join(args)}; "
+            "revalidar: exporta FLIGHT_OPS_DIR=<ops-dir> y repite"
         ),
         blocking=True,
     )

@@ -57,6 +57,7 @@ from scripts.closeout_steps.archival import (  # noqa: E402
     step_rotate_kilo_logs as _step_rotate_kilo_logs_fn,
 )
 from scripts.closeout_steps.gates import (  # noqa: E402
+    step_hilo_failed_detector as _step_hilo_failed_detector_impl,
     step_integration_receipts as _step_integration_receipts_impl,
     step_latido_alert_wiring as _step_latido_alert_wiring_impl,
     step_local_audit as _step_local_audit_impl,
@@ -1146,6 +1147,25 @@ def _step_latido_alert_wiring(
         dry_run,
         roster_path=roster_path,
         latido_files=latido_files,
+        run_script_fn=_run_script,
+        process_diagnostic_fn=_process_diagnostic,
+        step_result_cls=StepResult,
+    )
+
+
+def _step_hilo_failed_detector(
+    project_root: Path,
+    dry_run: bool,
+    *,
+    registry_path: str | None = None,
+    roster_path: str | None = None,
+) -> StepResult:
+    """Run the failed-live-session detector as a blocking closeout gate."""
+    return _step_hilo_failed_detector_impl(
+        project_root,
+        dry_run,
+        registry_path=registry_path,
+        roster_path=roster_path,
         run_script_fn=_run_script,
         process_diagnostic_fn=_process_diagnostic,
         step_result_cls=StepResult,
@@ -3287,6 +3307,17 @@ def run_closeout(  # noqa: C901 - already complex, new step adds to it
     )
     report.steps.append(latido)
     if latido.status == "FAIL":
+        report_path = _generate_report(report, project_root)
+        print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
+        return 1
+    hilo_failed = _step_hilo_failed_detector(
+        project_root,
+        dry_run,
+        registry_path=registry_path,
+        roster_path=roster_path,
+    )
+    report.steps.append(hilo_failed)
+    if hilo_failed.status == "FAIL":
         report_path = _generate_report(report, project_root)
         print(f"[closeout] Report (FAIL): {report_path}", file=sys.stderr)
         return 1
