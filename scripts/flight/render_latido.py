@@ -38,7 +38,7 @@ unprotected source pieces, never to protected cascade, postcompaction, or
 judgement spans.
 
 The versioned tick-block migration uses the strict predecessor marker
-``<!-- LATIDO_TICK_BLOCK_VERSION: 1 -->``. A predecessor that already contains
+``<!-- LATIDO_TICK_BLOCK_VERSION: 2 -->``. A predecessor that already contains
 the three required command signatures is accepted; one without them is
 rejected unless that exact marker is present, in which case the block is
 injected from the versioned LATIDO template in the repository.
@@ -70,8 +70,8 @@ from typing import Any
 
 _CASCADE_START = "la cascada es "
 _CASCADE_END = " LATIDO DE PROGRESO"
-_TICK_VERSION_MARKER = "<!-- LATIDO_TICK_BLOCK_VERSION: 1 -->"
-_TICK_BLOCK_END = "<!-- END LATIDO_TICK_BLOCK_VERSION: 1 -->"
+_TICK_VERSION_MARKER = "<!-- LATIDO_TICK_BLOCK_VERSION: 2 -->"
+_TICK_BLOCK_END = "<!-- END LATIDO_TICK_BLOCK_VERSION: 2 -->"
 _TICK_REQUIRED_SIGNATURES = (
     "check_roster_matches_acting_thread.py",
     "flight_stall_check.py",

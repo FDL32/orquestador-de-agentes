@@ -224,6 +224,12 @@ def phase_a(fl, a, backups, actor):
 
 
 def phase_b(fl, a, actor):
+    """Activate the incoming coordinator and record its post-rotation window.
+
+    Before: phase A has installed the incoming identity in roster and registry.
+    During: write ACTIVO, one active timestamp, and its seven-minute deadline.
+    After: the incoming registry row is ready for the heartbeat detector.
+    """
     W.write_role_estado(
         fl / "flight_roster.json",
         "orquestador",
@@ -234,10 +240,16 @@ def phase_b(fl, a, actor):
     )
     reg_p = fl / "session_registry.json"
     reg = load_registry(reg_p)
+    active_ts = now()
+    deadline = datetime.datetime.fromisoformat(active_ts) + datetime.timedelta(
+        minutes=7
+    )
     for s in reg["sessions"]:
         if s["code"] == a.in_code:
-            s["status"] = f"ACTIVA (ACK medido {now()})"
-    reg["actualizado"] = now()
+            s["status"] = f"ACTIVA (ACK medido {active_ts})"
+            s["activo_ts"] = active_ts
+            s["post_relevo_plazo"] = deadline.isoformat(timespec="seconds")
+    reg["actualizado"] = active_ts
     save_registry(reg_p, reg)
 
 

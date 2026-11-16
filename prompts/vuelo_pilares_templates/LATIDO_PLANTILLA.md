@@ -1,4 +1,4 @@
-<!-- Marcadores declarados: {{ROL}} {{ID_PROPIO}} {{HILO_PROPIO}} {{VUELO_ID}} {{ID_SUPERVISORA}} {{HILO_SUPERVISORA}} {{ID_COORDINADORA}} {{HILO_COORDINADORA}} {{CASCADA_CONTEXTO}} {{MOTOR_ROOT}} {{FLIGHT_DIR}} {{OPS_DIR}} {{PYTHON}} {{CADENCIA_MIN}} {{COMANDO_CUPO_OPCIONAL}} -->
+<!-- Marcadores declarados: {{ROL}} {{ID_PROPIO}} {{HILO_PROPIO}} {{VUELO_ID}} {{ID_SUPERVISORA}} {{HILO_SUPERVISORA}} {{ID_COORDINADORA}} {{HILO_COORDINADORA}} {{CASCADA_CONTEXTO}} {{MOTOR_ROOT}} {{FLIGHT_DIR}} {{OPS_DIR}} {{BACKLOG}} {{PYTHON}} {{CADENCIA_MIN}} {{COMANDO_CUPO_OPCIONAL}} -->
 
 # Plantilla de LATIDO
 
@@ -50,15 +50,16 @@
 12. Ante avisos de parada, emite órdenes con rc literal y rutas mediante los
     marcadores disponibles.
 
-    <!-- LATIDO_TICK_BLOCK_VERSION: 1 -->
+    <!-- LATIDO_TICK_BLOCK_VERSION: 2 -->
     ```text
     cd {{MOTOR_ROOT}}
     {{PYTHON}} scripts/check_roster_matches_acting_thread.py --roster-path {{FLIGHT_DIR}}/flight_roster.json --acting-thread {{HILO_PROPIO}}
+    {{PYTHON}} scripts/flight/post_relevo_check.py --flight-dir {{FLIGHT_DIR}} --ops-dir {{OPS_DIR}} --backlog {{BACKLOG}}
     {{PYTHON}} scripts/flight/flight_stall_check.py --ops-dir {{OPS_DIR}} --flight-dir {{FLIGHT_DIR}}
     {{PYTHON}} scripts/flight/flight_stall_check.py --ops-dir {{OPS_DIR}} --flight-dir {{FLIGHT_DIR}} --self-check
     {{PYTHON}} scripts/flight/tick_trace.py --ops-dir {{OPS_DIR}} --coordinator {{ID_PROPIO}} --unmeasured roster_sha12=MEDIR_EN_ESTE_TICK --unmeasured guard_rc=MEDIR_EN_ESTE_TICK --unmeasured quota_rc=MEDIR_EN_ESTE_TICK --unmeasured quota_summary=MEDIR_EN_ESTE_TICK
     ```
-    <!-- END LATIDO_TICK_BLOCK_VERSION: 1 -->
+    <!-- END LATIDO_TICK_BLOCK_VERSION: 2 -->
 
     Si eres supervisora: aplica P25 (RATIFICADA, vinculante). El
     REGISTRY (`session_registry.json`) sigue siendo una petición ESCRITA a

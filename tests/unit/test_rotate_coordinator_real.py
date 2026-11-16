@@ -240,3 +240,33 @@ def test_rehearsal_con_control_negativo(tmp_path: Path) -> None:
 def test_literal_timestamp_falso_ausente() -> None:
     """Verify that the copied module contains no stale literal timestamp."""
     assert MODULE_PATH.read_text(encoding="utf-8").count("a las 13:59") == 0
+
+
+def test_phase_b_writes_post_rotation_deadline(tmp_path: Path) -> None:
+    """Phase B records the active timestamp and seven-minute deadline.
+
+    Before: a valid phase-B fixture has an incoming registry session.
+    During: execute phase_b with the existing roster writer.
+    After: the incoming session contains parseable active and deadline fields.
+    """
+    module = _load_module()
+    fl_dir = _make_fixtures(tmp_path)
+    writer_path = MOTOR_ROOT / "scripts" / "flight_roster_writer.py"
+    spec = importlib.util.spec_from_file_location("flight_roster_writer", writer_path)
+    assert spec is not None and spec.loader is not None
+    writer = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(writer)
+    module.W = writer
+    args = type(
+        "Args",
+        (),
+        {"in_code": "CO-11", "out_code": "CO-10", "reason": "test"},
+    )()
+
+    module.phase_b(fl_dir, args, "TEST")
+
+    data = json.loads((fl_dir / "session_registry.json").read_text(encoding="utf-8"))
+    incoming = next(item for item in data["sessions"] if item["code"] == "CO-11")
+    active = module.datetime.datetime.fromisoformat(incoming["activo_ts"])
+    deadline = module.datetime.datetime.fromisoformat(incoming["post_relevo_plazo"])
+    assert deadline - active == module.datetime.timedelta(minutes=7)

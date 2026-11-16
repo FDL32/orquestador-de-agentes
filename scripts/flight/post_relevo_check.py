@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""Detect coordinator inactivity after a measured rotation.
+
+Before: the heartbeat supplies explicit flight, operations, and backlog paths.
+During: read the roster and registry, evaluate the seven-minute post-ACK
+    window, and use the shared alert ledger for one post-relevo key.
+After: return 0 when clean or unevaluated, 1 when a condition is active, and
+    2 when an input or alert operation cannot be measured safely.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import importlib.util
+import json
+import os
+import re
+import tempfile
+import uuid
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from pathlib import Path
+
+
+ACK_RE = re.compile(r"ACTIVA\s*\(ACK medido\s+(?P<ts>[^)]+)\)")
+STATE_NAME = "post_relevo_state.json"
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """The observable result of one detector tick."""
+
+    rc: int
+    message: str
+    reasons: tuple[str, ...] = ()
+
+
+def _load_json(path: Path) -> dict:
+    """Read one JSON object from an explicit flight path.
+
+    Before: path identifies a required roster or registry file.
+    During: decode UTF-8 JSON and validate the top-level object.
+    After: return the object or raise a measurement error.
+    """
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        raise ValueError(f"JSON object required: {path.name}")
+    return value
+
+
+def _parse_ts(value: object) -> datetime | None:
+    """Parse an ISO timestamp while accepting a trailing Z.
+
+    Before: value is a registry timestamp candidate.
+    During: normalize UTC notation and parse an aware datetime.
+    After: return a datetime or None for a missing or invalid marker.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.astimezone()
+
+
+def _session(registry: dict, code: str) -> dict | None:
+    """Find one registry session by its stable code."""
+    for item in registry.get("sessions", []):
+        if isinstance(item, dict) and item.get("code") == code:
+            return item
+    return None
+
+
+def _active_marker(session: dict) -> tuple[datetime | None, datetime | None]:
+    """Read the explicit deadline or derive it from the measured ACK marker.
+
+    Before: session is the incoming coordinator registry row.
+    During: prefer phase-B fields and fall back to ``ACK medido`` history.
+    After: return ``(active_ts, deadline)``; both are None when unmeasurable.
+    """
+    deadline = _parse_ts(session.get("post_relevo_plazo"))
+    active = _parse_ts(session.get("activo_ts"))
+    if deadline is not None:
+        return active or deadline - timedelta(minutes=7), deadline
+    match = ACK_RE.search(str(session.get("status", "")))
+    ack = _parse_ts(match.group("ts")) if match else None
+    return (ack, ack + timedelta(minutes=7)) if ack else (None, None)
+
+
+def _load_sibling(name: str):
+    """Load a read-only sibling flight module by path."""
+    path = Path(__file__).with_name(name)
+    spec = importlib.util.spec_from_file_location(name[:-3], path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _alert(key: str, message: str, ops_dir: Path, session_code: str) -> int:
+    """Emit one alert through comms_alert and preserve its ledger contract.
+
+    Before: ops_dir is the explicit heartbeat operations directory.
+    During: configure the shared alert module and emit an URGENTE event.
+    After: return the shared rc, translating unexpected errors to rc 2.
+    """
+    try:
+        alerts = _load_sibling("comms_alert.py")
+        alerts.configure(str(ops_dir))
+        return alerts.event(
+            key,
+            "URGENTE",
+            "Post-relevo",
+            message,
+            False,
+            False,
+            owner="post_relevo",
+            session_code=session_code,
+        )
+    except (OSError, ValueError, ImportError, AttributeError) as exc:
+        print(f"post-relevo alerta rota: {exc}")
+        return 2
+
+
+def _resolve(key: str, ops_dir: Path) -> int:
+    """Resolve one shared alert key and record the resolution in the ledger.
+
+    Before: the shared comms alert state contains the detector key.
+    During: call only public comms_alert APIs and append a nine-field resolution row.
+    After: return the shared resolution rc; no private comms implementation is used.
+    """
+    try:
+        alerts = _load_sibling("comms_alert.py")
+        alerts.configure(str(ops_dir))
+        rc = alerts.resolve(key)
+        if rc == 0:
+            alerts.ledger_append(
+                {
+                    "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
+                    "by": "post_relevo",
+                    "a": key,
+                    "modo": "heartbeat",
+                    "resultado": "RESOLVED",
+                    "error": "",
+                    "providerInstanceId": "",
+                    "mensaje_id": f"post_relevo:{uuid.uuid4()}",
+                    "nota": "post-relevo condition resolved",
+                }
+            )
+        return rc
+    except (OSError, ValueError, ImportError, AttributeError) as exc:
+        print(f"post-relevo resolucion rota: {exc}")
+        return 2
+
+
+def _read_state(path: Path) -> dict:
+    """Read or initialize the detector-owned state file."""
+    if not path.exists():
+        return {"active": []}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or not isinstance(value.get("active", []), list):
+        raise ValueError("post_relevo_state.json invalido")
+    return value
+
+
+def _write_state(path: Path, state: dict) -> None:
+    """Persist detector state safely inside the explicit operations path."""
+    data = (json.dumps(state, indent=2) + "\n").encode("utf-8")
+    fd, temporary = tempfile.mkstemp(
+        prefix=f"{path.stem}-", suffix=".tmp", dir=path.parent
+    )
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        os.replace(temporary, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
+
+
+def _created_after(sessions: list[dict], active: datetime, incoming: str) -> int:
+    """Count IM/TR sessions created after active with the canonical parent field."""
+    count = 0
+    for item in sessions:
+        if item.get("role") not in ("implantacion", "triaje"):
+            continue
+        if item.get("reporta_a") != incoming:
+            continue
+        started = _parse_ts(item.get("started"))
+        if started is not None and started > active:
+            count += 1
+    return count
+
+
+def _apta_unclaimed(backlog: Path, registry_path: Path) -> bool:
+    """Return whether cola_apta exposes an eligible unbriefed ticket."""
+    checker = _load_sibling("cola_apta.py")
+    decisions = checker.cola_apta(backlog, registry_path, backlog.parent)
+    return any(item.get("apta") and not item.get("tiene_brief") for item in decisions)
+
+
+def _reproduction_command(
+    flight_dir: Path, ops_dir: Path, backlog: Path, observed: datetime
+) -> str:
+    """Build the literal command needed to reproduce an alerting tick."""
+    return (
+        "python scripts/flight/post_relevo_check.py"
+        f" --flight-dir {flight_dir} --ops-dir {ops_dir} --backlog {backlog}"
+        f" --now {observed.isoformat()}"
+    )
+
+
+def evaluate(  # noqa: C901 - detector branches mirror contract clauses
+    flight_dir: Path,
+    ops_dir: Path,
+    backlog: Path,
+    *,
+    now: str | None = None,
+) -> CheckResult:
+    """Evaluate one post-rotation heartbeat using only explicit input routes.
+
+    Before: all three paths are supplied by the heartbeat and are readable.
+    During: evaluate the deadline, live IM count, reporta_a creations, and APTA.
+    After: update detector state and return a stable rc/message result.
+    """
+    try:
+        roster = _load_json(flight_dir / "flight_roster.json")
+        registry_path = flight_dir / "session_registry.json"
+        registry = _load_json(registry_path)
+        incoming = roster["active_roles"]["orquestador"]["session_code"]
+        session = _session(registry, incoming)
+        if session is None:
+            raise ValueError(f"entrante ausente: {incoming}")
+        active, deadline = _active_marker(session)
+        if active is None or deadline is None:
+            return CheckResult(0, "NO EVALUADO: no hay activo_ts ni ACK medido")
+        observed = _parse_ts(now) if now is not None else datetime.now().astimezone()
+        if observed is None:
+            raise ValueError("--now invalido")
+        key = f"post-relevo-{incoming}"
+        state_path = ops_dir / STATE_NAME
+        state = _read_state(state_path)
+        active_keys = set(state.get("active", []))
+        if observed < deadline:
+            return CheckResult(
+                0, f"NO EVALUADO: plazo activo hasta {deadline.isoformat()}"
+            )
+        sessions = [
+            item for item in registry.get("sessions", []) if isinstance(item, dict)
+        ]
+        checker = _load_sibling("check_cell_conformance.py")
+        live_ims = sum(
+            item.get("role") == "implantacion" and checker.is_activa(item.get("status"))
+            for item in sessions
+        )
+        created = _created_after(sessions, active, incoming)
+        reasons = []
+        if live_ims < 2:
+            reasons.append(f"menos de 2 IM vivos ({live_ims})")
+        if created == 0:
+            reasons.append("sin IM/TR creados tras el ACTIVO con reporta_a")
+        if _apta_unclaimed(backlog, registry_path):
+            reasons.append("ficha APTA sin brief")
+        if not reasons:
+            if key in active_keys:
+                rc = _resolve(key, ops_dir)
+                if rc not in (0, 10):
+                    return CheckResult(2, "ERROR: no se pudo resolver alerta")
+                active_keys.remove(key)
+                state["active"] = sorted(active_keys)
+                _write_state(state_path, state)
+            return CheckResult(0, "OK: relevo atendido")
+        message = f"{incoming}: " + "; ".join(reasons)
+        command = _reproduction_command(flight_dir, ops_dir, backlog, observed)
+        if key not in active_keys:
+            rc = _alert(key, message, ops_dir, incoming)
+            if rc not in (0, 10):
+                return CheckResult(
+                    2,
+                    f"ERROR: {key}; {message}; comando: {command}",
+                    tuple(reasons),
+                )
+            active_keys.add(key)
+            state["active"] = sorted(active_keys)
+            _write_state(state_path, state)
+        return CheckResult(1, f"{key}; {message}; comando: {command}", tuple(reasons))
+    except (
+        OSError,
+        KeyError,
+        TypeError,
+        ValueError,
+        ImportError,
+        AttributeError,
+    ) as exc:
+        return CheckResult(2, f"ERROR: post-relevo no medible: {exc}")
+
+
+def main(argv=None) -> int:
+    """Run the explicit three-route command-line detector.
+
+    Before: the heartbeat passes flight, operations, and backlog paths.
+    During: evaluate once and print the stable result message.
+    After: return the detector rc without consulting defaults or environment.
+    """
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--flight-dir", required=True)
+    parser.add_argument("--ops-dir", required=True)
+    parser.add_argument("--backlog", required=True)
+    parser.add_argument("--now", help="test clock hook; heartbeat omits it")
+    args = parser.parse_args(argv)
+    result = evaluate(
+        Path(args.flight_dir), Path(args.ops_dir), Path(args.backlog), now=args.now
+    )
+    print(result.message)
+    return result.rc
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
