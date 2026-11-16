@@ -505,7 +505,7 @@ def test_check_lenses_prefers_session_entries_and_normalizes_dicts(fixtures):
     session = _session(
         "TR-lenses",
         "triaje",
-        lentes=[{"modelo": "Model-A"}, {"lente": "model-b"}],
+        lentes=[{"modelo": "Model-A"}, {"lente": "lens-b"}],
         celda={"lentes": ["only-fallback"]},
     )
     _write_registry(registry, [session])

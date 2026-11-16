@@ -511,6 +511,7 @@ def test_alta_quota_gate_receipt(tmp_path, capsys):
     assert dry_run["quota_gate_receipt"] == {"rc": 5, "waiver": "manual"}
 
     triaje = _alta_args(5, role="triaje", code="TR-1")
+    triaje.celda = '{"triador":"gemma4","revisor":"mimo-v2.6-flash"}'
     with pytest.raises(registry_ops.RegistryError) as triaje_error:
         registry_ops._session_for_alta(triaje, {"sessions": []})
     assert triaje_error.value.code == 2

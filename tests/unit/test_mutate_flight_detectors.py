@@ -58,7 +58,7 @@ def test_catalogo_de_mutaciones_y_reanclajes_es_completo():
     """El arnés conserva el denominador completo y los 12 reanclajes de 153j."""
     module = _load_harness()
 
-    assert len(module.MUT) == 191
+    assert len(module.MUT) == 194
     assert module.RETIRED == {}
     assert set(module.REANCHORED) == {
         "E7",
