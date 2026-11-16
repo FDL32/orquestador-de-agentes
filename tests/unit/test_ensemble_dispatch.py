@@ -6582,7 +6582,14 @@ def test_review_adversarial_challenger_is_nan_canonical():
     config = ed.load_motor_config()
     challenger_name = config["ensemble_pipelines"]["review_adversarial"]["challenger"]
     challenger_profile = config["ensemble_profiles"][challenger_name]
-    assert challenger_profile["backend"] == "nan_api"
+    # 2026-11-16 (decision explicita del usuario): los modelos nan solo se lanzan
+    # por kilo u opencode; el canal api directo de deepseek/mimo fallo 13 de 15
+    # rondas ese dia. El challenger por defecto sigue siendo un modelo NAN, pero
+    # puede llegar por opencode.
+    assert challenger_profile["backend"] in ("nan_api", "opencode")
+    assert str(challenger_profile["model"]).startswith("nan/") or (
+        challenger_profile["backend"] == "nan_api"
+    )
 
 
 def test_direct_backends_removed_nan_is_sole_api_channel():
@@ -7766,7 +7773,10 @@ def test_058y_ratio_is_the_adjudicated_option_b():
     """La decision ADJUDICADA es 13 con arbol / 4 ciegas, no 'las que salgan'.
 
     El recuento historico 9/4 quedo obsoleto por el alta GLM completo de
-    2026-11-12; la lista cerrada conserva ahora 13 perfiles con arbol.
+    2026-11-12; la lista cerrada conserva ahora 15 perfiles con arbol.
+    AMPLIACION 2026-11-16 (decision explicita del usuario): +2 perfiles
+    opencode (BA256 deepseek, BA257 mimo, modelos nan/*) que sustituyen a los
+    perfiles nan_api legacy BA10/BA25, que fallaron 13 de 15 rondas ese dia.
 
     INVARIANTE, no medicion: se asertan las DOS clases a la vez, de modo que
     mover un perfil de una a otra sin decision explicita rompa el test.
@@ -7811,7 +7821,9 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "challenger_kilo_mimo_flash",
         "challenger_kilo_qwen",
         "challenger_kilo_qwen_flash",
+        "challenger_opencode_deepseek_flash",
         "challenger_opencode_glm_flash",
+        "challenger_opencode_mimo_flash",
         "proposer_claude",
     ], f"lentes con arbol; hoy: {con_arbol}"
     claves = sorted(profiles[name]["backend_key"] for name in con_arbol)
@@ -7829,6 +7841,8 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "BA253",
         "BA254",
         "BA255",
+        "BA256",
+        "BA257",
     ], "lentes con arbol = backend_key DISTINTAS, no perfiles cualesquiera"
 
 

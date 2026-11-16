@@ -249,7 +249,9 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA10"
+      "backend_key": "BA10",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_deepseek_flash"
     },
     "challenger_nan_qwen": {
       "backend": "nan_api",
@@ -293,6 +295,26 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA06",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_deepseek_flash": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "nan/deepseek-v4-flash",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA256",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_mimo_flash": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "nan/mimo-v2.6-flash",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA257",
       "repo_scope": "destino"
     },
     "challenger_kilo_deepseek_flash": {
@@ -458,7 +480,9 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA25"
+      "backend_key": "BA25",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_mimo_flash"
     },
     "challenger_groq_qwen": {
       "backend": "groq_api",
@@ -725,7 +749,7 @@
   "ensemble_pipelines": {
     "review_adversarial": {
       "proposer": "proposer_claude",
-      "challenger": "challenger_nan_deepseek_flash",
+      "challenger": "challenger_opencode_deepseek_flash",
       "rubric": "prompts/audit_agent_output.md",
       "max_rounds": 2,
       "continue_if": "objecion-CONFIRMADA-con-evidencia",
@@ -1353,6 +1377,26 @@
         "family": "glm",
         "tier": "full",
         "generation": 1
+      },
+      "BA256": {
+        "backend": "opencode",
+        "model": "nan/deepseek-v4-flash",
+        "backend_version": null,
+        "status": "active",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 1
+      },
+      "BA257": {
+        "backend": "opencode",
+        "model": "nan/mimo-v2.6-flash",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Xiaomi",
+        "family": "mimo",
+        "tier": "flash",
+        "generation": 1
       }
     },
     "loop_shapes": {
@@ -1550,9 +1594,9 @@
     "challenger": {
       "backend": "nan_api",
       "ensemble_profiles_ref": [
-        "challenger_nan_deepseek_flash",
+        "challenger_opencode_deepseek_flash",
         "challenger_nan_qwen",
-        "challenger_nan_mimo_flash",
+        "challenger_opencode_mimo_flash",
         "challenger_nan_gemma"
       ]
     }

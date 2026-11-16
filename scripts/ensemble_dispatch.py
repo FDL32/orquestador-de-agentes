@@ -502,6 +502,8 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     # entrada de arriba se CONSERVA (384 filas historicas de scorecard, mismo
     # precedente que BA14) y esta cubre las rondas emitidas desde el cambio.
     ("opencode", "opencode-go/glm-5.3-flash"): "glm",
+    ("opencode", "nan/deepseek-v4-flash"): "deepseek",
+    ("opencode", "nan/mimo-v2.6-flash"): "mimo",
     ("kilo", "nan/deepseek-v4-flash"): "deepseek",
     ("kilo", "nan/qwen3.6"): "qwen",
     ("kilo", "nan/gemma4"): "gemma",
