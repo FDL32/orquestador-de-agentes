@@ -106,6 +106,41 @@ DETECTOR_NAMES = (
     "celda",
 )
 _CELL_CHECKER = None
+FECHA_CIERRE_EXENTAS = "2026-11-16"
+EXENTAS_CELDA_LENTES = {
+    "TR-61": {
+        "motivo": "ENTREGADA Y ASENTADA EN T3 (fichas F1 y F2 de 176a, 176b y 176c); cerrada sin lentes registradas; asiento de correccion de deriva l.308",
+        "fecha": "2026-11-16",
+    },
+    "TR-62": {
+        "motivo": "ENTREGADA Y ASENTADA EN T3 (triaje del segundo IM); cerrada sin lentes registradas; asiento de correccion de deriva l.309",
+        "fecha": "2026-11-16",
+    },
+    "TR-63": {
+        "motivo": 'PARADA SIN BUILDER (CANCELLED en T3, sin entrega); asiento l.304; "asentada" en su status es el asiento de la sesion en T3 por CO-100, no una revision; segun su status no hay entrega que revisar',
+        "fecha": "2026-11-16",
+    },
+    "TR-64": {
+        "motivo": "FALLIDA por content filter, sin secciones entregadas, HECHOS_T0 y BASE_T0 reutilizados por TR-65 (status del registry); asiento l.317; no consta revision",
+        "fecha": "2026-11-16",
+    },
+    "TR-65": {
+        "motivo": "SETTLED con ficha 180a integrada ff-only; asiento l.329; sin lentes registradas",
+        "fecha": "2026-11-16",
+    },
+    "TR-66": {
+        "motivo": "SETTLED con ficha 181a integrada ff-only; asiento l.330; sin lentes registradas",
+        "fecha": "2026-11-16",
+    },
+    "TR-67": {
+        "motivo": "SETTLED a secas; solo entrada alta l.331; no se localizo asiento de cierre ni de status; mecanismo que escribio SETTLED no verificado; sin evidencia de entrega localizada",
+        "fecha": "2026-11-16",
+    },
+    "TR-68": {
+        "motivo": "SETTLED a secas; solo entrada alta l.332; no se localizo asiento de cierre ni de status; mecanismo que escribio SETTLED no verificado; sin evidencia de entrega localizada",
+        "fecha": "2026-11-16",
+    },
+}
 
 
 def _load_alert():
@@ -817,6 +852,8 @@ def check_celda(out, st):
         TR checks to every status and lens checks only to non-active sessions.
     After: returns an AVISO for blindness or non-conformance, otherwise no finding; all
         checker exceptions outside registry readability are propagated to ``_detect``.
+        Known lens violations are exposed in ``out["celda_acuse"]`` as sorted objects;
+        the individual acknowledgement checks precede the aggregate lens measurement.
     """
     del st
     if CFG.registry is None or not CFG.registry.is_file():
@@ -844,7 +881,25 @@ def check_celda(out, st):
         for session in prospective
         if not checker.is_activa(session.get("status"))
     ]
-    lenses_rc = checker.check_lenses(non_active, "2026-11-15")
+    acuse = []
+    for session in non_active:
+        code = session.get("code")
+        if (
+            code in EXENTAS_CELDA_LENTES
+            and checker.check_lenses([session], "2026-11-15") == checker.RC_VIOLATION
+        ):
+            record = EXENTAS_CELDA_LENTES[code]
+            acuse.append(
+                {"id": code, "motivo": record["motivo"], "fecha": record["fecha"]}
+            )
+    if acuse:
+        out["celda_acuse"] = sorted(acuse, key=lambda item: item["id"])
+    remaining = [
+        session
+        for session in non_active
+        if session.get("code") not in EXENTAS_CELDA_LENTES
+    ]
+    lenses_rc = checker.check_lenses(remaining, "2026-11-15")
     if tr_rc == checker.RC_VIOLATION or lenses_rc == checker.RC_VIOLATION:
         return [
             (

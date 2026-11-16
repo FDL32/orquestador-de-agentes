@@ -2763,3 +2763,212 @@ def test_celda_nombre_owner_y_blind_reconcile(box):
     assert "celda-" not in calls[0][0]
     box.m._reconcile(Alert(), {}, [], types.SimpleNamespace(dry_run=True))
     assert "celda-" in calls[1][0]
+
+
+EXPECTED_IDS = [
+    "TR-61",
+    "TR-62",
+    "TR-63",
+    "TR-64",
+    "TR-65",
+    "TR-66",
+    "TR-67",
+    "TR-68",
+]
+EXPECTED_MOTIVES = {
+    "TR-61": "ENTREGADA Y ASENTADA EN T3 (fichas F1 y F2 de 176a, 176b y 176c); cerrada sin lentes registradas; asiento de correccion de deriva l.308",
+    "TR-62": "ENTREGADA Y ASENTADA EN T3 (triaje del segundo IM); cerrada sin lentes registradas; asiento de correccion de deriva l.309",
+    "TR-63": 'PARADA SIN BUILDER (CANCELLED en T3, sin entrega); asiento l.304; "asentada" en su status es el asiento de la sesion en T3 por CO-100, no una revision; segun su status no hay entrega que revisar',
+    "TR-64": "FALLIDA por content filter, sin secciones entregadas, HECHOS_T0 y BASE_T0 reutilizados por TR-65 (status del registry); asiento l.317; no consta revision",
+    "TR-65": "SETTLED con ficha 180a integrada ff-only; asiento l.329; sin lentes registradas",
+    "TR-66": "SETTLED con ficha 181a integrada ff-only; asiento l.330; sin lentes registradas",
+    "TR-67": "SETTLED a secas; solo entrada alta l.331; no se localizo asiento de cierre ni de status; mecanismo que escribio SETTLED no verificado; sin evidencia de entrega localizada",
+    "TR-68": "SETTLED a secas; solo entrada alta l.332; no se localizo asiento de cierre ni de status; mecanismo que escribio SETTLED no verificado; sin evidencia de entrega localizada",
+}
+
+
+def _celda_lens_session(code, status="SETTLED", started="2026-11-15T10:00:00+01:00"):
+    """Before: a code, status, and start value describe one synthetic TR.
+
+    During: build a valid TR pair with no measurable lenses.
+    After: return a frozen-registry-compatible session for celda tests.
+    """
+    session = _prospective_tr(status=status, started=started, valid=True)
+    session["code"] = code
+    session["lentes"] = []
+    session["celda"]["lentes"] = []
+    return session
+
+
+def test_celda_acuse_por_id_re_mide_y_conserva_check_tr(box):
+    """Before: the frozen fixture contains exactly the eight acknowledged IDs.
+
+    During: run production check_celda and compare the literal acknowledgement.
+    After: lens noise is acknowledged by object, while the TR check remains live.
+    """
+    module = _set_celda_registry(
+        box, [_celda_lens_session(code) for code in EXPECTED_IDS]
+    )
+    out = {}
+    found = module.check_celda(out, {})
+    expected = [
+        {"id": code, "motivo": EXPECTED_MOTIVES[code], "fecha": "2026-11-16"}
+        for code in EXPECTED_IDS
+    ]
+    assert found == []
+    assert out.get("celda_acuse") == expected
+    assert list(module.EXENTAS_CELDA_LENTES) == EXPECTED_IDS
+    assert module.FECHA_CIERRE_EXENTAS == "2026-11-16"
+    assert json.dumps(out)
+
+
+@pytest.mark.parametrize(
+    "scenario",
+    ["conforme_2_lentes", "activa", "sin_ids_del_mapa"],
+    ids=["conforme_2_lentes", "activa", "sin_ids_del_mapa"],
+)
+def test_celda_acuse_controls_do_not_publish_map_or_active_ids(box, scenario):
+    """Before: one isolated fixture represents one acknowledgement control.
+
+    During: run the selected fixture through production check_celda.
+    After: only the unknown lens violation emits celda-no-conforme, never an acuse.
+    """
+    if scenario == "conforme_2_lentes":
+        session = _celda_lens_session("TR-61")
+        session["lentes"] = [{"modelo": "a"}, {"modelo": "b"}]
+        expected = []
+    elif scenario == "activa":
+        session = _celda_lens_session("TR-62", status="ACTIVA")
+        expected = []
+    else:
+        session = _celda_lens_session("TR-9001")
+        expected = ["celda-no-conforme"]
+    module = _set_celda_registry(box, [session])
+    out = {}
+    found = module.check_celda(out, {})
+    assert [finding[0] for finding in found] == expected
+    assert "celda_acuse" not in out
+
+
+@pytest.mark.parametrize(
+    ("code", "status", "started"),
+    [
+        ("TR-9001", status, started)
+        for status in ("SETTLED", "ASENTADA", "FALLIDA")
+        for started in (
+            "2026-11-15T10:00:00+01:00",
+            "2026-11-16T10:00:00+01:00",
+            None,
+        )
+    ]
+    + [("TR-640", "SETTLED", "2026-11-15T10:00:00+01:00")],
+)
+def test_celda_nuevo_id_no_se_silencia_por_estado_ni_fecha(box, code, status, started):
+    """Before: a new ID varies across the status and date boundary matrix.
+
+    During: measure the single invalid-lens session through check_celda.
+    After: every new ID emits the production non-conformance alert.
+    """
+    module = _set_celda_registry(box, [_celda_lens_session(code, status, started)])
+    found = module.check_celda({}, {})
+    assert [finding[0] for finding in found] == ["celda-no-conforme"]
+    assert code not in EXPECTED_IDS
+    assert code not in module.EXENTAS_CELDA_LENTES
+
+
+def test_celda_id_anterior_al_corte_queda_fuera_de_medicion(box):
+    """Before: a new ID starts before the detector cutoff.
+
+    During: run the real date eligibility filter.
+    After: the historical session is not measured and emits no finding.
+    """
+    module = _set_celda_registry(
+        box, [_celda_lens_session("TR-9001", started="2026-11-14T10:00:00+01:00")]
+    )
+    assert module.check_celda({}, {}) == []
+
+
+@pytest.mark.parametrize(
+    ("with_control", "expected"),
+    [(False, (0, 3)), (True, (1, 0))],
+    ids=["sin_control", "con_control"],
+)
+def test_celda_acuse_aggregated_measurement_is_not_vacuous(box, with_control, expected):
+    """Before: the eight acknowledged IDs have an optional conforming control.
+
+    During: observe every real check_lenses call without changing its result.
+    After: the final aggregate call is empty for eight IDs and one conforming item otherwise.
+    """
+    sessions = [_celda_lens_session(code) for code in EXPECTED_IDS]
+    if with_control:
+        control = _prospective_tr()
+        control["code"] = "TR-9002"
+        control["lentes"] = [{"modelo": "a"}, {"modelo": "b"}]
+        control["celda"]["lentes"] = []
+        sessions.append(control)
+    module = _set_celda_registry(box, sessions)
+    calls = []
+    real = module._load_cell_checker().check_lenses
+
+    def observe(items, cutoff, checker=real, log=calls):
+        result = checker(items, cutoff)
+        log.append((len(items), result))
+        return result
+
+    module._load_cell_checker().check_lenses = observe
+    try:
+        out = {}
+        assert module.check_celda(out, {}) == []
+    finally:
+        module._load_cell_checker().check_lenses = real
+    assert calls[-1] == expected
+
+
+@pytest.mark.parametrize("bad_field", ["triador", "revisor"])
+def test_celda_acuse_no_ciega_check_tr(box, bad_field):
+    """Before: an acknowledged ID has one invalid TR pair component.
+
+    During: run check_celda without a conforming session to mask the result.
+    After: check_tr still emits celda-no-conforme for both invalid components.
+    """
+    session = _celda_lens_session("TR-61")
+    session["celda"][bad_field] = "invalid-model"
+    module = _set_celda_registry(box, [session])
+    found = module.check_celda({}, {})
+    assert [finding[0] for finding in found] == ["celda-no-conforme"]
+
+
+def test_celda_map_matches_independent_expected_ids(box):
+    """Before: the frozen fixture and its independent ID anchor are defined locally.
+
+    During: compare the production map and fixture dates with the closure constants.
+    After: the closed eight-ID universe and ISO date invariant are explicit.
+    """
+    sessions = [_celda_lens_session(code) for code in EXPECTED_IDS]
+    module = _set_celda_registry(box, sessions)
+    assert set(EXPECTED_IDS) == set(module.EXENTAS_CELDA_LENTES)
+    assert all(
+        session["started"][:10] <= module.FECHA_CIERRE_EXENTAS for session in sessions
+    )
+
+
+def test_celda_tick_reconciles_new_id_warning_after_two_lenses(box):
+    """Before: a new ID has a valid TR pair but no lenses in the frozen registry.
+
+    During: tick the real alert path, then add two distinct lenses and tick again.
+    After: the first tick warns and the second tick reconciles the warning away.
+    """
+    session = _prospective_tr()
+    session["code"] = "TR-9001"
+    session["lentes"] = []
+    session["celda"]["lentes"] = []
+    registry = box.flight / "session_registry.json"
+    registry.write_text(json.dumps({"sessions": [session]}), encoding="utf-8")
+    first = box.tick()
+    assert first.rc == 1
+    assert "celda-no-conforme" in first.keys
+    session["lentes"] = [{"modelo": "a"}, {"modelo": "b"}]
+    registry.write_text(json.dumps({"sessions": [session]}), encoding="utf-8")
+    second = box.tick()
+    assert second.rc == 0
+    assert "celda-no-conforme" not in second.keys
