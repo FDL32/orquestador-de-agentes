@@ -262,7 +262,9 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA11"
+      "backend_key": "BA11",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_qwen"
     },
     "challenger_nan_gemma": {
       "backend": "nan_api",
@@ -273,7 +275,9 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA13"
+      "backend_key": "BA13",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_gemma"
     },
     "challenger_opencode_glm_5_2": {
       "backend": "opencode",
@@ -315,6 +319,36 @@
       "write": false,
       "data_sensitivity": "public",
       "backend_key": "BA257",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_qwen": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "nan/qwen3.6",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA258",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_gemma": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "nan/gemma4",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA259",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_qwen_flash": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "nan/qwen3.8-flash",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA260",
       "repo_scope": "destino"
     },
     "challenger_kilo_deepseek_flash": {
@@ -403,7 +437,9 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA15"
+      "backend_key": "BA15",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_qwen_flash"
     },
     "challenger_nan_glm_flash": {
       "backend": "nan_api",
@@ -414,7 +450,9 @@
       "context": "diff-o-artefacto-publico",
       "write": false,
       "data_sensitivity": "public",
-      "backend_key": "BA16"
+      "backend_key": "BA16",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_glm_flash"
     },
     "challenger_nvidia_glm": {
       "backend": "nvidia_api",
@@ -1397,6 +1435,36 @@
         "family": "mimo",
         "tier": "flash",
         "generation": 1
+      },
+      "BA258": {
+        "backend": "opencode",
+        "model": "nan/qwen3.6",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Alibaba",
+        "family": "qwen",
+        "tier": "full",
+        "generation": 1
+      },
+      "BA259": {
+        "backend": "opencode",
+        "model": "nan/gemma4",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Google",
+        "family": "gemma",
+        "tier": "full",
+        "generation": 1
+      },
+      "BA260": {
+        "backend": "opencode",
+        "model": "nan/qwen3.8-flash",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Alibaba",
+        "family": "qwen",
+        "tier": "flash",
+        "generation": 1
       }
     },
     "loop_shapes": {
@@ -1595,9 +1663,9 @@
       "backend": "nan_api",
       "ensemble_profiles_ref": [
         "challenger_opencode_deepseek_flash",
-        "challenger_nan_qwen",
+        "challenger_opencode_qwen",
         "challenger_opencode_mimo_flash",
-        "challenger_nan_gemma"
+        "challenger_opencode_gemma"
       ]
     }
   },
