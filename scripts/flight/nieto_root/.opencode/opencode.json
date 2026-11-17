@@ -1,0 +1,52 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "nieto",
+  "lsp": false,
+  "agent": {
+    "nieto": {
+      "permission": {
+        "*": "deny",
+        "skill": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "todowrite": "deny",
+        "t3-code_*": "deny",
+        "t3_code_*": "deny",
+        "t3-code-*": "deny",
+        "t3-code.*": "deny",
+        "mcp__t3-code__*": "deny",
+        "mcp__t3_code__*": "deny",
+        "t3_*": "deny",
+        "create_threads": "deny",
+        "delegate_task": "deny",
+        "t3_thread_launch": "deny",
+        "t3_thread_start": "deny",
+        "t3_thread_fork": "deny",
+        "t3_thread_send": "deny",
+        "t3_thread_send_attachments": "deny",
+        "t3_thread_wait": "deny",
+        "t3_thread_interrupt": "deny",
+        "t3_thread_merge_back": "deny",
+        "task": "deny",
+        "t3-code_*thread_read": "allow",
+        "t3_code_*thread_read": "allow",
+        "t3-code_*thread_list": "allow",
+        "t3_code_*thread_list": "allow",
+        "t3-code_*thread_search": "allow",
+        "t3_code_*thread_search": "allow",
+        "t3-code_*thread_configuration": "allow",
+        "t3_code_*thread_configuration": "allow",
+        "t3-code_*task_status": "allow",
+        "t3_code_*task_status": "allow",
+        "read": "allow",
+        "grep": "allow",
+        "glob": "allow",
+        "write": "allow",
+        "edit": "allow",
+        "bash": {
+          "*": "deny"
+        }
+      }
+    }
+  }
+}
