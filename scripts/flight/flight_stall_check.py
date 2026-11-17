@@ -29,6 +29,7 @@ import math
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -65,6 +66,9 @@ QUOTA_READ_MAX = 4096
 DIAG_TICKS = 2
 URGENTE_TICKS = 4
 TICK_GAP_MAX_MIN = 30
+OCIO_TICKS_MIN = 2
+OCIO_IM_MIN = 2
+GRACIA_IM_MIN = 5
 QUEUE_MOTIVES = {
     "NO_DECLARADO",
     "CADUCADO",
@@ -84,6 +88,7 @@ TASK_STATE_NAME = "task_state.json"
 OWNED_PREFIXES = (
     "cupo-",
     "cola-",
+    "ocio-con-cola",
     "git-",
     "disco",
     "hook-",
@@ -98,6 +103,7 @@ DETECTOR_NAMES = (
     "quota",
     "cola",
     "git",
+    "ocio-con-cola",
     "disco",
     "hook",
     "tarea",
@@ -312,9 +318,11 @@ def check_quota(out):
     q = CFG.quota
     if q is None:
         out["ciego_cupo"] = True
+        out["cupo_max"] = None
         return []
     if not q.exists():
         out["ciego_cupo"] = True
+        out["cupo_max"] = None
         return [
             (
                 "cupo-no-medido",
@@ -542,6 +550,7 @@ def check_git(out, st):
     After: lista de hallazgos; si status falla = ciego + ``detector-ciego-git`` AVISO.
         git ausente o sin responder PROPAGA (el llamador lo marca ``detector-roto``).
     """
+    out["git_marcadores"] = []
     if CFG.motor is None:
         out["ciego_git"] = True
         return []
@@ -549,7 +558,9 @@ def check_git(out, st):
     previo = _count(st.get("motor_sucio"))
     for p in _worktrees():
         if p.exists():
-            found += _git_markers(p)
+            markers = _git_markers(p)
+            out["git_marcadores"] += markers
+            found += markers
     rc, porc = _git(CFG.motor, "status", "--porcelain", "--untracked-files=no")
     n = len([x for x in porc.splitlines() if x.strip()]) if rc == 0 else -1
     out["motor_sucio"] = n
@@ -572,6 +583,164 @@ def check_git(out, st):
             )
         )
     return found
+
+
+def _load_queue_checker():
+    """Load the sibling queue eligibility module by filesystem path.
+
+    Before: ``cola_apta.py`` is next to this detector and exposes ``cola_apta``.
+    During: import the sibling without relying on the current working directory.
+    After: return the loaded module or propagate its import failure.
+    """
+    path = Path(__file__).resolve().with_name("cola_apta.py")
+    spec = importlib.util.spec_from_file_location("cola_apta", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"no se pudo cargar {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _reset_ocio_con_cola(st):
+    """Reset the persisted ocio-con-cola streak and identity.
+
+    Before: ``st`` is the mutable heartbeat state.
+    During: clear both the consecutive-tick counter and its identity snapshot.
+    After: the next qualifying tick starts a fresh streak.
+    """
+    st["ocio_con_cola_ticks"] = 0
+
+
+def _is_im_ready(row):
+    """Return whether one cola_apta row is an IM-READY work item.
+
+    Before: ``row`` is a dictionary returned by the sibling queue module.
+    During: apply the five fixed IM-READY fields without considering TR state.
+    After: return a boolean eligibility decision.
+    """
+    return (
+        row.get("apta")
+        and row.get("tiene_brief")
+        and row.get("flt_conocido")
+        and not row.get("flt_conflicto")
+    )
+
+
+def _started_within_grace(session):
+    """Return whether a registry session started within the grace window.
+
+    Before: ``session`` may contain an ISO-8601 ``started`` field.
+    During: parse the field and compare it with the detector clock.
+    After: return true only for a parseable non-future start no older than five minutes.
+    """
+    raw = session.get("started")
+    if not isinstance(raw, str):
+        return False
+    try:
+        started = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=dt.timezone.utc)
+    now = dt.datetime.fromtimestamp(time.time(), tz=dt.timezone.utc)
+    age = (now - started.astimezone(dt.timezone.utc)).total_seconds()
+    return 0 <= age <= GRACIA_IM_MIN * 60
+
+
+def check_ocio_con_cola(out, st):  # noqa: C901 - source gates stay explicit
+    """Detect queued IM-ready work with fewer than two stable live IMs.
+
+    Before: ``CFG`` resolves flight, registry, store, and quota paths; ``out`` contains
+        the results of the preceding queue and git detectors.
+    During: measure live IMs through the shared checker/store, apply the started grace,
+        inspect the sibling queue module, and reject measurable approval, queue, quota,
+        or git explanations.
+    After: return the ``ocio-con-cola`` AVISO only after two qualifying ticks; persist
+        the identity and streak, or reset them whenever any gate is false.
+    """
+    if (
+        CFG.registry is None
+        or not CFG.registry.is_file()
+        or CFG.store is None
+        or not CFG.store.is_file()
+    ):
+        _reset_ocio_con_cola(st)
+        return []
+    checker = _load_cell_checker()
+    sessions = checker._registry(CFG.registry)
+    connection, _, settled = checker._store_lookup(CFG.store)
+    try:
+        live = checker.live_ims(sessions, settled)
+        live_ids = {
+            str(session.get("threadId") or session.get("code")) for session in live
+        }
+        live_ids.update(
+            str(session.get("threadId") or session.get("code"))
+            for session in sessions
+            if session.get("role") == "implantacion" and _started_within_grace(session)
+        )
+        try:
+            pending = connection.execute(
+                "SELECT 1 FROM projection_pending_approvals "
+                "WHERE resolved_at IS NULL AND "
+                "(lower(COALESCE(status, '')) IN ('pending', 'pendiente') "
+                "OR (decision IS NULL AND lower(COALESCE(status, '')) NOT IN ('resolved', 'resuelta'))) LIMIT 1"
+            ).fetchone()
+        except sqlite3.Error:
+            out["ocio_con_cola_ciego"] = "e1-desconocido"
+            _reset_ocio_con_cola(st)
+            return []
+    finally:
+        connection.close()
+    evento_e1 = pending is not None
+    out["ocio_con_cola_evento_e1"] = evento_e1
+    if "cupo_max" not in out:
+        out["ocio_con_cola_ciego"] = "cuota-desconocida"
+        _reset_ocio_con_cola(st)
+        return []
+    if out.get("ciego_cupo") or out.get("cupo_max") is None:
+        out["ocio_con_cola_ciego"] = "cuota-desconocida"
+        _reset_ocio_con_cola(st)
+        return []
+    block_pct = out["cupo_max"]
+    evento_e3 = bool(block_pct >= getattr(CFG, "quota_soft", QUOTA_SOFT_FALLBACK))
+    flight_dir = CFG.cola.parent.parent if CFG.cola is not None else None
+    if flight_dir is None or CFG.registry is None:
+        _reset_ocio_con_cola(st)
+        return []
+    backlog = Path(flight_dir).parents[2] / "collaboration" / "backlog.md"
+    try:
+        queue_checker = _load_queue_checker()
+        rows = queue_checker.cola_apta(backlog, CFG.registry, backlog.parent)
+    except (OSError, ImportError, TypeError, ValueError):
+        rows = []
+    im_vivos = len(live_ids)
+    if im_vivos < OCIO_IM_MIN:
+        pass
+    else:
+        _reset_ocio_con_cola(st)
+        return []
+    hay_im_ready = any(_is_im_ready(row) for row in rows)
+    if (
+        not hay_im_ready
+        or evento_e1
+        or out.get("cola_abiertas", 0) > 0
+        or evento_e3
+        or out.get("git_marcadores")
+    ):
+        _reset_ocio_con_cola(st)
+        return []
+    prior_ids = set(st.get("ocio_con_cola_ids", []))
+    if "ocio_con_cola_ids" in st and prior_ids != live_ids:
+        _reset_ocio_con_cola(st)
+        st["ocio_con_cola_ids"] = sorted(live_ids)
+        return []
+    ticks = _count(st.get("ocio_con_cola_ticks")) + 1
+    st.update({"ocio_con_cola_ticks": ticks, "ocio_con_cola_ids": sorted(live_ids)})
+    if ticks < OCIO_TICKS_MIN:
+        return []
+    return [("ocio-con-cola", "AVISO", "Hay trabajo IM-READY y menos de dos IM vivos")]
 
 
 def check_disk(out):
@@ -1161,6 +1330,7 @@ def _detect(out, st, only=None):
     detectors = {
         "quota": lambda: check_quota(out),
         "cola": lambda: check_cola(out, st),
+        "ocio-con-cola": lambda: check_ocio_con_cola(out, st),
         "git": lambda: check_git(out, st),
         "disco": lambda: check_disk(out),
         "hook": lambda: check_hook(out),
@@ -1231,10 +1401,13 @@ def _reconcile(ca, out, found, a):
     blind = {
         "cupo-": out.get("ciego_cupo"),
         "cola-": out.get("ciego_cola"),
+        "ocio-con-cola": False,
         "git-": out.get("ciego_git"),
         "hook-": out.get("ciego_hook"),
         "celda-": out.get("ciego_celda"),
     }
+    if out.get("ocio_con_cola_ciego"):
+        blind["ocio-con-cola"] = True
     prefixes = tuple(p for p in OWNED_PREFIXES if not blind.get(p))
     cleared = ca.reconcile(prefixes, {k for k, _, _ in found}, a.dry_run, owner="stall")
     if cleared:

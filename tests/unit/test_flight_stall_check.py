@@ -2972,3 +2972,285 @@ def test_celda_tick_reconciles_new_id_warning_after_two_lenses(box):
     second = box.tick()
     assert second.rc == 0
     assert "celda-no-conforme" not in second.keys
+
+
+def _ocio_fixture(
+    box, count=1, ready=True, quota=40, markers=None, pending=False, quota_missing=False
+):
+    """Build one isolated ocio-con-cola measurement fixture.
+
+    Before: ``box`` supplies temporary flight, store, and quota paths.
+    During: create registry/store rows and replace only the queue result.
+    After: return a mutable output dictionary and a fresh detector state.
+    """
+    import sqlite3
+
+    _write_cell_fixtures(box, count)
+    box.m.CFG.cola = box.cola
+    box.m.CFG.quota = box.quota
+    box.m.CFG.quota_soft = 92
+    registry_path = box.flight / "session_registry.json"
+    registry_data = json.loads(registry_path.read_text(encoding="utf-8"))
+    for index, session in enumerate(registry_data["sessions"]):
+        session["slot"] = f"live{index}"
+    registry_data["sessions"].append(
+        {
+            "code": "IM-BRIEF",
+            "slot": "184b",
+            "role": "manager",
+            "status": "SETTLED",
+            "brief": ready,
+            "started": "2026-11-10T10:00:00+01:00",
+            "threadId": "mcp:brief",
+        }
+    )
+    registry_path.write_text(json.dumps(registry_data), encoding="utf-8")
+    if quota != 40:
+        box.quota.write_text(f"QUOTA | alvarovans weekly {quota}%", encoding="utf-8")
+    root = Path(box.flight).parents[2]
+    backlog_dir = root / "collaboration"
+    backlog_dir.mkdir(parents=True, exist_ok=True)
+    (backlog_dir / "backlog.md").write_text(
+        "| ticket | title | scope | state | extra | depends on | extra2 | reactivation |\n"
+        "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+        + (
+            "| WOT-2026-184b | Queue work | scope | pending | x | - | y | - |\n"
+            if ready
+            else ""
+        ),
+        encoding="utf-8",
+    )
+    (backlog_dir / "FICHA_WOT-2026-184b.md").write_text(
+        "# Fixture\n\n## Files Likely Touched\n\n"
+        "- scripts/flight/flight_stall_check.py\n"
+        "- tests/unit/test_flight_stall_check.py\n\n## End\n",
+        encoding="utf-8",
+    )
+    for session in registry_data["sessions"]:
+        if session.get("role") == "implantacion":
+            (backlog_dir / f"FICHA_WOT-2026-{session['slot']}.md").write_text(
+                "# Live fixture\n\n## Files Likely Touched\n\n- other.py\n\n## End\n",
+                encoding="utf-8",
+            )
+    connection = sqlite3.connect(box.root / "statev2.sqlite")
+    connection.execute(
+        "CREATE TABLE projection_pending_approvals (request_id TEXT, thread_id TEXT, "
+        "turn_id TEXT, status TEXT, decision TEXT, created_at TEXT, resolved_at TEXT)"
+    )
+    if pending:
+        connection.execute(
+            "INSERT INTO projection_pending_approvals VALUES "
+            "('r', 't', 'u', 'pending', NULL, 'now', NULL)"
+        )
+    connection.commit()
+    connection.close()
+    output = {"cola_abiertas": 0, "git_marcadores": markers or []}
+    if quota_missing:
+        box.quota.unlink()
+    box.m.check_quota(output)
+    return output, {}
+
+
+def test_cola_despachable_streak_increment(box):
+    """Before: two positive queue records exist. During: run the detector. After: it emits."""
+    _write_cell_fixtures(box, 1)
+    box.monkeypatch.setattr(
+        box.m,
+        "_trace_records",
+        lambda: [
+            {"ts": "2026-11-10T10:00:00+00:00", "cola_despachable": 1},
+            {"ts": "2026-11-10T10:01:00+00:00", "cola_despachable": 1},
+        ],
+    )
+    assert box.m.check_cola_despachable({}, {})[0][0] == "cola-despachable-ociosa"
+
+
+def test_cola_despachable_streak_break(box):
+    """Before: a zero breaks a streak. During: compare it with two positives. After: only positives emit."""
+    _write_cell_fixtures(box, 1)
+    records = [
+        {"ts": "2026-11-10T10:00:00+00:00", "cola_despachable": 1},
+        {"ts": "2026-11-10T10:01:00+00:00", "cola_despachable": 0},
+    ]
+    box.monkeypatch.setattr(box.m, "_trace_records", lambda: records)
+    assert box.m.check_cola_despachable({}, {}) == []
+    box.monkeypatch.setattr(
+        box.m,
+        "_trace_records",
+        lambda: [
+            {"ts": "2026-11-10T10:00:00+00:00", "cola_despachable": 1},
+            {"ts": "2026-11-10T10:01:00+00:00", "cola_despachable": 1},
+        ],
+    )
+    assert box.m.check_cola_despachable({}, {})
+
+
+def test_cola_despachable_streak_reinicio_gap(box):
+    """Before: a 31-minute gap separates records. During: reconstruct the suffix. After: it needs two records."""
+    _write_cell_fixtures(box, 1)
+    records = [
+        {"ts": "2026-11-10T10:00:00+00:00", "cola_despachable": 1},
+        {"ts": "2026-11-10T10:01:00+00:00", "cola_despachable": 1},
+        {"ts": "2026-11-10T10:32:00+00:00", "cola_despachable": 1},
+        {"ts": "2026-11-10T10:33:00+00:00", "cola_despachable": 1},
+    ]
+    box.monkeypatch.setattr(box.m, "_trace_records", lambda: records[:-1])
+    assert box.m.check_cola_despachable({}, {}) == []
+    box.monkeypatch.setattr(box.m, "_trace_records", lambda: records)
+    assert box.m.check_cola_despachable({}, {})
+
+
+def test_cola_abierta_no_go_aviso(box):
+    """Before: the queue contains an unresolved non-GO row. After: it emits AVISO."""
+    box.cola.write_text("# unrelated\n" + ABIERTA, encoding="utf-8")
+    box.m.CFG = types.SimpleNamespace(cola=box.cola)
+    out = {}
+    found = box.m.check_cola(out, {})
+    assert out["cola_abiertas"] == 1
+    assert (
+        len(found) == 1 and found[0][0].startswith("cola-") and found[0][1] == "AVISO"
+    )
+
+
+def test_cola_go_conserva_hallazgo_go(box):
+    """Before: an open GO row is present. During: run check_cola. After: GO remains only."""
+    box.cola.write_text(
+        "- [2026-11-02 10:00:00] [CO-24] ABIERTA BLOQUEA | go-ready: decide X",
+        encoding="utf-8",
+    )
+    box.m.CFG = types.SimpleNamespace(cola=box.cola)
+    found = box.m.check_cola({}, {})
+    assert [item[0] for item in found] == ["go-ready"]
+    assert found[0][1] == "URGENTE"
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "dos_ticks_im_ready_sin_eventos_emite",
+        "solo_un_tick_no_emite",
+        "dos_im_vivos_no_emite",
+        "im_recien_lanzado_no_emite",
+        "cambio_im_entre_ticks_no_emite",
+        "cola_sin_im_ready_no_emite",
+        "con_pending_e1_no_emite",
+        "con_cola_abierta_e1_no_emite",
+        "con_cupo_soft_no_emite",
+        "con_marcadores_git_no_emite",
+        "cuota_desconocida_no_emite",
+        "reinicio_tras_gate_falso",
+    ],
+    ids=lambda case: case,
+)
+def test_ocio_con_cola_aviso(box, case):  # noqa: C901 - source cases remain explicit
+    """Before: one source-specific fixture is selected. During: measure two ticks. After: only the full case emits."""
+    count = 2 if case in {"dos_im_vivos_no_emite", "im_recien_lanzado_no_emite"} else 1
+    ready = case != "cola_sin_im_ready_no_emite"
+    pending = case in {
+        "con_pending_e1_no_emite",
+        "con_cola_abierta_e1_no_emite",
+    }
+    quota = 95 if case == "con_cupo_soft_no_emite" else 40
+    markers = ["git-index-lock"] if case == "con_marcadores_git_no_emite" else []
+    out, st = _ocio_fixture(
+        box,
+        count=count,
+        ready=ready,
+        quota=quota,
+        markers=markers,
+        pending=pending,
+        quota_missing=case == "cuota_desconocida_no_emite",
+    )
+    if case == "con_cola_abierta_e1_no_emite":
+        out["cola_abiertas"] = 1
+    if case == "reinicio_tras_gate_falso":
+        out["cola_abiertas"] = 1
+    if case == "cuota_desconocida_no_emite":
+        assert out.get("ciego_cupo") is True
+    if case == "im_recien_lanzado_no_emite":
+        import datetime as dt
+
+        now = dt.datetime.fromtimestamp(
+            box.clock.now - 60, tz=dt.timezone.utc
+        ).isoformat()
+        data = json.loads(
+            (box.flight / "session_registry.json").read_text(encoding="utf-8")
+        )
+        data["sessions"][0]["started"] = now
+        data["sessions"][0]["status"] = "PENDIENTE"
+        (box.flight / "session_registry.json").write_text(
+            json.dumps(data), encoding="utf-8"
+        )
+    first = box.m.check_ocio_con_cola(out, st)
+    if case == "dos_ticks_im_ready_sin_eventos_emite":
+        assert box.tick("--test-detector", "ocio-con-cola").rc == 0
+    if case == "solo_un_tick_no_emite":
+        assert first == []
+        return
+    if case == "reinicio_tras_gate_falso":
+        out["cola_abiertas"] = 0
+        assert box.m.check_ocio_con_cola(dict(out), st) == []
+        assert box.m.check_ocio_con_cola(dict(out), st)
+        out["cola_abiertas"] = 1
+        assert box.m.check_ocio_con_cola(dict(out), st) == []
+        out["cola_abiertas"] = 0
+        assert box.m.check_ocio_con_cola(dict(out), st) == []
+        return
+    if case == "cambio_im_entre_ticks_no_emite":
+        data = json.loads(
+            (box.flight / "session_registry.json").read_text(encoding="utf-8")
+        )
+        data["sessions"][0]["threadId"] = "mcp:changed"
+        (box.flight / "session_registry.json").write_text(
+            json.dumps(data), encoding="utf-8"
+        )
+    if case in {"con_pending_e1_no_emite", "con_cola_abierta_e1_no_emite"}:
+        assert out["ocio_con_cola_evento_e1"] is True
+    if case == "con_pending_e1_no_emite":
+        import sqlite3
+
+        connection = sqlite3.connect(box.root / "statev2.sqlite")
+        connection.execute("DROP TABLE projection_pending_approvals")
+        connection.commit()
+        connection.close()
+        second_out = dict(out)
+        assert box.m.check_ocio_con_cola(second_out, st) == []
+        assert second_out["ocio_con_cola_ciego"] == "e1-desconocido"
+        return
+    second = box.m.check_ocio_con_cola(dict(out), st)
+    if case == "dos_ticks_im_ready_sin_eventos_emite":
+        assert [item[0] for item in second] == ["ocio-con-cola"]
+    else:
+        assert second == []
+    if case == "cambio_im_entre_ticks_no_emite":
+        assert box.m.check_ocio_con_cola(dict(out), st) == []
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["aparicion_desaparicion_recaida", "ceguera_conserva_aviso"],
+    ids=["aparicion_desaparicion_recaida", "ceguera_conserva_aviso"],
+)
+def test_ocio_con_cola_reconciliacion(box, case):
+    """Before: an ocio key may be active. During: reconcile one tick. After: blindness preserves it."""
+
+    box.ca.event("ocio-con-cola", "AVISO", None, "active", False, False, owner="stall")
+    if case == "aparicion_desaparicion_recaida":
+        measured, state = _ocio_fixture(box)
+        assert box.m.check_ocio_con_cola(measured, state) == []
+        assert box.m.check_ocio_con_cola(dict(measured), state)
+        measured["cola_abiertas"] = 1
+        assert box.m.check_ocio_con_cola(dict(measured), state) == []
+        measured["cola_abiertas"] = 0
+        assert box.m.check_ocio_con_cola(dict(measured), state) == []
+        assert box.m.check_ocio_con_cola(dict(measured), state)
+    out = (
+        {"ocio_con_cola_ciego": "cuota-desconocida"}
+        if case == "ceguera_conserva_aviso"
+        else {}
+    )
+    box.m._reconcile(box.ca, out, [], types.SimpleNamespace(dry_run=False))
+    if case == "ceguera_conserva_aviso":
+        assert "event:ocio-con-cola" in box.ca.load_state()
+    else:
+        assert "event:ocio-con-cola" not in box.ca.load_state()
