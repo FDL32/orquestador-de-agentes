@@ -69,6 +69,10 @@ TICK_GAP_MAX_MIN = 30
 OCIO_TICKS_MIN = 2
 OCIO_IM_MIN = 2
 GRACIA_IM_MIN = 5
+GRACIA_MIN = 15
+EXPOSICION_H = 24
+ILEGIBLES_MAX_FRAC = 0.5
+HUERFANO_CAP_TICK = 10
 QUEUE_MOTIVES = {
     "NO_DECLARADO",
     "CADUCADO",
@@ -94,6 +98,7 @@ OWNED_PREFIXES = (
     "hook-",
     "detector-",
     "celda-",
+    "huerfano-",
 )
 GIT_MARKERS = ("index.lock", "MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD")
 
@@ -110,6 +115,7 @@ DETECTOR_NAMES = (
     "im-ocioso",
     "cola-despachable",
     "celda",
+    "huerfano",
 )
 _CELL_CHECKER = None
 FECHA_CIERRE_EXENTAS = "2026-11-16"
@@ -1318,6 +1324,186 @@ def check_cola_despachable(out, st):
     ]
 
 
+def now_utc():
+    """Return the timezone-aware UTC clock used by the orphan detector.
+
+    Before: the process clock is available and returns seconds since the epoch.
+    During: convert the current timestamp to an explicit UTC datetime.
+    After: return a timezone-aware ``datetime`` suitable for age comparisons.
+    """
+    return dt.datetime.fromtimestamp(time.time(), tz=dt.timezone.utc)
+
+
+def _huerfano_blind(out, cause):
+    """Build the observable fail-closed result for the orphan detector.
+
+    Before: ``out`` is the current tick accumulator and ``cause`` names a known blindness.
+    During: record the cause and create one diagnostic finding without changing stall state.
+    After: return the diagnostic finding; the caller upgrades the tick to rc 2.
+    """
+    out["huerfano_ciego"] = cause
+    return [
+        (
+            "detector-ciego-huerfano",
+            "AVISO",
+            f"Detector huerfano ciego: {cause}",
+        )
+    ]
+
+
+def _huerfano_registry():
+    """Read literal thread identifiers from the selected registry.
+
+    Before: ``CFG.registry`` points to the flight registry file.
+    During: decode the JSON object and preserve each identifier as a string without normalization.
+    After: return the exact identifier set or raise ``ValueError`` for a missing or malformed file.
+    """
+    if CFG.registry is None or not CFG.registry.is_file():
+        raise ValueError("registry-missing")
+    try:
+        value = json.loads(CFG.registry.read_text(encoding="utf-8"))
+        sessions = value.get("sessions") if isinstance(value, dict) else None
+        if not isinstance(sessions, list):
+            raise ValueError("registry-missing")
+        return {
+            str(item.get("threadId"))
+            for item in sessions
+            if isinstance(item, dict) and item.get("threadId") is not None
+        }
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise ValueError("registry-missing") from exc
+
+
+def _huerfano_date(raw, current):
+    """Parse an aware creation timestamp and return its age in minutes.
+
+    Before: ``raw`` is the projection ``created_at`` value and ``current`` is UTC-aware.
+    During: parse ISO-8601 without accepting naive or future timestamps.
+    After: return a non-negative age in minutes, or ``None`` for an invalid date.
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        value = dt.datetime.fromisoformat(raw.strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if value.tzinfo is None:
+        return None
+    age = (current - value.astimezone(dt.timezone.utc)).total_seconds() / 60
+    return age if age >= 0 else None
+
+
+def check_huerfano(out, st):  # noqa: C901 - explicit fail-closed branches are contractual
+    """Find first-level agent threads absent from the literal session registry.
+
+    Before: ``CFG.store`` and ``CFG.registry`` resolve to readable flight artifacts; ``out``
+        is the tick accumulator and ``st`` is the existing heartbeat state.
+    During: read projection rows and pending approvals in SQLite read-only mode, validate the
+        payload/date contract, classify the UTC window, and calculate stable SHA-1 alert keys.
+        The cap applies only to emitted findings while ``huerfano_activos`` retains every live key.
+    After: return AVISO/URGENTE findings, expose active keys and counters, or return an observable
+        fail-closed finding with ``out["huerfano_ciego"]``; never mutate ``st``.
+    """
+    del st
+    if CFG.registry is None:
+        return _huerfano_blind(out, "registry-missing")
+    if CFG.store is None or not CFG.store.exists():
+        return _huerfano_blind(out, "store-missing")
+    try:
+        connection = sqlite3.connect(f"file:{CFG.store}?mode=ro", uri=True, timeout=5.0)
+        connection.row_factory = sqlite3.Row
+    except (OSError, sqlite3.Error) as exc:
+        return _huerfano_blind(
+            out, "store-unavailable" if isinstance(exc, OSError) else "store-corrupt"
+        )
+    try:
+        try:
+            rows = connection.execute(
+                "SELECT thread_id, runtime_mode, created_at, deleted_at, payload_json "
+                "FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL"
+            ).fetchall()
+            pending = (
+                connection.execute(
+                    "SELECT 1 FROM projection_pending_approvals WHERE resolved_at IS NULL "
+                    "AND (lower(COALESCE(status, '')) IN ('pending', 'pendiente') "
+                    "OR (decision IS NULL AND lower(COALESCE(status, '')) NOT IN ('resolved', 'resuelta'))) LIMIT 1"
+                ).fetchone()
+                is not None
+            )
+        except sqlite3.OperationalError as exc:
+            return _huerfano_blind(
+                out,
+                "store-corrupt"
+                if "no such table" in str(exc).lower()
+                else "store-unavailable",
+            )
+        except sqlite3.DatabaseError:
+            return _huerfano_blind(out, "store-corrupt")
+    finally:
+        connection.close()
+    if not rows:
+        return _huerfano_blind(out, "store-empty")
+    try:
+        registered = _huerfano_registry()
+    except ValueError as exc:
+        return _huerfano_blind(out, str(exc))
+    current = now_utc()
+    illegible = 0
+    bad_dates = 0
+    candidates = []
+    for row in rows:
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            illegible += 1
+            continue
+        lineage = payload.get("lineage") if isinstance(payload, dict) else None
+        if (
+            not isinstance(payload, dict)
+            or not isinstance(lineage, dict)
+            or "parentThreadId" not in lineage
+            or "createdBy" not in payload
+        ):
+            illegible += 1
+            continue
+        age = _huerfano_date(row["created_at"], current)
+        if age is None:
+            bad_dates += 1
+            continue
+        if (
+            lineage["parentThreadId"] is not None
+            or payload["createdBy"] != "agent"
+            or str(row["thread_id"]) in registered
+            or row["deleted_at"] is not None
+            or age <= GRACIA_MIN
+            or age > EXPOSICION_H * 60
+        ):
+            continue
+        thread_id = str(row["thread_id"])
+        key = "huerfano-" + hashlib.sha1(str(thread_id).encode("utf-8")).hexdigest()[:12]  # noqa: S324  # fmt: skip
+        level = (
+            "URGENTE" if pending or row["runtime_mode"] == "full-access" else "AVISO"
+        )
+        candidates.append((key, level, thread_id, row["created_at"]))
+    out["huerfano_ilegibles"] = illegible
+    out["huerfano_fecha_ilegible"] = bad_dates
+    if illegible / len(rows) >= ILEGIBLES_MAX_FRAC:
+        return _huerfano_blind(out, "payload-illegible")
+    candidates.sort(key=lambda item: item[3])
+    activos = {item[0] for item in candidates}
+    total = len(candidates)
+    if total > HUERFANO_CAP_TICK:
+        activos.add("huerfano-resumen")
+    out["huerfano_activos"] = sorted(activos)
+    found = [
+        (key, level, f"Hilo huerfano {thread_id} fuera del registry")
+        for key, level, thread_id, _created in candidates[:HUERFANO_CAP_TICK]
+    ]
+    if total > HUERFANO_CAP_TICK:
+        found.append(("huerfano-resumen", "AVISO", f"{total} hilos huerfanos vigentes"))
+    return found
+
+
 def _detect(out, st, only=None):
     """Ejecuta todos los detectores aislando el fallo de cada uno.
 
@@ -1338,6 +1524,7 @@ def _detect(out, st, only=None):
         "im-ocioso": lambda: check_im_ocioso(out, st),
         "cola-despachable": lambda: check_cola_despachable(out, st),
         "celda": lambda: check_celda(out, st),
+        "huerfano": lambda: check_huerfano(out, st),
     }
     selected = [only] if only else list(DETECTOR_NAMES)
     for name in selected:
@@ -1405,11 +1592,17 @@ def _reconcile(ca, out, found, a):
         "git-": out.get("ciego_git"),
         "hook-": out.get("ciego_hook"),
         "celda-": out.get("ciego_celda"),
+        "huerfano-": out.get("huerfano_ciego"),
     }
     if out.get("ocio_con_cola_ciego"):
         blind["ocio-con-cola"] = True
     prefixes = tuple(p for p in OWNED_PREFIXES if not blind.get(p))
-    cleared = ca.reconcile(prefixes, {k for k, _, _ in found}, a.dry_run, owner="stall")
+    live_keys = {k for k, _, _ in found}
+    if not blind.get("huerfano-") and "huerfano_activos" in out:
+        live_keys = {key for key in live_keys if not key.startswith("huerfano-")} | set(
+            out.get("huerfano_activos") or ()
+        )
+    cleared = ca.reconcile(prefixes, live_keys, a.dry_run, owner="stall")
     if cleared:
         print("resueltas (borradas, una recaida avisa de nuevo):", cleared)
     if "tarea-muerta" not in {k for k, _, _ in found} and (
@@ -1452,7 +1645,18 @@ def run(a):  # noqa: C901 - detector legacy mas el modo heartbeat aislado
     st, out = _state(), {}
     detector = None if a.test_detector == "todos" else a.test_detector
     found, broke = _detect(out, st, detector)
+    if not a.test_detector and CFG.registry is None:
+        found = [item for item in found if item[0] != "detector-ciego-huerfano"]
+        out.pop("huerfano_ciego", None)
+    if out.get("huerfano_ciego"):
+        print(
+            f"detector-ciego-huerfano: {out['huerfano_ciego']}",
+            file=sys.stderr,
+        )
     if a.test_detector:
+        if out.get("huerfano_ciego"):
+            print("STALL_CHECK_BROKEN: detector huerfano ciego")
+            return 2
         if broke:
             print("STALL_CHECK_BROKEN: detector de prueba fallo")
             return 2
@@ -1471,6 +1675,8 @@ def run(a):  # noqa: C901 - detector legacy mas el modo heartbeat aislado
     if not found and not active_events and not ca.clear_group(a.dry_run):
         print("STALL_CHECK_WARNING: no se pudo limpiar nuestro Group de avisos")
     rc = _notify_all(ca, found, a, out)
+    if out.get("huerfano_ciego"):
+        rc = 2
     if not a.dry_run and not a.baseline and not broke:
         _reconcile(ca, out, found, a)
     if not a.dry_run:

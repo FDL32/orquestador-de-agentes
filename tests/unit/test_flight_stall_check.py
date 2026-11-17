@@ -7,6 +7,7 @@ lleva comms_alert.py y notify_user.ps1 al lado). Nada avisa de verdad: ``notify`
 """
 
 import ast
+import datetime as dt
 import importlib.util
 import json
 import math
@@ -86,6 +87,26 @@ class Box:
         )
         self.cola = self.flight / "diseno" / "COLA_PARA_USUARIO.md"
         self.cola.write_text("# cola\n", encoding="utf-8")
+        import sqlite3
+
+        self.harness_store = root / "harness-empty.sqlite"
+        connection = sqlite3.connect(self.harness_store)
+        connection.execute(
+            "CREATE TABLE orchestration_v2_projection_threads ("
+            "thread_id TEXT, project_id TEXT, title TEXT, runtime_mode TEXT, "
+            "created_at TEXT, deleted_at TEXT, payload_json TEXT, provider_instance_id TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE projection_pending_approvals (resolved_at TEXT, status TEXT, decision TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO orchestration_v2_projection_threads "
+            "(thread_id, runtime_mode, created_at, deleted_at, payload_json, provider_instance_id) "
+            "VALUES ('harness-invalid-date', 'auto', 'not-a-date', NULL, ?, NULL)",
+            (json.dumps({"lineage": {"parentThreadId": None}, "createdBy": "agent"}),),
+        )
+        connection.commit()
+        connection.close()
         self.quota = self.ops / "quota_last.txt"
         self.quota.write_text(OK_QUOTA, encoding="utf-8")
         make_repo(self.wt)
@@ -98,6 +119,7 @@ class Box:
             monkeypatch.delenv(var, raising=False)
         monkeypatch.setenv("STALL_WT_GLOB", str(root / "nada-*"))
         monkeypatch.setenv("STALL_FREE_GB_MIN", "0")
+        monkeypatch.setenv("T3_STATE_DB", str(self.harness_store))
         self.monkeypatch = monkeypatch
         self.clock = Clock()
         self.m = _load()
@@ -3254,3 +3276,462 @@ def test_ocio_con_cola_reconciliacion(box, case):
         assert "event:ocio-con-cola" in box.ca.load_state()
     else:
         assert "event:ocio-con-cola" not in box.ca.load_state()
+
+
+def _orphan_store(box, rows, pending=False):
+    """Before: ``rows`` describe projection rows. During: build a minimal store. After: return its path."""
+    import sqlite3
+
+    db = box.root / "statev2.sqlite"
+    if db.exists():
+        db.unlink()
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_threads ("
+        "thread_id TEXT, project_id TEXT, title TEXT, runtime_mode TEXT, "
+        "created_at TEXT, deleted_at TEXT, payload_json TEXT, provider_instance_id TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE projection_pending_approvals (resolved_at TEXT, status TEXT, decision TEXT)"
+    )
+    for row in rows:
+        connection.execute(
+            "INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                row["thread_id"],
+                row.get("project_id", "p"),
+                row.get("title", "ignored"),
+                row.get("runtime_mode", "auto"),
+                row.get("created_at"),
+                row.get("deleted_at"),
+                row.get("payload_json"),
+                row.get("provider_instance_id"),
+            ),
+        )
+    if pending:
+        connection.execute(
+            "INSERT INTO projection_pending_approvals VALUES (NULL, 'pending', NULL)"
+        )
+    connection.commit()
+    connection.close()
+    box.monkeypatch.setenv("T3_STATE_DB", str(db))
+    return db
+
+
+def _orphan_row(box, thread_id="thread:orphan", age_min=60, mode="auto", payload=None):
+    """Before: ``box`` has an injected clock. During: create one projection row. After: return its row."""
+    created = dt.datetime.fromtimestamp(
+        box.clock.now - age_min * 60, tz=dt.timezone.utc
+    ).isoformat()
+    return {
+        "thread_id": thread_id,
+        "runtime_mode": mode,
+        "created_at": created,
+        "payload_json": json.dumps(
+            payload
+            if payload is not None
+            else {"lineage": {"parentThreadId": None}, "createdBy": "agent"}
+        ),
+    }
+
+
+def _orphan_summary(result):
+    """Before: ``result.out`` contains a normal tick. During: parse its JSON summary. After: return it."""
+    return json.loads(result.out.split("resumen: ", 1)[1].rsplit(" hallazgos=", 1)[0])
+
+
+def test_huerfano_aviso_fuera_de_gracia(box):
+    """Before: one eligible row is outside grace. During: run a normal tick. After: an AVISO is emitted."""
+    _orphan_store(box, [_orphan_row(box)])
+    result = box.tick()
+    assert result.rc == 1
+    assert any(
+        key.startswith("huerfano-") and level == "AVISO"
+        for key, level, _ in result.events
+    )
+
+
+def test_huerfano_registro_estructural():
+    """Before: load the production module. During: inspect detector registries. After: both contain the name."""
+    module = _load()
+    assert "huerfano" in module.DETECTOR_NAMES
+    tree = ast.parse(FSC_PATH.read_text(encoding="utf-8"))
+    detector_keys = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.Dict):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == "detectors"
+            for target in node.targets
+        ):
+            continue
+        detector_keys = [
+            key.value
+            for key in node.value.keys
+            if isinstance(key, ast.Constant) and isinstance(key.value, str)
+        ]
+    assert "huerfano" in detector_keys
+
+
+def test_huerfano_store_identico_con_y_sin_entorno(box):
+    """Before: one store and an empty registry are fixed. During: toggle T3_STATE_DB. After: detection is identical."""
+    db = _orphan_store(box, [_orphan_row(box, "import:env-independent")])
+    registry = box.flight / "session_registry.json"
+    module = box.m
+    module.CFG = types.SimpleNamespace(store=db, registry=registry)
+    results = []
+    for exported in (True, False):
+        if exported:
+            box.monkeypatch.setenv("T3_STATE_DB", str(db))
+        else:
+            box.monkeypatch.delenv("T3_STATE_DB", raising=False)
+        out = {}
+        results.append(module.check_huerfano(out, {}))
+    assert results[0] == results[1]
+
+
+def test_huerfano_criterio_negativos(box):
+    """Before: rows vary only by lineage/registry criteria. During: run a real tick. After: only the valid row emits."""
+    rows = [
+        _orphan_row(box, "thread:valid"),
+        _orphan_row(
+            box,
+            "thread:parent",
+            payload={"lineage": {"parentThreadId": "p"}, "createdBy": "agent"},
+        ),
+        _orphan_row(box, "thread:deleted"),
+    ]
+    rows[-1]["deleted_at"] = "2026-01-01T00:00:00+00:00"
+    _orphan_store(box, rows)
+    result = box.tick()
+    keys = [key for key, _level, _owner in result.events]
+    assert any(key.startswith("huerfano-") for key in keys)
+    assert len([key for key in keys if key.startswith("huerfano-")]) == 1
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "lineage_tipo_invalido",
+        "createdby_ausente",
+        "registry_duplicado",
+        "id_thread_import_valido_emite",
+    ],
+    ids=[
+        "lineage_tipo_invalido",
+        "createdby_ausente",
+        "registry_duplicado",
+        "id_thread_import_valido_emite",
+    ],
+)
+def test_huerfano_criterio_datos(box, case):
+    """Before: one exact data case is selected. During: run a real tick. After: the case obeys its contract."""
+    payloads = {
+        "lineage_tipo_invalido": {"lineage": [], "createdBy": "agent"},
+        "createdby_ausente": {"lineage": {"parentThreadId": None}},
+        "registry_duplicado": {
+            "lineage": {"parentThreadId": None},
+            "createdBy": "agent",
+        },
+        "id_thread_import_valido_emite": {
+            "lineage": {"parentThreadId": None},
+            "createdBy": "agent",
+        },
+    }
+    thread_id = (
+        "import:valid-data"
+        if case == "id_thread_import_valido_emite"
+        else f"thread:{case}"
+    )
+    rows = [_orphan_row(box, thread_id, payload=payloads[case])]
+    rows.extend(_orphan_row(box, f"thread:valid-{index}") for index in range(2))
+    _orphan_store(box, rows)
+    if case == "registry_duplicado":
+        box.flight.joinpath("session_registry.json").write_text(
+            json.dumps(
+                {"sessions": [{"threadId": thread_id}, {"threadId": thread_id}]}
+            ),
+            encoding="utf-8",
+        )
+    result = box.tick()
+    summary = _orphan_summary(result)
+    if case in {"lineage_tipo_invalido", "createdby_ausente"}:
+        assert summary["huerfano_ilegibles"] == 1
+        assert result.rc == 1
+    elif case == "registry_duplicado":
+        assert len(summary["huerfano_activos"]) == 2
+    else:
+        assert any(key.startswith("huerfano-") for key, _level, _owner in result.events)
+        assert any(key.startswith("huerfano-") for key in summary["huerfano_activos"])
+
+
+def test_huerfano_limites_y_fechas(box):
+    """Before: rows exercise inclusive and invalid date boundaries. During: tick real data. After: boundaries hold."""
+    rows = [
+        _orphan_row(box, "thread:grace", 15),
+        _orphan_row(box, "thread:exposure", 24 * 60),
+    ]
+    rows += [_orphan_row(box, f"thread:date-{i}", 60) for i in range(4)]
+    rows[2]["created_at"] = None
+    rows[3]["created_at"] = "not-a-date"
+    rows[4]["created_at"] = "2026-11-17T12:00:00"
+    rows[5]["created_at"] = (
+        dt.datetime.fromtimestamp(box.clock.now + 60, tz=dt.timezone.utc)
+    ).isoformat()
+    _orphan_store(box, rows)
+    summary = _orphan_summary(box.tick())
+    assert summary["huerfano_fecha_ilegible"] == 4
+    assert any(key.startswith("huerfano-") for key, _level, _owner in box.events)
+    assert not any(key == "huerfano-resumen" for key, _level, _owner in box.events)
+
+
+def test_huerfano_silencio_en_gracia(box):
+    """Before: a row is exactly at the grace boundary. During: tick normally. After: no orphan event exists."""
+    _orphan_store(box, [_orphan_row(box, age_min=15)])
+    box.tick()
+    assert not any(key.startswith("huerfano-") for key, _level, _owner in box.events)
+
+
+def test_huerfano_historico_silencio_24h(box):
+    """Before: a row is older than exposure. During: tick normally. After: it is silent and inactive."""
+    _orphan_store(box, [_orphan_row(box, age_min=24 * 60 + 1)])
+    summary = _orphan_summary(box.tick())
+    assert summary.get("huerfano_activos") == []
+
+
+def test_huerfano_urgente_full_access_sin_pending(box):
+    """Before: eligible row is full-access without pending approval. During: tick. After: URGENTE is emitted."""
+    _orphan_store(box, [_orphan_row(box, mode="full-access")])
+    result = box.tick()
+    assert any(
+        key.startswith("huerfano-") and level == "URGENTE"
+        for key, level, _ in result.events
+    )
+
+
+def test_huerfano_urgente_con_aprobacion_pendiente(box):
+    """Before: eligible row has a pending approval. During: tick. After: URGENTE is emitted."""
+    _orphan_store(box, [_orphan_row(box)], pending=True)
+    result = box.tick()
+    assert any(
+        key.startswith("huerfano-") and level == "URGENTE"
+        for key, level, _ in result.events
+    )
+
+
+def test_huerfano_aviso_puro_sin_pending_ni_full_access(box):
+    """Before: eligible row has no escalation condition. During: tick. After: AVISO is emitted."""
+    _orphan_store(box, [_orphan_row(box)])
+    result = box.tick()
+    assert any(
+        key.startswith("huerfano-") and level == "AVISO"
+        for key, level, _ in result.events
+    )
+
+
+def test_huerfano_sin_estado_en_stall_state(box):
+    """Before: compare two clean boxes. During: run with and without an orphan. After: detector adds no state key."""
+    baseline = box.tick()
+    before = {
+        key: value
+        for key, value in box.stall_state().items()
+        if key not in {"ts_latido", "cola_vistas"}
+    }
+    _orphan_store(box, [_orphan_row(box)])
+    box.tick()
+    after = {
+        key: value
+        for key, value in box.stall_state().items()
+        if key not in {"ts_latido", "cola_vistas"}
+    }
+    assert "huerfano_ticks" not in after
+    assert before == after
+    assert baseline.rc in (0, 1)
+
+
+def test_huerfano_fail_closed_store_ilegible(box, capsys):
+    """Before: the store is not SQLite. During: tick. After: rc 2 and the huerfano blindness is observable."""
+    bad = box.root / "bad.sqlite"
+    bad.write_text("not sqlite", encoding="utf-8")
+    box.monkeypatch.setenv("T3_STATE_DB", str(bad))
+    result = box.tick()
+    assert result.rc == 2
+    assert "huerfano_ciego" in result.out
+    assert "detector-ciego-huerfano:" in capsys.readouterr().err
+
+
+def test_huerfano_fail_closed_registry_archivo_ausente(box, capsys):
+    """Before: the registry file is absent. During: tick. After: rc 2 with registry-missing."""
+    _orphan_store(box, [_orphan_row(box)])
+    box.flight.joinpath("session_registry.json").unlink()
+    result = box.tick()
+    assert result.rc == 2 and '"huerfano_ciego": "registry-missing"' in result.out
+    assert "detector-ciego-huerfano: registry-missing" in capsys.readouterr().err
+
+
+def test_huerfano_fail_closed_registry_no_resuelta(box, capsys):
+    """Before: flight-dir leaves CFG.registry unresolved. During: isolate the detector. After: rc 2 is observable."""
+    result = box.tick("--test-detector", "huerfano", flight=False)
+    assert result.rc == 2
+    assert "detector-ciego-huerfano: registry-missing" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["todo_corrupto", "mixto_bajo_umbral", "exactamente_umbral", "universo_vacio"],
+    ids=["todo_corrupto", "mixto_bajo_umbral", "exactamente_umbral", "universo_vacio"],
+)
+def test_huerfano_fail_closed(box, case):
+    """Before: one fail-closed case is selected. During: run a real tick. After: the ratio/store contract holds."""
+    if case == "todo_corrupto":
+        rows = [
+            _orphan_row(box, f"thread:bad-{index}", payload="bad") for index in range(2)
+        ]
+    elif case == "mixto_bajo_umbral":
+        rows = [_orphan_row(box, "thread:bad", payload="bad")] + [
+            _orphan_row(box, f"thread:good-{index}") for index in range(2)
+        ]
+    elif case == "exactamente_umbral":
+        rows = [
+            _orphan_row(box, "thread:bad", payload="bad"),
+            _orphan_row(box, "thread:good"),
+        ]
+    else:
+        rows = []
+    _orphan_store(box, rows)
+    result = box.tick()
+    summary = _orphan_summary(result)
+    if case == "universo_vacio":
+        assert result.rc == 2 and summary["huerfano_ciego"] == "store-empty"
+    elif case == "mixto_bajo_umbral":
+        assert result.rc == 1 and summary["huerfano_ilegibles"] == 1
+        assert "huerfano_ciego" not in summary
+    else:
+        assert result.rc == 2 and summary["huerfano_ciego"] == "payload-illegible"
+
+
+def test_huerfano_clave_estable_entre_dos_ticks(box):
+    """Before: one eligible row persists. During: run two ticks. After: its SHA-1 key is stable."""
+    _orphan_store(
+        box,
+        [
+            _orphan_row(box, "thread:prefix-abcdefgh-one"),
+            _orphan_row(box, "thread:prefix-abcdefgh-two"),
+        ],
+    )
+    first = _orphan_summary(box.tick())
+    box.clock.now += 2
+    second = _orphan_summary(box.tick())
+    assert first["huerfano_activos"] == second["huerfano_activos"]
+    assert len(first["huerfano_activos"]) == 2
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "reconciliacion_registra",
+        "puesto_11_conserva_sin_reemision",
+        "ceguera_conserva_avisos",
+        "recuperacion_aviso_sin_reemision",
+        "recuperacion_urgente_retroceso",
+    ],
+    ids=[
+        "reconciliacion_registra",
+        "puesto_11_conserva_sin_reemision",
+        "ceguera_conserva_avisos",
+        "recuperacion_aviso_sin_reemision",
+        "recuperacion_urgente_retroceso",
+    ],
+)
+def test_huerfano_reconciliacion_por_prefijo(box, case):
+    """Before: one reconciliation case is selected. During: run real ticks. After: prefix lifecycle is exact."""
+    if case in {"recuperacion_aviso_sin_reemision", "recuperacion_urgente_retroceso"}:
+        mode = "full-access" if case == "recuperacion_urgente_retroceso" else "auto"
+        row = _orphan_row(box, "thread:recovery", mode=mode)
+        _orphan_store(box, [row])
+        box.tick()
+        bad = box.root / "recovery.sqlite"
+        bad.write_text("broken", encoding="utf-8")
+        box.monkeypatch.setenv("T3_STATE_DB", str(bad))
+        box.tick()
+        _orphan_store(box, [row])
+        if case == "recuperacion_urgente_retroceso":
+            box.clock.now += 31 * 60
+        recovered = box.tick()
+        if case == "recuperacion_aviso_sin_reemision":
+            assert not any(
+                "Hilo huerfano" in message for _title, message in recovered.sent
+            )
+        else:
+            assert any("Hilo huerfano" in message for _title, message in recovered.sent)
+        return
+    row = _orphan_row(box, "thread:keep")
+    _orphan_store(box, [row])
+    box.tick()
+    keep_key = next(
+        key for key, _level, _owner in box.events if key.startswith("huerfano-")
+    )
+    if case == "ceguera_conserva_avisos":
+        bad = box.root / "blind.sqlite"
+        bad.write_text("broken", encoding="utf-8")
+        box.monkeypatch.setenv("T3_STATE_DB", str(bad))
+        box.tick()
+        box.m._reconcile(
+            box.ca,
+            {"huerfano_ciego": "store-corrupt"},
+            [],
+            types.SimpleNamespace(dry_run=False),
+        )
+        assert f"event:{keep_key}" in box.ca_state()
+        return
+    if case == "puesto_11_conserva_sin_reemision":
+        older = [
+            _orphan_row(box, f"thread:older-{index}", age_min=61 + index)
+            for index in range(11)
+        ]
+        _orphan_store(box, [row, *older])
+        box.tick()
+        assert f"event:{keep_key}" in box.ca_state()
+    data = {"sessions": [{"threadId": row["thread_id"]}]}
+    box.flight.joinpath("session_registry.json").write_text(
+        json.dumps(data), encoding="utf-8"
+    )
+    box.tick()
+    assert f"event:{keep_key}" not in box.ca_state()
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["sin_resumen_hasta_10", "resumen_ciclo_de_vida"],
+    ids=["sin_resumen_hasta_10", "resumen_ciclo_de_vida"],
+)
+def test_huerfano_cap_y_resumen(box, case):
+    """Before: a cap lifecycle case is selected. During: run real ticks. After: emission and active-life differ correctly."""
+    rows = [
+        _orphan_row(box, f"thread:cap-{index}", age_min=60 + index)
+        for index in range(12 if case == "resumen_ciclo_de_vida" else 10)
+    ]
+    _orphan_store(box, rows)
+    first = box.tick()
+    first_keys = [
+        key for key, _level, _owner in first.events if key.startswith("huerfano-")
+    ]
+    if case == "sin_resumen_hasta_10":
+        assert len(first_keys) == 10
+        assert "huerfano-resumen" not in first_keys
+        return
+    assert len([key for key in first_keys if key != "huerfano-resumen"]) == 10
+    assert "huerfano-resumen" in first_keys
+    assert len(_orphan_summary(first)["huerfano_activos"]) == 13
+    second = box.tick()
+    assert not any(key.startswith("huerfano-") for key, _message in second.sent)
+    _orphan_store(box, rows)
+    blind = box.root / "cap-blind.sqlite"
+    blind.write_text("broken", encoding="utf-8")
+    box.monkeypatch.setenv("T3_STATE_DB", str(blind))
+    box.tick()
+    assert "event:huerfano-resumen" in box.ca_state()
+    _orphan_store(box, rows[:9])
+    third = box.tick()
+    assert "huerfano-resumen" not in _orphan_summary(third)["huerfano_activos"]
+    assert "event:huerfano-resumen" not in box.ca_state()
