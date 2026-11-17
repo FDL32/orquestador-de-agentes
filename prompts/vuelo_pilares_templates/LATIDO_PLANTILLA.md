@@ -7,7 +7,7 @@
    {{ID_SUPERVISORA}} ({{HILO_SUPERVISORA}}), con cascada {{CASCADA_CONTEXTO}}.
    Si eres supervisora, vigilas a {{ID_COORDINADORA}} ({{HILO_COORDINADORA}}).
 
-1. Lee la última entrada de OPERACION_EN_CURSO propia y continúa desde ella.
+1. Lee la última entrada de OPERACION_EN_CURSO propia y continúa desde ella. Remite a `docs/protocol/flight_supervision.md` seccion 2 "Autoridad"; la supervisora comprueba la regla 2 antes de declarar cualquier bloqueo por orden del usuario.
 
 2. Si eres coordinadora, comprueba que tu supervisora está viva. Si eres
    supervisora, comprueba que la coordinadora no se ha dormido con

@@ -7,7 +7,7 @@
    y la coordinadora es {{ID_COORDINADORA}} ({{HILO_COORDINADORA}}); cascada:
    {{CASCADA_CONTEXTO}}.
 
-1. Ordenes permanentes del usuario: aplica P1 (RATIFICADA, vinculante), P3
+1. Ordenes permanentes del usuario: remite a `docs/protocol/flight_supervision.md` seccion 2 "Autoridad". Aplica P1 (RATIFICADA, vinculante), P3
    (RATIFICADA, vinculante), P7 (RATIFICADA, vinculante), P14 (NO RATIFICADA,
    no vinculante) y P18 (NO RATIFICADA, no vinculante).
 

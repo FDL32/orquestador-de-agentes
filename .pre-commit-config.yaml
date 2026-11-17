@@ -111,6 +111,14 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      - id: check-user-order-authority
+        name: check user order authority
+        entry: uv run python scripts/check_user_order_authority.py
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
       # WOT-2026-171a: protege el censo de scripts y los presupuestos normativos.
       - id: check-counter-budget-gate
         name: check counter and prompt budget gate

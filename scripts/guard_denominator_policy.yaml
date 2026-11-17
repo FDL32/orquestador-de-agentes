@@ -455,3 +455,7 @@ guards:
     nota: "publica N como toda entrada, pero aplica D-B: universo 0 => SKIP EXPLICITO
       rc 0 (vacuidad aprobada), por eso no se declara fixed_denominator; se aplica
       su propia vara exigiendo su propia entrada"
+  scripts/check_user_order_authority.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: "modo automatico = pre-commit; --latido/--workspace-root verifica el latido vivo"
