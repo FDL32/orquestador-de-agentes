@@ -1481,3 +1481,35 @@ class TestGuardAndWriterCallSharedFunction:
     def test_helper_calls_shared_function(self):
         """send_with_ledger.py calls has_mcp_prefix from thread_id."""
         self._check_calls_shared_function(_SEND_WITH_LEDGER)
+
+
+class TestSettledSendCompatibility:
+    """Tests for the additive settled-send integration point."""
+
+    def test_prepare_settled_send_returns_pending_without_transport(self, tmp_path):
+        """The existing helper exposes pending state without changing old ledger behavior."""
+        import importlib.util
+
+        pending_path = _SCRIPTS_DIR / "flight" / "pending_confirmation.py"
+        pending_spec = importlib.util.spec_from_file_location(
+            "pending_for_ledger", pending_path
+        )
+        pending_module = importlib.util.module_from_spec(pending_spec)
+        assert pending_spec.loader is not None
+        pending_spec.loader.exec_module(pending_module)
+        helper_spec = importlib.util.spec_from_file_location(
+            "send_for_pending", _SEND_WITH_LEDGER
+        )
+        helper = importlib.util.module_from_spec(helper_spec)
+        assert helper_spec.loader is not None
+        helper_spec.loader.exec_module(helper)
+        store = pending_module.PendingConfirmationStore(tmp_path / "pending.jsonl")
+        response = helper.prepare_settled_send(
+            store,
+            target_thread_id="mcp:target-001",
+            target_lifecycle_version="epoch-7",
+            content="hello",
+            client_request_id="client-001",
+        )
+        assert response["status"] == "pending_confirmation"
+        assert not (tmp_path / "target-001.enqueue").exists()

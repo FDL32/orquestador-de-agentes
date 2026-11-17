@@ -32,6 +32,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 
 # Load thread_id by path so the AST of import-statement matching reaches it.
@@ -106,6 +107,32 @@ FIXED_KEYS: frozenset[str] = frozenset(
         "nota",
     }
 )
+
+
+def prepare_settled_send(
+    pending_store: Any,
+    *,
+    target_thread_id: str,
+    target_lifecycle_version: str,
+    content: str,
+    client_request_id: str,
+    mode: str = "auto",
+) -> dict[str, str]:
+    """Create the additive pending result for a settled target.
+
+    Before: the caller has identified a settled target and provides the exact
+        message and lifecycle version; no transport has been invoked.
+    During: delegates to the durable confirmation store and performs no wake,
+        enqueue, restart, or retry operation.
+    After: returns the SYSTEM-issued pending_confirmation response.
+    """
+    return pending_store.create_pending(
+        target_thread_id=target_thread_id,
+        target_lifecycle_version=target_lifecycle_version,
+        content=content,
+        client_request_id=client_request_id,
+        mode=mode,
+    )
 
 
 def _now_iso() -> str:
