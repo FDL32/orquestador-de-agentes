@@ -5,7 +5,7 @@ route_kind: mantenimiento
 # Prompt: Triaje de intake de contenido nuevo a AGENTS.md/CLAUDE.md
 <!-- PROMPT-SUMMARY
 what: Protocolo de admision (antes de escribir) para decidir si una regla/contenido NUEVO va a la cuspide siempre-cargada de AGENTS.md/CLAUDE.md, a un modulo de dominio o a docs/protocol/, con barrido anti-duplicado, clasificacion por funcion/clase y gate de presupuesto.
-when: Cuando un agente va a anadir contenido nuevo a AGENTS.md, CLAUDE.md o un modulo de .agent/rules/common/ en el motor o en un repo_destino, ANTES de escribirlo.
+when: Cuando un agente va a anadir contenido nuevo a AGENTS.md, CLAUDE.md, prompts/, docs/protocol/ o un modulo de .agent/rules/common/ en el motor o en un repo_destino, ANTES de escribirlo.
 not: NO decide el destino final del cierre de sesion (eso lo hace prompts/orchestrator_session_close_full_audit.md); NO es el backlog_triage general (prompts/backlog_triage.md tria TICKETS, no documentacion siempre-cargada); NO sustituye el barrido de prompts/memory_upload.md para memoria (ese es aprendizajes/memoria, dominio distinto de reglas operativas y documentacion).
 -->
 
@@ -20,6 +20,10 @@ prevalece este prompt (X-09: skill apunta, prompt gobierna).
 > que relato) y la via de carga de `prompts/doc_optimization.md`.
 
 ## Alcance y no-confusion con los hermanos (leer antes de ejecutar)
+
+El ambito de superficies incluye AGENTS.md, CLAUDE.md, prompts/, docs/protocol/
+y los modulos de .agent/rules/common/; el barrido del PASO 1 conserva todas esas
+superficies y no convierte docs/protocol/ en una excepcion.
 
 Este protocolo se apoya en tres contratos ya existentes, citados por
 referencia (X-09: NO se re-declaran aqui sus criterios; se nombra el prompt
@@ -167,6 +171,15 @@ propio mensaje de commit o en `execution_log.md`:
 3. El veredicto de aterrizaje (PASO 3): cuspide (con su compensacion explicita)
    o modulo/base.
 4. La medida del gate antes/despues (PASO 4), si el destino fue la cuspide.
+5. Todo `messageId` que ratifica una fila de pilar se autentica con `user_msgs.py` y
+   es UNO por fila; el recibo identifica la fila y el unico identificador autenticado.
+6. Los consumidores que pinan el fichero tocado se listan y se ejecutan antes y
+   despues. Para `vuelo_pilares.md` son `test_vuelo_pilares_canon`,
+   `test_vuelo_pilares_templates`, `test_check_cell_conformance`,
+   `test_dod_matriz_plantilla` y `test_integrate_ticket`.
+7. El delta de bytes se declara por ZONA tocada (`.agent/rules/common`, `prompts/`
+   o `docs/protocol`) y frente a los gates de AGENTS/CLAUDE solo si la edicion los
+   toca; este ticket no toca esos gates.
 
 Sin esta declaracion, el intake NO esta completado: es gobierno declarativo y
 queda como el hueco de ENFORCEMENT que las lentes senalaron (Seccion 5 hallazgo

@@ -355,12 +355,35 @@ Una cuenta por proveedor: nunca cuentas extra para esquivar limites. Sin agregad
 motor y el proveedor. En cada bundle, solo lo necesario. Ping o preflight antes de mandar un bundle grande.
 Los cupos se comparten con los agentes de implantacion: preferir modelos sin limite.
 
-## 8. Pendiente (todavia no existe; no lo invoques)
+## 8. Bundles sobre fichas: umbral K-103
+
+Esta seccion es el hogar unico del literal K-103 dentro de `prompts/`. Las plantillas
+de bundles y los bundles de lentes futuros citan esta seccion por su fuente; no copian
+el umbral ni re-declaran criterios de otros prompts.
+
+Para cada hallazgo de una lente sobre una ficha se usa exactamente un nivel y la
+etiqueta `FAMILIA:<regla generadora violada>`:
+
+- `BLOQ`: implementar-imposible o contradice regla ratificada.
+- `MAYOR`: solo si rompe una propiedad NOMBRADA del DoD.
+- `MENOR`: el resto, incluido todo mutante fuera del DoD, que pasa a obligacion del IM.
+
+Esta es una prohibicion de alcance: esta prohibido ordenar a una lente construir mutantes o buscar casos fuera de la regla generadora de la ficha. La lente comprueba la regla generadora y sus propiedades nombradas; no fabrica escenarios ajenos a ella.
+
+P38 gobierna el tope de rondas con `CHANGES` por TICKET: es un contador durable del
+ticket y exige causa raiz por clase en la tercera ronda, sin cuarta ronda automatica.
+Es distinto del tope de pipeline `max_rounds=2` que aplica al bucle proposer/challenger
+de `scripts/ensemble_dispatch.py`: el codigo lee ese valor del pipeline y limita sus
+propias rondas. Por tanto, P38 manda al contar CHANGES del ticket y `max_rounds=2`
+manda al despachar ese pipeline; son objetos distintos hasta que se demuestre lo
+contrario y uno no sustituye al otro.
+
+## 9. Pendiente (todavia no existe; no lo invoques)
 
 - `gov_stage`/`step`: WOT-2026-086g.
 - Comando `loop` con valores por defecto para chat: WOT-2026-086i.
 
-## 9. Referencias: N1 y D1 de la propuesta v3 (ficha 093)
+## 10. Referencias: N1 y D1 de la propuesta v3 (ficha 093)
 
 Trazabilidad a la propuesta v3 del proceso portable (revision C4). NO son criterio nuevo:
 documentan por que este contrato dice lo que dice, y el criterio vive en las secciones de

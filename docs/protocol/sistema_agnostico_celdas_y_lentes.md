@@ -38,5 +38,8 @@ Ratificar este diseno, decidir U1/U3, abrir ficha (DISENO_PRIMERO) y despues imp
 - Reglas de fallo: 2 intentos de cadena por seccion; tras dos fallos el supervisor diagnostica por fichero, corrige la tarea o el troceo y relanza correctamente con 2 intentos nuevos; solo si fallan tambien esos dos, la seccion pasa al triador simple (un hijo sin nieto), declarandolo. Verificacion SIEMPRE por FICHERO (el summary final puede ser solo el preambulo del verificador).
 - Evidencia: la REVISION del ticket lleva una seccion CADENA con quien redacto, quien comprobo, intentos y hallazgos reales por seccion.
 - Que NO cambia: la fila P35 de vuelo_pilares.md y la fila P36 (no se editan), el roster y el gate check_cell_conformance; el registro sigue declarando el triador del canon vigente.
+- Gobierno de la celda: el REVISOR de la celda gobierna a sus subagentes. Todo hijo que comprueba o redacta es de OTRA familia que el autor del texto que toca.
+- Receta medida el 2026-11-17: desde un llamador mimo, usa `delegate_task` con `mode: async`, SIN CAMPOS NUMERICOS (en particular, `timeoutMs` falla porque mimo los emite como texto; gemma4 si los admite) y un objeto `target` con `providerInstanceId` y `model`.
+- Control positivo: remite a `OPERACION_EN_CURSO_CO-114.md` l.80-82.
 - Caducidad: 2026-11-21 si no hay al menos 3 secciones medidas por brazo con un verificador CIEGO AL BRAZO (el verificador no sabe de que cadena procede la seccion). Ampliada por el usuario el 2026-11-13, mensajes f57d6ff6-fee4-483f-9da5-bd6f3feb7009 (peticion) y 2a6dc27f-8c54-4ef8-b24b-5f605b72102d (confirmacion de 7 dias; antes: 2026-11-14).
 - Ratificacion: SOLO con decision explicita del usuario sobre la medicion acumulada.
