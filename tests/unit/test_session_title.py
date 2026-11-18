@@ -7,6 +7,7 @@ After: exercise rendering, checking, linting, input handling, and one grammar.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -18,6 +19,20 @@ from scripts.flight import session_title
 ROOT = Path(__file__).resolve().parents[2]
 SEPARATOR = "\u00b7"
 ROLES = ("CO", "IM", "TR")
+
+
+def _child_env():
+    """Before: read the parent environment without changing global state.
+
+    During: force UTF-8 decoding and Python UTF-8 mode for child processes.
+
+    After: return an isolated environment suitable for subprocess execution.
+    """
+    env = os.environ.copy()
+    env.update({"PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"})
+    return env
+
+
 FIELDS_BY_ROLE = {
     "CO": ("codigo", "mandato", "parentesis"),
     "IM": ("codigo", "ticket", "tema", "coordinadora", "parentesis"),
@@ -261,7 +276,8 @@ def test_session_title_render_check():
             "Consolidar reglas",
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        env=_child_env(),
         check=False,
     )
     assert proc.returncode == 0
@@ -291,7 +307,8 @@ def test_session_title_lint_relevo():
             title,
         ],
         capture_output=True,
-        text=True,
+        encoding="utf-8",
+        env=_child_env(),
     )
     assert proc.returncode == 2
 
