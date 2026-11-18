@@ -111,29 +111,31 @@ def _scan_literals(root: Path) -> list[str]:
     errors: list[str] = []
     literals = (R1, R2, A, B)
     expected = root / "docs/protocol/flight_supervision.md"
-    for path in root.rglob("*"):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(root)
-        if (
-            any(part in {".git", ".venv", "sandbox"} for part in rel.parts)
-            or rel in SELF_FILES
-        ):
-            continue
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            return [f"NO MEDIDO: no se pudo leer {path}: {exc}"]
-        for literal in literals:
-            count = data.count(literal.encode("utf-8"))
-            if path == expected and count != 1:
-                errors.append(
-                    f"barrido D-6: {literal[:24]}... aparece {count} veces en el protocolo"
-                )
-            elif path != expected and count:
-                errors.append(
-                    f"barrido D-6: literal canonico duplicado fuera del protocolo: {path}"
-                )
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [
+            dirname
+            for dirname in dirnames
+            if dirname not in {".git", ".venv", "sandbox", "__pycache__"}
+        ]
+        for filename in filenames:
+            path = Path(dirpath) / filename
+            rel = path.relative_to(root)
+            if rel in SELF_FILES:
+                continue
+            try:
+                data = path.read_bytes()
+            except OSError as exc:
+                return [f"NO MEDIDO: no se pudo leer {path}: {exc}"]
+            for literal in literals:
+                count = data.count(literal.encode("utf-8"))
+                if path == expected and count != 1:
+                    errors.append(
+                        f"barrido D-6: {literal[:24]}... aparece {count} veces en el protocolo"
+                    )
+                elif path != expected and count:
+                    errors.append(
+                        f"barrido D-6: literal canonico duplicado fuera del protocolo: {path}"
+                    )
     return errors
 
 

@@ -242,3 +242,70 @@ def test_exclusion_self_files(tmp_path):
     )
     rc, _ = guard.check_repository(root)
     assert rc == 0
+
+
+def test_scan_poda_directorios_antes_de_descender(tmp_path, monkeypatch):
+    """Before: a fixture has all ignored directories. During: spy on os.walk. After: none is visited.
+
+    Mutant: restore root.rglob in the guard; os.walk records no root and this test fails.
+    """
+    root = _fixture(tmp_path)
+    for dirname in (".git", ".venv", "sandbox", "__pycache__"):
+        ignored = root / dirname
+        ignored.mkdir()
+        (ignored / "literal.bin").write_bytes(guard.R1.encode("utf-8"))
+
+    visited = []
+    original_walk = guard.os.walk
+
+    def spy_walk(top):
+        for dirpath, dirnames, filenames in original_walk(top):
+            visited.append(Path(dirpath))
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(guard.os, "walk", spy_walk)
+    rc, messages = guard.check_repository(root)
+
+    assert rc == 0
+    assert not any("barrido D-6" in message for message in messages)
+    assert root in visited
+    assert not any(
+        path.name in {".git", ".venv", "sandbox", "__pycache__"} for path in visited
+    )
+
+
+def test_scan_ignora_literal_en_pycache(tmp_path):
+    """Before: a valid fixture has a pyc containing R1. During: scan it. After: no duplicate is reported.
+
+    Mutant: remove __pycache__ from the prune set; rc becomes 1 and names the pyc.
+    """
+    root = _fixture(tmp_path)
+    cache = root / "__pycache__"
+    cache.mkdir()
+    (cache / "cached.pyc").write_bytes(guard.R1.encode("utf-8"))
+
+    rc, messages = guard.check_repository(root)
+
+    assert rc == 0
+    assert not any("barrido D-6" in message for message in messages)
+
+
+def test_scan_conserva_duplicado_real_y_protocolo(tmp_path):
+    """Before: a fixture has the canonical protocol. During: test duplicate and control cases. After: only duplicate fails.
+
+    Mutant: ignore all markdown files; the duplicate case returns rc 0 and this test fails.
+    """
+    duplicate_root = _fixture(tmp_path / "duplicate")
+    duplicate = duplicate_root / "docs/duplicate.md"
+    duplicate.write_text(guard.R1, encoding="utf-8")
+
+    rc, messages = guard.check_repository(duplicate_root)
+
+    assert rc == 1
+    assert any(str(duplicate) in message for message in messages)
+
+    valid_root = _fixture(tmp_path / "valid")
+    rc, messages = guard.check_repository(valid_root)
+
+    assert rc == 0
+    assert not any("barrido D-6" in message for message in messages)
