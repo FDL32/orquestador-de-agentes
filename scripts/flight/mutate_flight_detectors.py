@@ -135,8 +135,8 @@ m(
 m(
     "N69",
     "2A",
-    "        if p.exists():\n            found += _git_markers(p)",
-    "        if True:\n            found += _git_markers(p)",
+    '        if p.exists():\n            markers = _git_markers(p)\n            out["git_marcadores"] += markers\n            found += markers',
+    '        if True:\n            markers = _git_markers(p)\n            out["git_marcadores"] += markers\n            found += markers',
 )
 EQUIV["N69"] = (
     "rev-parse de una ruta ausente falla (rc 128) y _git_markers devuelve [] igual: la guarda p.exists() es redundante"
@@ -215,8 +215,8 @@ m("D1e", "2A", '        "git-": out.get("ciego_git"),', '        "git-": None,')
 m(
     "N62",
     "2A",
-    '        out["ciego_cupo"] = True\n        return [\n            (\n                "cupo-no-medido",',
-    '        return [\n            (\n                "cupo-no-medido",',
+    '    if not q.exists():\n        out["ciego_cupo"] = True',
+    "    if not q.exists():",
 )
 m(
     "X3a",
@@ -404,7 +404,7 @@ m(
 m(
     "M7",
     "2A",
-    '    cleared = ca.reconcile(prefixes, {k for k, _, _ in found}, a.dry_run, owner="stall")',
+    '    cleared = ca.reconcile(prefixes, live_keys, a.dry_run, owner="stall")',
     "    cleared = []",
 )
 m(
@@ -413,7 +413,12 @@ m(
     "    prefixes = tuple(p for p in OWNED_PREFIXES if not blind.get(p))",
     "    prefixes = OWNED_PREFIXES",
 )
-m("Q7a", "2A", 'found}, a.dry_run, owner="stall")', "found}, a.dry_run, owner=None)")
+m(
+    "Q7a",
+    "2A",
+    'live_keys, a.dry_run, owner="stall")',
+    "live_keys, a.dry_run, owner=None)",
+)
 m(
     "Q7b",
     "2A",
@@ -844,8 +849,8 @@ q("P1G", 'limits = data["rateLimits"]', 'limits = payload["rateLimits"]')
 m(
     "P4A",
     "2A",
-    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "cola-despachable",\n    "celda",\n)',
-    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "celda",\n)',
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "cola-despachable",\n    "celda",\n    "huerfano",\n)',
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "celda",\n    "huerfano",\n)',
 )
 m("P4B", "2A", "if len(streak) < DIAG_TICKS:", "if len(streak) < 1:")
 m(
