@@ -1568,14 +1568,19 @@ la fuente es, por este orden: (1) documentacion canonica, (2) memoria, (3) pilar
 enteras y se aplican tal como estan escritas, antes de producir nada que se mida contra ellas. Si muestreas
 en vez de leer entero, declaralo antes con motivo y riesgo.
 
-Orden de decision, integrado con el protocolo de escalado (P3, ESCALADO_VUELO_INFINITO_20261106.md):
-1. QUIEN DECIDE (la coordinadora; un implantador o triaje pregunta a su coordinadora, nunca a otra sesion)
-   busca PRIMERO en las fuentes primarias, con grep citable (ruta:linea), y anota QUE busco y donde.
-2. Decide ELLA desde esas fuentes. Si el canon resuelve el caso, no se consulta a nadie mas.
-3. SOLO si las fuentes primarias no lo resuelven puede consultar material secundario (tickets, bucles y
-   sesiones anteriores) y a la supervisora si falta contexto (algo previo a su relevo o en otra sesion).
-4. Si hay varias salidas razonables o no hay protocolo: bucle de gobierno.
-5. Despues el usuario, documentando en CONSULTAS_DOCUMENTADAS.md y continuando con lo que no depende.
+UN solo orden de decision (A8, ratificado por el usuario el 2026-11-18, mensaje `814399ba-6138-4fad-9a49-1edb1d231d63`),
+el mismo para esta norma, el mensaje de bloqueo (aun sin cablear: ticket aparte) y los ARRANQUE (que remiten, no lo copian); integrado con el
+protocolo de escalado (P3, ESCALADO_VUELO_INFINITO_20261106.md s.1):
+1. FUENTE: quien decide lee canon, memoria y pilares (enteros), con grep citable (ruta:linea), y anota QUE busco y donde.
+2. DECIDE: la coordinadora decide desde esas fuentes; si el canon resuelve el caso, no consulta a nadie mas. Un
+   implantador o triaje pregunta a su coordinadora y para (nunca a otra sesion).
+3. PUERTA: toda accion de clase B (consentimiento_accion_clase_b.md) solo por su puerta con consentimiento verificado.
+   Hasta que la puerta de worktrees verifique la frase del usuario, borrar exige lista final con hash y la frase literal.
+4. ESCALA, en este orden y solo si 1-2 no resuelven: material secundario (tickets, bucles y sesiones anteriores) ->
+   supervisora (falta de contexto, sin exigir agotar fuentes primarias) -> bucle de gobierno (varias salidas o sin
+   protocolo) -> usuario, documentando en CONSULTAS_DOCUMENTADAS.md y continuando con lo que no depende.
+5. BLOQUEO: si algo te frena, el mensaje repite 1-4 con el comando exacto y distingue tu rol (coordinadora decide;
+   implantador o triaje pregunta a su coordinadora).
 El material secundario ilustra o contrasta, nunca deriva el formato ni el procedimiento: copiarlo
 reproduce sus errores. Una decision que toca una orden del usuario, un umbral, un GO, borrar, secretos,
 dependencias o publicar NO se adopta por default: se documenta y se aparta (ESCALADO s.4).

@@ -43,7 +43,8 @@ Clase B: acciones irreversibles o externas del catalogo inicial recortado:
 - rulesets;
 - sync, install, upgrade, rollback o prune de motor o destinos;
 - rotacion de credenciales;
-- `t3_project_delete`.
+- `t3_project_delete`;
+- borrado de worktrees, salvo la clase automatica de abajo.
 
 Clase B+ es la modificacion de la superficie de autorizacion: hook de push,
 ruleset, `notify_user.ps1`, `comms_ledger` y estas reglas. La ficha la define
@@ -53,8 +54,18 @@ reinterpretarla.
 Las siguientes acciones quedan fuera de la clase B por el criterio de
 reversibilidad declarado en la ficha y son clase A: `session-close` y
 archivado normales, `schedule_task`, cambios de `agents.json`, snapshot de
-`check_motor_pristine`, borrado de worktrees locales, reset/clean/restore sobre
-ramas propias y dispatch a proveedores.
+`check_motor_pristine`, reset/clean/restore sobre ramas propias y dispatch a
+proveedores.
+
+Borrado de worktrees (R1, ratificada por el usuario el 2026-11-18: mensaje web
+`814399ba-6138-4fad-9a49-1edb1d231d63`, createdBy=user, verificado con la sonda
+de procedencia; sustituye la linea anterior que lo trataba como clase A):
+SIEMPRE clase B, salvo la clase automatica que el usuario ratifica (P12), que
+exige ticket cerrado, integracion ff-only verificada,
+`git status --porcelain -uall --ignored` vacio, sesion duena asentada, sin
+gc/prune pendiente, retirada individual y por P7 (`rotacion_disco_vuelo.md`
+m-06). Mientras la puerta de worktrees no verifique la frase del usuario, el
+borrado exige la lista final con hash y la frase literal del usuario (R-a).
 
 El dispatch a proveedores es clase A por autorizacion permanente acotada:
 solo proveedores del roster, `data_sensitivity=public` declarada, sin secretos
