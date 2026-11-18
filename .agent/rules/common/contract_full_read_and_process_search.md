@@ -36,6 +36,30 @@ una leccion que ya estaba en memoria: `obs-api-only-reader-reads-current-state-n
 (*"un review multi-backend necesita un lector-con-filesystem o un bundle que incluya la semantica
 explicita"*).
 
+### Procedimiento definido por el usuario => FUENTE ORIGINAL primero (2026-11-18)
+
+**Norma dura, generica (no depende de este motor). Es norma, no barrera: el cableado por hook va en ticket aparte.**
+Al aplicar un procedimiento estandarizado y definido por el usuario (protocolo, contrato, prompt, politica),
+la fuente es, por este orden: (1) documentacion canonica, (2) memoria, (3) pilares del vuelo. Se leen
+enteras y se aplican tal como estan escritas, antes de producir nada que se mida contra ellas. Si muestreas
+en vez de leer entero, declaralo antes con motivo y riesgo.
+
+Orden de decision, integrado con el protocolo de escalado (P3, ESCALADO_VUELO_INFINITO_20261106.md):
+1. QUIEN DECIDE (la coordinadora; un implantador o triaje pregunta a su coordinadora, nunca a otra sesion)
+   busca PRIMERO en las fuentes primarias, con grep citable (ruta:linea), y anota QUE busco y donde.
+2. Decide ELLA desde esas fuentes. Si el canon resuelve el caso, no se consulta a nadie mas.
+3. SOLO si las fuentes primarias no lo resuelven puede consultar material secundario (tickets, bucles y
+   sesiones anteriores) y a la supervisora si falta contexto (algo previo a su relevo o en otra sesion).
+4. Si hay varias salidas razonables o no hay protocolo: bucle de gobierno.
+5. Despues el usuario, documentando en CONSULTAS_DOCUMENTADAS.md y continuando con lo que no depende.
+El material secundario ilustra o contrasta, nunca deriva el formato ni el procedimiento: copiarlo
+reproduce sus errores. Una decision que toca una orden del usuario, un umbral, un GO, borrar, secretos,
+dependencias o publicar NO se adopta por default: se documenta y se aparta (ESCALADO s.4).
+
+Fallo real (2026-11-18, vuelo-20261026b, CO-122): se redacto el formato de un bucle copiando el de un bucle
+anterior en vez de `prompts/ensemble_loop.md`, y se propuso una barrera sin comprobar que `p7_retire.py` ya
+existia. Copiar un proceso previo reproduce sus errores y oculta el contrato vigente.
+
 ### Decision de proceso sin instruccion exacta => BUSCA protocolo documentado antes de suponer uno (2026-10-14)
 
 **Norma con barrera de FORMA parcial desde 2026-10-18 (WOT-2026-104b)**, no barrera

@@ -133,7 +133,7 @@ append `--project-root <destino>` to commands that operate on project state.
 
 ### Decision de proceso sin instruccion exacta => BUSCA protocolo documentado antes de suponer uno (2026-10-14)
 
-**Norma con barrera de FORMA parcial (WOT-2026-104b):** antes de actuar sobre una decision de proceso sin instruccion exacta, busca si ya existe un protocolo documentado. Mecanismo, limites y clases de decision: `.agent/rules/common/contract_full_read_and_process_search.md`.
+**FORMA parcial (WOT-2026-104b):** quien decide busca primero en canon, memoria y pilares (enteros) y decide desde ellos; despues tickets/sesiones previas, supervisora, bucle, usuario (P3). Detalle: `.agent/rules/common/contract_full_read_and_process_search.md`.
 
 - Lee `PROJECT.md` antes de tocar arquitectura o estado.
 - Lee `INTERACTION_MODES.md` antes de operar por chat o por terminal.
