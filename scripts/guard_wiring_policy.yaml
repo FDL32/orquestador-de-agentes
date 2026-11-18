@@ -386,6 +386,7 @@ extra_guards:
   # veredicto lo decide `wired_via` mas abajo.
   builder_agent: scripts/builder_agent.py
   pretooluse_bash_wait_guard: .agent/hooks/pretooluse_bash_wait_guard.py
+  review_level: scripts/flight/review_level.py
 
 wired_via:
   # WOT-2026-161l: el detector de latido invoca el comprobador por ruta

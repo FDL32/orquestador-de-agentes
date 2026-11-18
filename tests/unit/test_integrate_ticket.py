@@ -23,7 +23,10 @@ if str(_MOTOR_ROOT) not in sys.path:
 
 from scripts import check_loop_execution as cle  # noqa: E402
 from scripts.closeout_steps import gates  # noqa: E402
-from scripts.flight import integrate_ticket as it  # noqa: E402
+from scripts.flight import (  # noqa: E402
+    integrate_ticket as it,
+    review_level,
+)
 from scripts.session_closeout import StepResult  # noqa: E402
 
 
@@ -112,6 +115,9 @@ def _world(tmp_path: Path, *, evidence: bool = True) -> World:
         f"# Work Plan\n\n## Metadata\n- **ID:** {TICKET}\n"
         "- **delivery_authority:** repo_motor\n",
         encoding="utf-8",
+    )
+    (destino / ".agent" / "collaboration" / "backlog.md").write_text(
+        f"| Media | {TICKET} | fixture |\n", encoding="utf-8"
     )
     (destino / ".agent" / "collaboration" / f"FICHA_{TICKET}.md").write_text(
         "autor_modelo: codex|gpt-5.6-luna\nrevisor_modelo: claude|sonnet\n",
@@ -326,6 +332,35 @@ def test_integrate_family_rc2_stops_merge_and_receipt(tmp_path, monkeypatch):
     assert lines == ["NO VERIFICABLE familia"]
     assert _git(w.motor, "rev-parse", "HEAD") == w.base
     assert not it.receipt_path(w.destino, w.tip).exists()
+
+
+def test_integrate_records_level_and_reasons_in_receipt(tmp_path):
+    """A successful review is observable in the atomic integration receipt."""
+    w = _world(tmp_path)
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 0, lines
+    receipt = json.loads(it.receipt_path(w.destino, w.tip).read_text(encoding="utf-8"))
+    assert receipt["level"] == "delta"
+    assert receipt["reasons"]
+
+
+def test_integrate_review_level_rc2_blocks_ff_without_receipt(
+    tmp_path, monkeypatch, capsys
+):
+    """A classifier rc2 blocks ff and prints its reason to stderr."""
+    w = _world(tmp_path)
+    monkeypatch.setattr(
+        it,
+        "_run_review_level",
+        lambda *args: review_level.Classification(
+            "completo", ("ticket-ausente-o-duplicado",), 2
+        ),
+    )
+    rc, _lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 2
+    assert _git(w.motor, "rev-parse", "HEAD") == w.base
+    assert not it.receipt_path(w.destino, w.tip).exists()
+    assert "ticket-ausente-o-duplicado" in capsys.readouterr().err
 
 
 def test_integrate_grandfather_warning_is_reported(tmp_path, monkeypatch):

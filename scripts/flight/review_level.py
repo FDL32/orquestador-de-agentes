@@ -23,7 +23,9 @@ from typing import cast
 
 PRODUCTION_THRESHOLD = 50  # NO MEDIDO: umbral provisional y conservador.
 LEVELS = frozenset({"completo", "delta"})
-_BACKLOG_ROW_RE = re.compile(r"^\|\s*Media\s*\|\s*(?P<ticket>[A-Za-z0-9_-]+)\s*\|")
+_BACKLOG_ROW_RE = re.compile(
+    r"^\|\s*(?:Alta|Media|Baja)\s*\|\s*(?P<ticket>[A-Za-z0-9_-]+)\s*\|"
+)
 _RISK_TOKEN_RE = re.compile(r"\[RIESGO:\s*alto\]", re.IGNORECASE)
 _BRIEF_RISK_RE = re.compile(r"^RISK_LEVEL:\s*high\s*$", re.IGNORECASE)
 
@@ -192,7 +194,7 @@ def apply_previous_level(
 
 
 def read_ticket_risk(backlog: Path, ticket: str) -> FichaRisk:
-    """Lee exactamente una fila ``Media`` del backlog.
+    """Lee exactamente una fila de prioridad Alta, Media o Baja del backlog.
 
     Before: ``backlog`` debe ser legible y ``ticket`` no vacío.
     During: selecciona filas de una sola línea con el id en la segunda columna

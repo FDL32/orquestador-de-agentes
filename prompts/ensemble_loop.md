@@ -69,6 +69,8 @@ NO hagas ping a las lentes `agent` en cada arranque: un "PONG" a codex costo 11.
 
 ### 3.2 Elegir lentes
 
+Invoca `scripts/flight/review_level.py` y remite su criterio y parada a `.agent/rules/common/revision_proporcional.md`.
+
 - Una lente por proveedor distinto, salvo que el usuario pida otra cosa.
 - Criterio de entrada al pool por defecto: al menos 80% de rondas utiles con 5 o mas rondas medidas.
   Preferir modelos SIN limite de cuota: el ensemble comparte cupo con los agentes de implantacion.

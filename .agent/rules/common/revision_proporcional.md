@@ -11,11 +11,12 @@ ambos son la fuente normativa por
 remision (X-09, "skill apunta, prompt gobierna").
 
 `review_level.py` es una HERRAMIENTA DE DECISION que corre la coordinadora antes
-de lanzar lentes. NO es una barrera automatica ni esta cableada: hoy nadie la
-invoca por si solo. La duena es la coordinadora del vuelo. El hijo diferido que
-podra cablearla es `integrate_ticket` (cuando exista una decision de proceso y
-su gate correspondiente); este ticket no crea ese cableado y no se registra en
-`check_guard_wiring` como si fuera una barrera.
+de lanzar lentes. La barrera queda cableada con `integrate_ticket` en
+WOT-2026-157c y declarada en `extra_guards`, con veredicto WIRED en
+`check_guard_wiring`. En la integracion, rc 0 registra nivel y razones y rc 2
+bloquea sin ff ni recibo; ver el cableado y el contrato operativo por remision.
+La frase historica "NO es una barrera automatica" no forma parte de los cuatro
+tokens negativos de esta actualizacion.
 
 ## Niveles y medicion del diff
 
@@ -42,20 +43,20 @@ de rebase/amend queda cubierto por commits hermanos temporales creados por el
 fixture `_sibling_repo` del test focal.
 
 La ficha puede ser una fila real de `backlog.md`, seleccionada por `--ticket` y
-`--backlog`. La fila tiene la forma `| Media | <ticket> | ...` y declara riesgo
+`--backlog`. La fila tiene la forma `| Alta |`, `| Media |` o `| Baja |`, seguida
+de `<ticket> | ...`, con la misma semantica de exactamente una fila, y declara riesgo
 alto unicamente con el token literal `[RIESGO: alto]` dentro de esa misma linea;
 no se edita el backlog para anadirlo. Un brief alternativo puede declarar la
 linea exacta `RISK_LEVEL: high`. No se acepta una marca multilinea ni una fila
 ausente o duplicada.
 
-El umbral provisional es **50 lineas**, y esta **NO MEDIDO**: las muestras 153s,
-153w y 153x disponibles caen en superficies de alto riesgo o documental, por
-lo que ninguna mide la zona donde decide el umbral. Se cuentan lineas anadidas
-mas eliminadas de produccion; produccion significa `.py`, `.ps1` o `.sh` fuera
-de `tests/` y `docs/`. La medicion diferida del ticket exige aplicar esta regla
-a los tres tickets siguientes y registrar rondas y horas en `flight_tickets.jsonl`.
-Hasta entonces el umbral es conservador y nunca rebaja un riesgo alto. La
+El umbral provisional es **50 lineas**; el snapshot de t-88c4 lo mide como
+evidencia fechada, no como criterio de salida. Se cuentan lineas anadidas mas
+eliminadas de produccion; produccion significa `.py`, `.ps1` o `.sh` fuera de
+`tests/` y `docs/`. El umbral es conservador y nunca rebaja un riesgo alto. La
 lectura conservadora es: delta exige produccion < 50 lineas; 50 ya es completo.
+`HIGH_RISK_GLOBS` no tiene patron para `guard_wiring_policy.yaml`; el riesgo
+ALTO se sostiene por las familias `integration` y `classifier`.
 
 ## Parada y operacion
 

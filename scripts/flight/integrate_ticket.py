@@ -19,7 +19,8 @@ During: `_process_ticket_targets` (el del escritor, con `HEAD..candidato` como v
     la linea de objetivo; `_parse_loop_execution_targets` + `_loop_accreditation_failures`
     (las de prepush) la auditan. El tip debe ser el HEAD del candidato: un commit posterior
     sin auditar no se integra. Solo con OK corre `git merge --ff-only`. `--attest` no
-    fusiona: audita un tip que YA esta integrado a mano (debe ser ancestro del HEAD).
+    fusiona y no ejecuta la puerta `review_level`: audita un tip que YA esta
+    integrado a mano (debe ser ancestro del HEAD).
 After: rc 0 integrado (o atestado) y recibo escrito de forma atomica en
     `<project-root>/.agent/runtime/integration_receipts/<tip40>.json` (fuera del repo motor;
     el destino lo ignora por `.agent/runtime/*`); rc 1 audit/ff/linealidad en rojo, sin merge
@@ -40,6 +41,11 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from scripts.flight.review_level import Classification
 
 
 MOTOR_ROOT = Path(__file__).resolve().parents[2]
@@ -247,10 +253,78 @@ def _audit_line(project_root: Path, line: str) -> tuple[str, list[dict]]:
     return shas[0], failures
 
 
+def _run_review_level(
+    ticket: str, base: str, tip: str, project_root: Path, motor_root: Path
+) -> Classification:
+    """Run the review classifier over the candidate integration window.
+
+    Before: ``base`` and ``tip`` resolve in ``motor_root`` and the destination
+        contains the live backlog.
+    During: executes the canonical script as a subprocess and parses its output.
+    After: returns a classification, converting malformed output to rc 2.
+    """
+    from scripts.flight.review_level import Classification
+
+    completed = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            "scripts/flight/review_level.py",
+            "--base",
+            base,
+            "--sha",
+            tip,
+            "--backlog",
+            str(project_root / ".agent" / "collaboration" / "backlog.md"),
+            "--ticket",
+            ticket,
+            "--repo",
+            str(motor_root),
+        ],
+        cwd=MOTOR_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    level = "completo"
+    reasons: list[str] = []
+    for line in completed.stdout.splitlines():
+        if line.startswith("NIVEL="):
+            level = line.partition("=")[2]
+        elif line.startswith("RAZON="):
+            reasons.append(line.partition("=")[2])
+    if completed.returncode != 0 and not reasons:
+        reasons.append("review-level-sin-razon")
+    if level not in {"completo", "delta"}:
+        return Classification("completo", ("review-level-ilegible",), 2)
+    return Classification(level, tuple(reasons), completed.returncode)
+
+
 def _finish(
-    ticket: str, tip: str, mode: str, project_root: Path, motor_root: Path, base: str
+    ticket: str,
+    tip: str,
+    mode: str,
+    project_root: Path,
+    motor_root: Path,
+    base: str,
+    classification: Classification | None = None,
 ) -> tuple[int, list[str]]:
-    """Fusiona (solo `integrate`) y escribe el recibo. Ver `integrate` para el contrato."""
+    """Apply the review gate, then merge and write the receipt.
+
+    Before: ``classification`` is the result of the review-level subprocess for
+        an integration, or ``None`` for attest mode.
+    During: blocks fail-closed classifications before any ff; otherwise merges
+        and atomically records the level and reasons. rc 2 covers unreadable
+        ficha/backlog and ``rango-vacio``.
+    After: returns the wrapper contract without leaving a receipt on a block.
+    """
+    if mode == "integrate" and classification is not None:
+        allowed, review_fields = review_level_gate(classification)
+        if not allowed:
+            reason = ", ".join(classification.reasons) or "revision-ilegible"
+            print(reason, file=sys.stderr)
+            return 2, [f"NO VERIFICABLE review_level {reason}"]
+    else:
+        review_fields = {}
     if mode == "integrate":
         rc, out = _git(motor_root, "merge", "--ff-only", tip)
         if rc != 0:
@@ -271,6 +345,7 @@ def _finish(
         "audit_ok": True,
         "debt": _debt_ficha(tip),
         "ts": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+        **review_fields,
     }
     try:
         path = write_receipt(project_root, receipt)
@@ -279,7 +354,24 @@ def _finish(
     return 0, [f"OK {mode} {ticket} tip {tip[:12]} recibo {path}"]
 
 
-def integrate(
+def review_level_gate(classification: Classification) -> tuple[bool, dict[str, object]]:
+    """Convert a review classification into an integration decision.
+
+    Before: ``classification`` comes from the review-level CLI and has a stable
+        level, reasons tuple, and return code.
+    During: accepts only rc zero and prepares receipt fields; any other rc is a
+        fail-closed block.
+    After: returns ``(allowed, fields)`` without filesystem or Git side effects.
+    """
+    if classification.rc != 0:
+        return False, {}
+    return True, {
+        "level": classification.level,
+        "reasons": list(classification.reasons),
+    }
+
+
+def integrate(  # noqa: C901
     ticket: str,
     candidate: str,
     project_root: Path | None,
@@ -330,8 +422,17 @@ def integrate(
         family_rc, family_lines = check_family(ticket, tip, project_root, motor_root)
         if family_rc != 0:
             return family_rc, family_lines
+    classification = None
+    if not attest:
+        classification = _run_review_level(ticket, head, tip, project_root, motor_root)
     finish_rc, finish_lines = _finish(
-        ticket, tip, "attest" if attest else "integrate", project_root, motor_root, head
+        ticket,
+        tip,
+        "attest" if attest else "integrate",
+        project_root,
+        motor_root,
+        head,
+        classification,
     )
     return finish_rc, [*finish_lines, *family_lines]
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -289,6 +290,75 @@ def test_high_risk_row_is_parsed_from_real_backlog_shape(tmp_path: Path):
     parsed = review_level.read_ticket_risk(backlog, "WOT-2026-157b")
     assert parsed.high_risk is True
     assert parsed.rc == 0
+
+
+def test_reader_accepts_alta_row_with_risk_token(tmp_path: Path):
+    """A unique Alta row keeps its inline high-risk token."""
+    backlog = tmp_path / "backlog.md"
+    backlog.write_text(
+        "| Alta | WOT-2026-157c | cambio [RIESGO: alto] |\n", encoding="utf-8"
+    )
+    parsed = review_level.read_ticket_risk(backlog, "WOT-2026-157c")
+    assert parsed == review_level.FichaRisk(True, 0, "")
+
+
+def test_reader_accepts_baja_row_without_risk_token(tmp_path: Path):
+    """A unique Baja row is readable without inventing high risk."""
+    backlog = tmp_path / "backlog.md"
+    backlog.write_text("| Baja | WOT-2026-157c | cambio |\n", encoding="utf-8")
+    parsed = review_level.read_ticket_risk(backlog, "WOT-2026-157c")
+    assert parsed == review_level.FichaRisk(False, 0, "")
+
+
+def test_reader_rejects_cross_priority_duplicate(tmp_path: Path):
+    """The same ticket in two priorities remains fail-closed."""
+    backlog = tmp_path / "backlog.md"
+    backlog.write_text(
+        "| Alta | WOT-2026-157c | uno |\n| Baja | WOT-2026-157c | dos |\n",
+        encoding="utf-8",
+    )
+    parsed = review_level.read_ticket_risk(backlog, "WOT-2026-157c")
+    assert parsed.reason == "ticket-ausente-o-duplicado"
+    assert parsed.rc == 2
+
+
+def test_reader_rejects_missing_ticket(tmp_path: Path):
+    """A backlog without the requested ticket is fail-closed."""
+    backlog = tmp_path / "backlog.md"
+    backlog.write_text("| Media | WOT-2026-999z | otro |\n", encoding="utf-8")
+    parsed = review_level.read_ticket_risk(backlog, "WOT-2026-157c")
+    assert parsed.reason == "ticket-ausente-o-duplicado"
+    assert parsed.rc == 2
+
+
+def test_cableado_mutante_copia_sin_invocacion(tmp_path: Path):
+    """The AST wiring detector rejects a complete copy with its sink removed."""
+    from scripts import check_guard_wiring as wiring
+
+    root = tmp_path / "motor"
+    target = root / "scripts" / "flight"
+    target.mkdir(parents=True)
+    source = (ROOT / "scripts" / "flight" / "integrate_ticket.py").read_text(
+        encoding="utf-8"
+    )
+    start = source.index("def _run_review_level(")
+    end = source.index("\ndef integrate(", start)
+    mutant = source[:start] + source[end + 1 :]
+    mutant = mutant.replace(
+        "classification = _run_review_level(ticket, head, tip, project_root, motor_root)",
+        "classification = None",
+    )
+    (target / "integrate_ticket.py").write_text(mutant, encoding="utf-8")
+    shutil.copy2(
+        ROOT / "scripts" / "flight" / "review_level.py", target / "review_level.py"
+    )
+    extra = {"review_level": "scripts/flight/review_level.py"}
+    guards = wiring.find_guards(root, extra)
+    evidence = wiring.collect_evidence(root, extra)
+    invocations = wiring._python_invocations(mutant)
+    assert "review_level" in guards
+    assert all(base != "review_level.py" for base, _line in invocations)
+    assert "review_level" not in evidence
 
 
 @pytest.mark.parametrize(
