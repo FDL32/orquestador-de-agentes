@@ -41,7 +41,10 @@ EXPECTED_NEW = {
 def _real_config() -> dict:
     """Carga el agents.json real del motor y comprueba su cardinalidad."""
     config = ed.load_motor_config()
-    assert len(config["ensemble_registry"]["backend_keys"]) == 60
+    # 65 = 60 del contrato 161s/163d + BA256..BA260 (perfiles opencode para los
+    # modelos nan; commits 5b2bb7ae y 30134f53, orden directa del usuario
+    # 2026-11-16). Este snapshot se quedo en 60 y nadie lo actualizo entonces.
+    assert len(config["ensemble_registry"]["backend_keys"]) == 65
     return config
 
 
@@ -64,7 +67,10 @@ def test_c01_new_nan_keys_have_expected_contract():
         assert entry["backend"] == "nan_api"
         assert entry["tier"] == "full"
         assert entry["backend_version"] is None
-        assert entry["status"] == "active"
+        # 13bb1c45 (orden directa del usuario, 2026-11-16) paso las claves
+        # nan_api del registro a deprecated: los modelos nan solo se sirven via
+        # kilo/opencode, y esas altas son BA255/BA256..BA260.
+        assert entry["status"] == "deprecated"
         assert entry["lab"] in labs
         assert entry["lab"] == lab
         assert entry["family"] == family
@@ -117,9 +123,33 @@ def test_c05_existing_backend_entries_are_unchanged():
             text=True,
         )
     )["ensemble_registry"]["backend_keys"]
+    # Solo seis claves cambiaron de status de forma legitima: la migracion
+    # nan_api -> opencode (5b2bb7ae/30134f53/13bb1c45, orden directa del usuario
+    # 2026-11-16) las paso a deprecated. Para ellas el status va en el mapa
+    # explicito de abajo; para TODAS las demas el asiento completo (status
+    # incluido) sigue anclado al baseline pre-161s 8c74f577.
+    migrated_status = {
+        "BA10": "deprecated",
+        "BA11": "deprecated",
+        "BA13": "deprecated",
+        "BA15": "deprecated",
+        "BA16": "deprecated",
+        "BA25": "deprecated",
+    }
     for key, entry in baseline.items():
-        if key != "BA254":
-            assert current[key] == entry
+        if key == "BA254":
+            continue
+        if key in migrated_status:
+            assert {
+                field: value
+                for field, value in current[key].items()
+                if field != "status"
+            } == {
+                field: value for field, value in entry.items() if field != "status"
+            }, key
+        else:
+            assert current[key] == entry, key
+    assert {key: current[key]["status"] for key in migrated_status} == migrated_status
     ba254_expected = {
         key: value
         for key, value in baseline["BA254"].items()
@@ -162,12 +192,13 @@ def test_c10_loop_registry_md_lists_new_keys_and_is_not_stale():
     assert not is_stale, diagnostic
     text = registry_md_path.read_text(encoding="utf-8")
     expected_rows = {
-        "BA26": "| BA26 | nan_api | glm5.3 | active |",
-        "BA27": "| BA27 | nan_api | deepseek-v4-pro | active |",
-        "BA28": "| BA28 | nan_api | hy4 | active |",
-        "BA29": "| BA29 | nan_api | qwen3.8-max | active |",
-        "BA32": "| BA32 | nan_api | kimi-k3.1-pro | active |",
-        "BA33": "| BA33 | nan_api | minimax-h3 | active |",
+        # deprecated desde 13bb1c45: mismas claves, ahora servidas via kilo/opencode.
+        "BA26": "| BA26 | nan_api | glm5.3 | deprecated |",
+        "BA27": "| BA27 | nan_api | deepseek-v4-pro | deprecated |",
+        "BA28": "| BA28 | nan_api | hy4 | deprecated |",
+        "BA29": "| BA29 | nan_api | qwen3.8-max | deprecated |",
+        "BA32": "| BA32 | nan_api | kimi-k3.1-pro | deprecated |",
+        "BA33": "| BA33 | nan_api | minimax-h3 | deprecated |",
     }
     for row in expected_rows.values():
         assert row in text

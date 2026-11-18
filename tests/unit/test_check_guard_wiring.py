@@ -405,6 +405,14 @@ EXPECTED_WIRED_REAL = {
     # check_quota_index_drift). Verifica que los latidos del vuelo invocan el mecanismo de
     # avisos del motor; el consumidor durante el vuelo (B2) es el propio latido con --alert.
     "check_latido_alert_wiring",
+    # WOT-2026-157c: cableado como extra_guard en scripts/guard_wiring_policy.yaml
+    # (`review_level: scripts/flight/review_level.py`). Call-site REAL:
+    # scripts/flight/integrate_ticket.py:266 importa Classification y :271 ejecuta
+    # el script como subproceso con el literal "scripts/flight/review_level.py"
+    # (puerta review_level de la integracion). NO es falso-WIRED: import y literal
+    # existen en el fichero real. 157c cableo el guard y no actualizo este
+    # snapshot; este mismo test lo detecto como EXTRA.
+    "review_level",
 }
 
 
