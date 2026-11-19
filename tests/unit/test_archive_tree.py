@@ -691,6 +691,10 @@ def test_corrupt_zip_rejected_by_independent_zip_check(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Requires the Windows process table and PEB-derived cwd contract.",
+)
 def test_real_process_cwd_guard(tmp_path: Path) -> None:
     """Before: a real child has its cwd inside a clone.
     During: inspect the Windows process table and PEB-derived cwd.
@@ -711,6 +715,10 @@ def test_real_process_cwd_guard(tmp_path: Path) -> None:
         child.wait(timeout=10)
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Requires COMSPEC cmd.exe and live Windows command-line inspection.",
+)
 def test_real_shell_and_claude_commandline_guard(tmp_path: Path) -> None:
     """Before: real cmd and a copied claude.exe reference a clone.
     During: inspect both live command lines while each process is alive.
@@ -835,7 +843,22 @@ def _assert_abort_keeps_origin(tmp_path: Path, mutate: object) -> None:
     )
 
 
-@pytest.mark.parametrize("case", ["extra", "empty", "mtime", "junction", "readonly"])
+@pytest.mark.parametrize(
+    "case",
+    [
+        pytest.param("extra"),
+        pytest.param("empty"),
+        pytest.param("mtime"),
+        pytest.param(
+            "junction",
+            marks=pytest.mark.skipif(
+                sys.platform != "win32",
+                reason="Requires COMSPEC mklink /J junction creation.",
+            ),
+        ),
+        pytest.param("readonly"),
+    ],
+)
 def test_b05_abort_matrix_keeps_origin(tmp_path: Path, case: str) -> None:
     """Before: one unsafe-origin condition is introduced.
     During: combined apply runs the real preflight.
@@ -1207,6 +1230,10 @@ def test_m07_verifies_zip_before_publishing_archive_row(
     )
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Requires Windows process-table detection and taskkill cleanup.",
+)
 def test_b05_live_process_abort_keeps_origin(tmp_path: Path) -> None:
     """Before: a real child owns the clone as current directory.
     During: combined apply checks the process before staging.
@@ -1239,6 +1266,10 @@ def test_b05_live_process_abort_keeps_origin(tmp_path: Path) -> None:
     assert child.pid not in {pid for pid, *_ in archive_tree._process_rows()}
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Requires Windows process-table command-line detection and taskkill cleanup.",
+)
 def test_b03_live_process_commandline_abort_keeps_origin(tmp_path: Path) -> None:
     """Before: a real child runs outside the clone but its command line names it.
     During: combined apply must reject the command-line reference before any write.
@@ -1273,6 +1304,10 @@ def test_b03_live_process_commandline_abort_keeps_origin(tmp_path: Path) -> None
     assert child.pid not in {pid for pid, *_ in archive_tree._process_rows()}
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Requires COMSPEC cmd.exe with cwd inside the clone.",
+)
 def test_b03_real_shell_cwd_abort_keeps_origin(tmp_path: Path) -> None:
     """Before: a real cmd.exe descendant has its cwd inside the clone.
     During: combined apply must reject the shell reference before any write.
@@ -1307,6 +1342,10 @@ def test_b03_real_shell_cwd_abort_keeps_origin(tmp_path: Path) -> None:
     assert child.pid not in {pid for pid, *_ in archive_tree._process_rows()}
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="Requires a COMSPEC copy named claude.exe with clone cwd.",
+)
 def test_b03_claude_exe_fixture_cwd_abort_keeps_origin(tmp_path: Path) -> None:
     """Before: a copied COMSPEC named claude.exe has cwd inside the clone.
     During: combined apply must reject it through cwd detection before any write.
@@ -1548,7 +1587,20 @@ def test_b10_mixed_archive_tree_and_p7_retire_index(tmp_path: Path) -> None:
         assert p7_common.reconcile_index(archive, rows, str(family)) == []
 
 
-@pytest.mark.parametrize("mutation", ["extra", "mtime", "junction"])
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        pytest.param("extra"),
+        pytest.param("mtime"),
+        pytest.param(
+            "junction",
+            marks=pytest.mark.skipif(
+                sys.platform != "win32",
+                reason="Requires COMSPEC mklink /J mutation setup.",
+            ),
+        ),
+    ],
+)
 def test_b05_archive_first_mutation_aborts_retire(
     tmp_path: Path, mutation: str
 ) -> None:
