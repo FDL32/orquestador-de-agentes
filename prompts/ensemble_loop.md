@@ -201,6 +201,7 @@ tests contra `ensemble_dispatch`):
    2 `[ERROR]`; 3 `[NO-APORTA]` (la ronda corrio y se registro, pero el transporte fallo o la respuesta vino
    vacia). Aun con 0, mira la fila del scorecard (`outcome`, `failure_mode`, `output_chars`): una
    sustitucion automatica puede haber respondido en lugar de la lente pedida.
+   Si la lente pedida comparte familia (P33, MODEL_FAMILY_MAP) con el autor_modelo o el revisor_modelo declarados en FICHA_<ticket>.md -- o con los overrides --author-model backend|model y --reviewer-model backend|model, que mandan sobre la ficha -- loop-round la rechaza con [BLOCKED] ANTES de llamar y sin fila; declara autor_modelo y revisor_modelo en la ficha ANTES de lanzar lentes (regla de proceso, WOT-2026-200a). Lo no verificable (ficha ausente, declaracion en PENDIENTE o familia sin resolver) solo avisa `familia no verificable` por stderr y la ronda sigue.
 2. Si falla el CLI de un agente, la fila lleva `failure_mode: transport_failed: rc=N; <clase>` (misma
    taxonomia que el canal `api`: `quota_exhausted`, `model_unavailable`, `network_timeout`, `unknown`) y
    la `evidencia` incluye la cola de su stderr tras `[stderr]`. Un fallo de cuota/red del canal `agent`

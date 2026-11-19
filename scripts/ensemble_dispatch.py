@@ -5796,6 +5796,8 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
     session_id: str | None = None,
     commit_sha: str | None = None,
     challenge_nonce: str | None = None,
+    author_model: str | None = None,
+    reviewer_model: str | None = None,
     _tried_profiles: frozenset[str] = frozenset(),
 ) -> str:
     """UNA ronda de un bucle de GOBIERNO (`launched_from: chat`), registrada.
@@ -5824,15 +5826,20 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
         par NO es opcional -- `_validated_governance_pair` lo exige VALIDO
         (sha que resuelve + nonce en el ledger para ESE sha, emitido ANTES) y
         normaliza `commit_sha` a sha40 antes de registrarlo.
-    During: despacha por `send_to_profile` (el preflight de privacidad corre
-        alli, fail-closed) cronometrando con `time.perf_counter()`; luego
+    During: tras `_validated_governance_pair`, hace la comprobacion de familia
+        previa al gasto (WOT-2026-200a), antes de `send_to_profile` y de
+        cualquier `_record_round`; lo no verificable avisa `familia no
+        verificable` por stderr y la ronda sigue. Despacha por
+        `send_to_profile` (el preflight de privacidad corre alli, fail-closed)
+        cronometrando con `time.perf_counter()`; luego
         APPENDEA exactamente UNA fila via `_record_round`, copiando
         `challenge_nonce` al receipt para que `check_loop_execution` pruebe que
         esta ronda respondio a ESE challenge. Una respuesta vacia se registra
         como `no-aportacion`, nunca como fila ausente.
     After: retorna el texto del backend tal cual (el consolidador es el chat,
         nivel 0: esta funcion no interpreta ni adjudica). Propaga
-        `DispatchBlockedError` si el preflight bloquea -- en ese caso SI
+        `DispatchBlockedError` con `[BLOCKED]` y rc 1 si la familia bloquea,
+        sin fila ni llamada; si el preflight bloquea -- en ese caso SI
         deja fila con `failure_mode="privacy_preflight_blocked: ..."`,
         registrando la identidad de la lente vetada (backend_key, loop_id).
         Propaga tambien el `ValueError` de WOT-2026-066t cuando el task_type
@@ -5900,6 +5907,15 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
             f"y la barrera de independencia cuenta esa columna. Usa "
             f"--backend-key {expected_key}."
         )
+    # WOT-2026-200a: familia antes del hash, despacho y registro de la ronda.
+    _family_check_before_spend(
+        project_root,
+        ticket=ticket,
+        profile=profile,
+        backend_key=backend_key,
+        author_model=author_model,
+        reviewer_model=reviewer_model,
+    )
     # WOT-2026-046h: `send_to_profile` en el canal `api` (`_transport_api`) NO
     # devuelve texto ante un fallo de transporte -- LANZA (`TransportError` por
     # HTTP/SSE, `RuntimeError` por env var ausente, `json.JSONDecodeError` por
@@ -7433,6 +7449,118 @@ def _positive_seconds(raw: str) -> float:
     return value
 
 
+def _backend_model_override(raw: str) -> str:
+    """Tipo argparse de --author-model/--reviewer-model: forma backend|model."""
+    parts = [part.strip() for part in raw.split("|")]
+    if len(parts) != 2 or any(not part for part in parts):
+        raise argparse.ArgumentTypeError(
+            f"se espera backend|model (p.ej. opencode|nan/deepseek-v4-flash): {raw!r}"
+        )
+    return raw
+
+
+def _family_check_before_spend(  # noqa: C901 - WOT-2026-200a role resolution
+    project_root: Path,
+    *,
+    ticket: str,
+    profile: dict,
+    backend_key: str,
+    author_model: str | None,
+    reviewer_model: str | None,
+) -> None:
+    """Comprueba familias antes de gastar una ronda.
+
+    Before: recibe el destino, la ficha opcional, la lente y sus overrides.
+    During: resuelve familias y bloquea solo coincidencias verificables; deja
+        aviso no bloqueante cuando una declaracion no puede verificarse.
+    After: no escribe ni registra nada; un bloqueo lanza `DispatchBlockedError`.
+    """
+    from scripts.check_loop_execution import FamilyResolutionError, model_family
+    from scripts.flight.integrate_ticket import (
+        FamilyCheckError,
+        family_violations,
+        parse_ficha_models,
+    )
+
+    try:
+        lens_family = model_family(
+            profile.get("backend"), profile.get("model"), MODEL_FAMILY_MAP
+        )
+    except FamilyResolutionError as exc:
+        print(
+            f"familia no verificable: lente {backend_key} {profile.get('backend')}/{profile.get('model')}: {exc}; la ronda sigue",
+            file=sys.stderr,
+        )
+        return
+    ficha_path = project_root / ".agent" / "collaboration" / f"FICHA_{ticket}.md"
+    ficha_text: str | None = None
+    ficha_reason = "ficha ausente"
+    try:
+        ficha_text = ficha_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        pass
+    except (OSError, UnicodeDecodeError):
+        ficha_reason = "ficha ilegible"
+    unresolved: list[str] = []
+    resolved: dict[str, str] = {}
+    overrides = {"autor": author_model, "revisor": reviewer_model}
+    keys = {"autor": "autor_modelo", "revisor": "revisor_modelo"}
+    for role in ("autor", "revisor"):
+        override = overrides[role]
+        if override is not None:
+            parts = [part.strip() for part in override.split("|")]
+            if len(parts) != 2 or any(not part for part in parts):
+                raise ValueError(f"{keys[role]} override: formato invalido")
+            declaration = (parts[0], parts[1])
+        elif ficha_text is None:
+            unresolved.append(f"{role}: {ficha_reason}")
+            continue
+        else:
+            wanted = keys[role]
+            other = "revisor_modelo" if role == "autor" else "autor_modelo"
+            lines = [
+                line
+                for line in ficha_text.splitlines()
+                if line.partition(":")[0].strip().casefold() == wanted
+            ]
+            lines.append(f"{other}: placeholder|placeholder")
+            try:
+                declaration = parse_ficha_models("\n".join(lines))[role]
+            except FamilyCheckError as exc:
+                unresolved.append(f"{role}: {exc}")
+                continue
+        try:
+            resolved[role] = model_family(*declaration, MODEL_FAMILY_MAP)
+        except FamilyResolutionError as exc:
+            unresolved.append(f"{role}: {exc}")
+    violations = (
+        family_violations(
+            resolved.get("autor", ""),
+            resolved.get("revisor", ""),
+            [
+                {
+                    "family": lens_family,
+                    "backend_key": backend_key,
+                    "backend": profile.get("backend"),
+                    "model": profile.get("model"),
+                }
+            ],
+        )
+        if resolved
+        else []
+    )
+    if violations:
+        raise DispatchBlockedError(
+            f"familia WOT-2026-200a: {'; '.join(violations)}. "
+            "Usa --author-model backend|model y --reviewer-model backend|model para declarar overrides."
+        )
+    if unresolved:
+        print(
+            f"familia no verificable: {'; '.join(unresolved)}; la ronda sigue",
+            file=sys.stderr,
+        )
+
+
 def _watchdog_requested(args) -> bool:
     """True si el caller pidio `--watchdog-s`. Un Namespace SIN el atributo (los
     callers Python que arman el suyo) cuenta como apagado: ausente == apagado."""
@@ -7486,6 +7614,8 @@ def _watchdog_child_argv(args) -> list[str]:
         ("--context-kind", args.context_kind),
         ("--commit-sha", args.commit_sha),
         ("--challenge-nonce", args.challenge_nonce),
+        ("--author-model", getattr(args, "author_model", None)),
+        ("--reviewer-model", getattr(args, "reviewer_model", None)),
         ("--session-id", args.session_id),
         ("--project-root", args.project_root),
     ):
@@ -7858,6 +7988,8 @@ def _cmd_loop_round(args, config) -> int:  # noqa: C901 - WOT-2026-152s-2 anade 
             session_id=args.session_id,
             commit_sha=args.commit_sha,
             challenge_nonce=args.challenge_nonce,
+            author_model=getattr(args, "author_model", None),
+            reviewer_model=getattr(args, "reviewer_model", None),
         )
     except BackendTimeoutError as exc:
         print(
@@ -8473,6 +8605,18 @@ def main(argv: list[str] | None = None) -> int:
         "(WOT-2026-066t)",
     )
     p_loop.add_argument("--session-id", default=None)
+    p_loop.add_argument(
+        "--author-model",
+        default=None,
+        type=_backend_model_override,
+        help="override backend|model que manda sobre FICHA_<ticket>.md (WOT-2026-200a)",
+    )
+    p_loop.add_argument(
+        "--reviewer-model",
+        default=None,
+        type=_backend_model_override,
+        help="override backend|model que manda sobre FICHA_<ticket>.md (WOT-2026-200a)",
+    )
     p_loop.add_argument(
         "--watchdog-s",
         type=_positive_seconds,
