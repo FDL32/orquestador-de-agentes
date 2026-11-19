@@ -14,6 +14,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -39,6 +40,26 @@ _STUBS = (
     "notify_user.ps1",
     "check_latido_alert_wiring.py",
 )
+
+
+def _powershell_path() -> str:
+    """Before: SYSTEMROOT puede faltar. During: elige una raiz real o falsa absoluta.
+    After: devuelve la ruta completa a powershell.exe. Mutant: quitar el fallback produce una ruta relativa.
+    """
+    systemroot = os.environ.get("SYSTEMROOT", "")
+    root = Path(systemroot) if systemroot else Path(tempfile.gettempdir())
+    return str(root / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+
+
+def _materialize_fake_systemroot(monkeypatch, tmp_path: Path) -> None:
+    """Before: SYSTEMROOT no esta disponible. During: fija y materializa la raiz falsa.
+    After: la ruta de PowerShell existe bajo tmp_path. Mutant: quitar la escritura rompe exists().
+    """
+    monkeypatch.setenv("SYSTEMROOT", str(tmp_path / "fake-systemroot"))
+    powershell = Path(_powershell_path())
+    powershell.parent.mkdir(parents=True, exist_ok=True)
+    powershell.write_bytes(b"")
+
 
 # Copia literal del parrafo GO AL USUARIO del latido real de CO-28 (linea 19,
 # 2026-11-04). El test no lee el workspace del vuelo.
@@ -80,13 +101,7 @@ class Box:
         self.motor = root / "motor"
         self.flight = self.motor / "scripts" / "flight"
         self.py = sys.executable
-        self.ps = str(
-            Path(os.environ.get("SYSTEMROOT", ""))
-            / "System32"
-            / "WindowsPowerShell"
-            / "v1.0"
-            / "powershell.exe"
-        )
+        self.ps = _powershell_path()
         self.roster = root / "roster.json"
         self.ops = root / "ops"
 
@@ -176,6 +191,15 @@ def _clean_env(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _ensure_systemroot(monkeypatch, tmp_path):
+    """Before: SYSTEMROOT puede faltar en el entorno. During: fija una raiz falsa y materializa PowerShell.
+    After: las pruebas disponen de una ruta absoluta resoluble sin tocar Windows.
+    """
+    if not os.environ.get("SYSTEMROOT"):
+        _materialize_fake_systemroot(monkeypatch, tmp_path)
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_alert_subprocesses(monkeypatch, tmp_path, request):
     """Hermetiza ``--alert`` por run/check_output, cadenas y Popen directo.
 
@@ -258,6 +282,32 @@ def run(argv: list[str], capsys) -> tuple[int, str]:
     """main(argv) en proceso: (rc, stdout)."""
     rc = chk.main(argv)
     return rc, capsys.readouterr().out
+
+
+def test_m01_ruta_powershell_absoluta_sin_systemroot(monkeypatch, tmp_path):
+    """Before: la fixture inyecta SYSTEMROOT. During: comprueba la ruta y luego revisa el fallback sin entorno.
+    After: ambas ramas son resolubles o absolutas. Mutante: quitar la materializacion rompe exists().
+    """
+    box_inyectado = Box._bound(tmp_path / "m01_inyectado")
+    assert Path(box_inyectado.ps).exists()
+
+    monkeypatch.delenv("SYSTEMROOT", raising=False)
+    _materialize_fake_systemroot(monkeypatch, tmp_path / "m01_inyectado")
+    box_inyectado_forzado = Box._bound(tmp_path / "m01_inyectado")
+    assert Path(box_inyectado_forzado.ps).exists()
+    monkeypatch.delenv("SYSTEMROOT", raising=False)
+    box = Box._bound(tmp_path / "m01")
+    assert Path(_powershell_path()).is_absolute()
+    assert Path(box.ps).is_absolute()
+    assert box.ps == _powershell_path()
+
+    source = Path(__file__).read_text(encoding="utf-8")
+    route_segment = "Windows" + "PowerShell"
+    old_inline = "Path(" + "os.environ.get(" + '"SYSTEMROOT"'
+    helper_call = "_powershell" + "_path()"
+    assert source.count('"' + route_segment + '"') == 1
+    assert source.count(old_inline) == 0
+    assert source.count(helper_call) == 10
 
 
 # ------------------------------------------------------------------ ejemplos resueltos
@@ -1255,10 +1305,7 @@ def test_fila_134_slash_abajo_rc_0(box, capsys):
         box.trace_order(),
     ]
     # Fix powershell path in sup orders
-    sysroot = os.environ.get("SYSTEMROOT", "")
-    ps_path = str(
-        Path(sysroot) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-    )
+    ps_path = _powershell_path()
     sup_orders = [
         f"{ps_path} -NoProfile -NonInteractive -File {flight_str}/notify_user.ps1 -Title t -Message m",
         f"{py} {flight_str}/quota_tick.py",
@@ -1524,10 +1571,7 @@ def test_fila_136_junction_fuera_rc_1(box, capsys):
         f"{py} {box.s('check_latido_alert_wiring.py')} --alert",
         box.trace_order(),
     ]
-    sysroot = os.environ.get("SYSTEMROOT", "")
-    ps = str(
-        Path(sysroot) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-    )
+    ps = _powershell_path()
     sup_orders = [
         f"{ps} -NoProfile -NonInteractive -File {box.s('notify_user.ps1')} -Title t -Message m",
         f"{py} {box.s('quota_tick.py')}",
@@ -1664,13 +1708,7 @@ def test_r7_powershell_mandatory_real_se_deriva_y_concuerda_con_runtime(
         meta = chk._powershell_parser_actions(script)
         assert meta["-Title"].required is expected
         assert meta["-Message"].required is expected
-    ps = (
-        Path(os.environ["SYSTEMROOT"])
-        / "System32"
-        / "WindowsPowerShell"
-        / "v1.0"
-        / "powershell.exe"
-    )
+    ps = Path(_powershell_path())
     done = subprocess.run(
         [str(ps), "-NoProfile", "-NonInteractive", "-File", str(script), "-Title", "a"],
         capture_output=True,
@@ -1698,13 +1736,7 @@ def test_r7_fuzz_mandatory_soundness_contra_powershell_real(tmp_path):
         "Mandatory=$x",
         "Mandatory:$true",
     ]
-    ps = (
-        Path(os.environ["SYSTEMROOT"])
-        / "System32"
-        / "WindowsPowerShell"
-        / "v1.0"
-        / "powershell.exe"
-    )
+    ps = Path(_powershell_path())
     for index, form in enumerate(forms):
         script = tmp_path / f"fuzz_{index}.ps1"
         script.write_text(
@@ -2377,10 +2409,7 @@ def test_fila_141_minuscula_slash_rc_0(box, capsys):
         f"{py_lower} {flight_lower}/check_latido_alert_wiring.py --alert",
         box.trace_order(),
     ]
-    sysroot = os.environ.get("SYSTEMROOT", "")
-    ps_lower = str(
-        Path(sysroot) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
-    ).lower()
+    ps_lower = _powershell_path().lower()
     sup_orders = [
         f"{ps_lower} -NoProfile -NonInteractive -File {flight_lower}/notify_user.ps1 -Title t -Message m",
         f"{py_lower} {flight_lower}/quota_tick.py",
