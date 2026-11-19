@@ -256,7 +256,11 @@ def test_log_nonexistent_rc0_zeros(tmp_path):
     log_dir.mkdir(parents=True, exist_ok=True)
     # Do NOT create recall_log.jsonl
 
-    rc, stdout = _run_usage_report(tmp_path, "2026-10-20T00:00:00", 30)
+    # Inject ``now``: with the real clock this verdict flips to
+    # 'uso insuficiente' once 30 days pass after the fixed ``since`` (WOT-2026-124g
+    # time bomb, red on 2026-11-19).
+    now = datetime(2026, 10, 25, 12, 0, 0, tzinfo=timezone.utc)
+    rc, stdout = _run_usage_report(tmp_path, "2026-10-20T00:00:00", 30, now=now)
     assert rc == 0
     report = _parse_report(stdout)
     assert report["llamadas_reales"] == 0
