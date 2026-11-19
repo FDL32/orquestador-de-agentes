@@ -2395,6 +2395,10 @@ def test_fila_140_git_wrapper_cmd(box, capsys):
 # ================================================================== FILA 141 -- UNIDAD Y BARRAS
 
 
+@pytest.mark.skipif(
+    os.name != "nt",
+    reason="mutacion 141.1: letra de unidad en minuscula y barras; en Linux el sistema de ficheros distingue mayusculas y la ruta minusculizada del interprete no existe",
+)
 def test_fila_141_minuscula_slash_rc_0(box, capsys):
     """Fila 141 (mutacion 141.1): ordenes con letra de unidad en minuscula y `/` en vez de `\\`
     -> rc 0."""
