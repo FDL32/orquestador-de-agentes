@@ -2159,3 +2159,17 @@ def test_template_tick_mutant_fails_marked_migration(
 
     assert rc == 2
     assert "plantilla no contiene el bloque de tick versionado completo" in output
+
+
+def test_reduce_roster_tolera_ancestro_directo() -> None:
+    real = _real_roster()
+    real["active_roles"]["ancestro_directo"] = {
+        "threadId": "mcp:00000000-0000-4000-8000-000000000001",
+        "session_code": "CO-99",
+    }
+
+    reduced, errors = reduce_roster(real)
+
+    assert errors == []
+    assert reduced is not None
+    assert set(reduced["active_roles"]) == {"orquestador", "supervisor"}

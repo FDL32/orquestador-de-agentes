@@ -151,6 +151,10 @@ class RosterInvalidSupervisor(Exception):  # noqa: N818
     """Supervisor identity or transition validation failed."""
 
 
+class RosterInvalidAncestro(Exception):  # noqa: N818
+    """active_roles.ancestro_directo is present but its minimal shape is wrong."""
+
+
 class RosterMalformed(Exception):  # noqa: N818
     """Roster file is unreadable or its shape is invalid (fail closed)."""
 
@@ -472,6 +476,69 @@ def write_role_estado(
 
     # Should not reach here, but guard anyway.
     raise RosterWriteConflict(f"conflicto de escritura para {role} tras {2} intentos")
+
+
+def _validate_ancestro_fields(entry: dict[str, Any]) -> None:
+    """Raise RosterInvalidAncestro unless the minimal shape is present.
+
+    Before: entry is the proposed active_roles.ancestro_directo mapping.
+    During: checks that threadId and session_code are non-empty strings.
+    After: returns without I/O when the minimal shape is valid, otherwise
+        raises RosterInvalidAncestro naming the invalid field.
+    """
+    if not isinstance(entry, dict):
+        raise RosterInvalidAncestro("campo ancestro_directo debe ser un mapping")
+    for key in ("threadId", "session_code"):
+        value = entry.get(key)
+        if not isinstance(value, str) or not value:
+            raise RosterInvalidAncestro(
+                f"campo requerido '{key}' debe ser string no vacio, got {value!r}"
+            )
+
+
+def write_ancestro_directo(
+    roster_path: Path | str,
+    *,
+    thread_id: str,
+    session_code: str,
+    changes_log_path: Path | str,
+    actor: str,
+    reason: str,
+    ts: str | None = None,
+) -> dict[str, Any]:
+    """Write active_roles.ancestro_directo with an atomic replacement.
+
+    Before: thread_id and session_code identify the previous supervisor and
+        roster_path points to a readable roster.
+    During: validates the identity before reading, deep-copies the roster,
+        validates the mounted minimal entry, atomically writes it, and logs it.
+    After: returns the updated roster with only threadId and session_code in
+        active_roles.ancestro_directo and one canonical change line appended.
+    """
+    if ts is not None:
+        raise ValueError(
+            "ts por argumento no es valido; el ts se estampa siempre con el reloj"
+        )
+
+    entry = {"threadId": thread_id, "session_code": session_code}
+    _validate_ancestro_fields(entry)
+    current = _read_roster(roster_path)
+    active_roles = current.get("active_roles")
+    if not isinstance(active_roles, dict):
+        raise RosterMalformed("active_roles no es un mapping")
+    new_roster = copy.deepcopy(current)
+    new_roster["active_roles"]["ancestro_directo"] = entry
+    _validate_active_role_fields(new_roster["active_roles"]["ancestro_directo"])
+    _validate_ancestro_fields(new_roster["active_roles"]["ancestro_directo"])
+    _atomic_write_json(Path(roster_path), new_roster)
+    _append_change_line(
+        changes_log_path,
+        by=actor,
+        change="ancestro_directo_written",
+        detail=f"ancestro_directo={thread_id} ({session_code})",
+        reason=reason,
+    )
+    return new_roster
 
 
 def _validate_supervisor_fields(entry: dict[str, Any]) -> None:

@@ -358,6 +358,53 @@ def _validate_phase_a_outgoing(flight_dir: Path, request: RotationRequest) -> No
         raise RotationRejectedError("phase-a-outgoing-identity-mismatch")
 
 
+def _previous_supervisor(roster: dict) -> tuple[str, str]:
+    """Return the previous supervisor identity or reject it as uncomputable.
+
+    Before: roster is the current flight roster before phase-A writes.
+    During: checks active_roles.supervisor and both identity fields.
+    After: returns (threadId, session_code) for the previous supervisor, or
+        raises the stable phase-A rejection when it cannot be computed.
+    """
+    active_roles = roster.get("active_roles")
+    supervisor = (
+        active_roles.get("supervisor") if isinstance(active_roles, dict) else None
+    )
+    if (
+        not isinstance(supervisor, dict)
+        or not isinstance(supervisor.get("threadId"), str)
+        or not supervisor.get("threadId")
+        or not isinstance(supervisor.get("session_code"), str)
+        or not supervisor.get("session_code")
+    ):
+        raise RotationRejectedError("phase-a-ancestro-supervisor-not-computable")
+    return supervisor["threadId"], supervisor["session_code"]
+
+
+def _install_ancestro_directo(flight_dir: Path, request: RotationRequest) -> None:
+    """Install the previous supervisor as the direct ancestor.
+
+    Before: phase A has validated the outgoing identity and flight_dir has a
+        readable roster.
+    During: reads the current roster, captures its previous supervisor, and
+        delegates the atomic roster and canonical log writes.
+    After: active_roles.ancestro_directo contains the captured identity.
+    """
+    roster_path = flight_dir / "flight_roster.json"
+    log_path = flight_dir / "roster_changes.jsonl"
+    thread_id, session_code = _previous_supervisor(
+        roster_writer._read_roster(roster_path)
+    )
+    roster_writer.write_ancestro_directo(
+        roster_path,
+        thread_id=thread_id,
+        session_code=session_code,
+        changes_log_path=log_path,
+        actor=request.actor,
+        reason=request.reason,
+    )
+
+
 def _load_registry(path: Path) -> dict[str, object]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
@@ -517,6 +564,7 @@ def _rotate_phase_a_locked(
     roster_path = flight_dir / "flight_roster.json"
     log_path = flight_dir / "roster_changes.jsonl"
     _validate_phase_a_outgoing(flight_dir, request)
+    _previous_supervisor(roster_writer._read_roster(roster_path))
     snapshot = _snapshot_mutable_files(flight_dir, extra=(lock_path,))
     owned: dict[Path, bytes | None] = {}
     try:
@@ -549,6 +597,11 @@ def _rotate_phase_a_locked(
                 now=now,
                 changes_log_path=log_path,
             ),
+            owned,
+            (roster_path, log_path),
+        )
+        _run_owned_write(
+            lambda: _install_ancestro_directo(flight_dir, request),
             owned,
             (roster_path, log_path),
         )

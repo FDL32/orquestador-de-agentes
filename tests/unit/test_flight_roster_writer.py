@@ -3224,3 +3224,118 @@ class TestCliSweep:
             tmp_path, None, _SWEEP_ROLE_OK, raw=_SWEEP_RAW_FILES[raw_name]
         )
         assert rc == 3 and intact
+
+
+class TestWriteAncestroDirecto:
+    """Tests for the minimal ancestro_directo roster entry."""
+
+    def test_01_ancestro_directo_valido_es_aceptado_y_registra_linea_canonica(
+        self, tmp_path
+    ):
+        """Before: fixtures contain a valid roster and change log.
+
+        During: writes the minimal ancestro_directo identity.
+        After: the exact entry and canonical change are persisted.
+        """
+        from scripts.flight_roster_writer import write_ancestro_directo
+
+        roster_p = roster_path(tmp_path)
+        changes_p = changes_log_path(tmp_path)
+        thread_id = "mcp:11111111-1111-4111-8111-111111111111"
+
+        write_ancestro_directo(
+            roster_p,
+            thread_id=thread_id,
+            session_code="CO-32",
+            changes_log_path=changes_p,
+            actor="test",
+            reason="relevo",
+        )
+
+        roster = json.loads(roster_p.read_text(encoding="utf-8"))
+        assert roster["active_roles"]["ancestro_directo"] == {
+            "threadId": thread_id,
+            "session_code": "CO-32",
+        }
+        last = json.loads(changes_p.read_text(encoding="utf-8").splitlines()[-1])
+        assert last["change"] == "ancestro_directo_written"
+
+    def test_02_ancestro_directo_invalido_se_rechaza_con_excepcion_tipada(
+        self, tmp_path
+    ):
+        """Before: fixtures contain valid bytes.
+
+        During: attempts empty session_code and thread_id values.
+        After: both attempts fail before changing either file.
+        """
+        from scripts.flight_roster_writer import (
+            RosterInvalidAncestro,
+            write_ancestro_directo,
+        )
+
+        roster_p = roster_path(tmp_path)
+        changes_p = changes_log_path(tmp_path)
+        roster_before = roster_p.read_bytes()
+        changes_before = changes_p.read_bytes()
+
+        with pytest.raises(RosterInvalidAncestro):
+            write_ancestro_directo(
+                roster_p,
+                thread_id="mcp:11111111-1111-4111-8111-111111111111",
+                session_code="",
+                changes_log_path=changes_p,
+                actor="test",
+                reason="invalid",
+            )
+        assert roster_p.read_bytes() == roster_before
+        assert changes_p.read_bytes() == changes_before
+
+        with pytest.raises(RosterInvalidAncestro):
+            write_ancestro_directo(
+                roster_p,
+                thread_id="",
+                session_code="CO-32",
+                changes_log_path=changes_p,
+                actor="test",
+                reason="invalid",
+            )
+        assert roster_p.read_bytes() == roster_before
+        assert changes_p.read_bytes() == changes_before
+
+    def test_03_control_positivo_clave_parecida_sigue_rechazando_rosterunknownfield(
+        self, tmp_path
+    ):
+        """Before: the roster has the existing role schema.
+
+        During: inserts a near-miss role and near-miss entry field.
+        After: both paths raise RosterUnknownField.
+        """
+        from scripts.flight_roster_writer import (
+            RosterUnknownField,
+            write_role_estado,
+        )
+
+        roster_p = roster_path(tmp_path)
+        changes_p = changes_log_path(tmp_path)
+        with pytest.raises(RosterUnknownField):
+            write_role_estado(
+                roster_p,
+                "ancestro_directoo",
+                "PENDIENTE_ACK",
+                changes_log_path=changes_p,
+                actor="test",
+                reason="invalid",
+            )
+
+        roster = json.loads(roster_p.read_text(encoding="utf-8"))
+        roster["active_roles"]["orquestador"]["ancestro_directoo"] = True
+        roster_p.write_text(json.dumps(roster, indent=2) + "\n", encoding="utf-8")
+        with pytest.raises(RosterUnknownField):
+            write_role_estado(
+                roster_p,
+                "orquestador",
+                "PENDIENTE_ACK",
+                changes_log_path=changes_p,
+                actor="test",
+                reason="invalid",
+            )

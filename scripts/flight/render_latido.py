@@ -386,7 +386,8 @@ def reduce_roster(real: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str
     errors.extend(
         f"campo de roster no consumido: {key} en active_roles"
         for key in sorted(
-            set(active_roles) - {"orquestador", "supervisor", "_schema_note"}
+            set(active_roles)
+            - {"orquestador", "supervisor", "_schema_note", "ancestro_directo"}
         )
     )
     known_role_metadata = {

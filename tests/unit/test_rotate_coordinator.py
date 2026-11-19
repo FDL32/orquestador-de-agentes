@@ -2307,3 +2307,156 @@ def test_process_recovery_keeps_consumed_ledger_step(tmp_path: Path) -> None:
         path.write_bytes(b"changed")
         path.write_bytes(b"restored-from-pre_rotate")
     assert not ledger.consume(MESSAGE_ID, 1, "CO-33", "CO-34")
+
+
+def test_phase_a_escribe_ancestro_directo_con_la_supervisora_previa(
+    tmp_path: Path,
+) -> None:
+    """Before: phase A fixtures contain a valid previous supervisor.
+
+    During: runs the complete phase A rotation.
+    After: ancestro_directo and the supervisor cascade preserve that identity.
+    """
+    from scripts.flight.rotate_coordinator import rotate_phase_a
+    from scripts.flight.verify_user_authorization import Decision
+
+    _phase_a_files(tmp_path)
+    _write_snapshot(tmp_path, expires="2026-01-01T08:00:00+01:00")
+    (tmp_path / "autorizacion_cadena.ledger.jsonl").write_text("", encoding="utf-8")
+    rotate_phase_a(
+        tmp_path,
+        _request(),
+        message_id=MESSAGE_ID,
+        now=datetime(2026, 1, 1, 6, 52, tzinfo=timezone.utc),
+        decision=Decision(True, "authorized", message_id=MESSAGE_ID),
+        guard_rc=0,
+        window_open=True,
+        quota_hard_pct=50,
+        record=_phase_a_record(tmp_path),
+    )
+    roster = json.loads((tmp_path / "flight_roster.json").read_text(encoding="utf-8"))
+    assert roster["active_roles"]["ancestro_directo"] == {
+        "threadId": "mcp:55555555-5555-4555-8555-555555555555",
+        "session_code": "CO-32",
+    }
+    assert roster["active_roles"]["supervisor"]["session_code"] == "CO-33"
+    assert roster["cadena_contexto"][0]["threadId"] == (
+        "mcp:55555555-5555-4555-8555-555555555555"
+    )
+
+
+def test_phase_a_sin_supervisora_previa_rechaza_sin_inventar_el_campo(
+    tmp_path: Path,
+) -> None:
+    """Before: phase A may lack a usable previous supervisor.
+
+    During: attempts missing and empty supervisor identities, then a valid run.
+    After: invalid cases are byte-stable and the valid case installs the field.
+    """
+    from scripts.flight.rotate_coordinator import RotationRejectedError, rotate_phase_a
+    from scripts.flight.verify_user_authorization import Decision
+
+    def call() -> None:
+        rotate_phase_a(
+            tmp_path,
+            _request(),
+            message_id=MESSAGE_ID,
+            now=datetime(2026, 1, 1, 6, 52, tzinfo=timezone.utc),
+            decision=Decision(True, "authorized", message_id=MESSAGE_ID),
+            guard_rc=0,
+            window_open=True,
+            quota_hard_pct=50,
+            record=_phase_a_record(tmp_path),
+        )
+
+    _phase_a_files(tmp_path)
+    _write_snapshot(tmp_path, expires="2026-01-01T08:00:00+01:00")
+    (tmp_path / "autorizacion_cadena.ledger.jsonl").write_text("", encoding="utf-8")
+    roster_p = tmp_path / "flight_roster.json"
+    roster = json.loads(roster_p.read_text(encoding="utf-8"))
+    del roster["active_roles"]["supervisor"]
+    roster_p.write_text(json.dumps(roster, indent=2) + "\n", encoding="utf-8")
+    before = _mutable_bytes(tmp_path)
+    with pytest.raises(
+        RotationRejectedError, match="phase-a-ancestro-supervisor-not-computable"
+    ):
+        call()
+    assert _mutable_bytes(tmp_path) == before
+    assert "ancestro_directo" not in json.loads(roster_p.read_text())["active_roles"]
+
+    _phase_a_files(tmp_path)
+    roster = json.loads(roster_p.read_text(encoding="utf-8"))
+    roster["active_roles"]["supervisor"]["session_code"] = ""
+    roster_p.write_text(json.dumps(roster, indent=2) + "\n", encoding="utf-8")
+    before = _mutable_bytes(tmp_path)
+    with pytest.raises(
+        RotationRejectedError, match="phase-a-ancestro-supervisor-not-computable"
+    ):
+        call()
+    assert _mutable_bytes(tmp_path) == before
+    assert "ancestro_directo" not in json.loads(roster_p.read_text())["active_roles"]
+
+    _phase_a_files(tmp_path)
+    _write_snapshot(tmp_path, expires="2026-01-01T08:00:00+01:00")
+    (tmp_path / "autorizacion_cadena.ledger.jsonl").write_text("", encoding="utf-8")
+    call()
+    roster = json.loads(roster_p.read_text(encoding="utf-8"))
+    assert roster["active_roles"]["ancestro_directo"] == {
+        "threadId": "mcp:55555555-5555-4555-8555-555555555555",
+        "session_code": "CO-32",
+    }
+
+
+def test_phase_a_fallo_tras_escribir_el_campo_se_revuelve_byte_a_byte(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Before: phase A has valid files and a matching authorization record.
+
+    During: injects a registry failure after ancestro_directo is written.
+    After: normal rollback restores bytes, while disabled rollback proves order.
+    """
+    import scripts.flight.rotate_coordinator as coordinator
+    from scripts.flight.verify_user_authorization import Decision
+
+    def call() -> None:
+        coordinator.rotate_phase_a(
+            tmp_path,
+            _request(),
+            message_id=MESSAGE_ID,
+            now=datetime(2026, 1, 1, 6, 52, tzinfo=timezone.utc),
+            decision=Decision(True, "authorized", message_id=MESSAGE_ID),
+            guard_rc=0,
+            window_open=True,
+            quota_hard_pct=50,
+            record=_phase_a_record(tmp_path),
+        )
+
+    _phase_a_files(tmp_path)
+    _write_snapshot(tmp_path, expires="2026-01-01T08:00:00+01:00")
+    (tmp_path / "autorizacion_cadena.ledger.jsonl").write_text("", encoding="utf-8")
+    before = _mutable_bytes(tmp_path)
+    monkeypatch.setattr(
+        coordinator,
+        "_rotate_registry",
+        lambda *args: (_ for _ in ()).throw(KeyError("sessions")),
+    )
+    with pytest.raises(KeyError):
+        call()
+    assert _mutable_bytes(tmp_path) == before
+
+    _phase_a_files(tmp_path)
+    _write_snapshot(tmp_path, expires="2026-01-01T08:00:00+01:00")
+    (tmp_path / "autorizacion_cadena.ledger.jsonl").write_text("", encoding="utf-8")
+    locks = tmp_path / "autorizacion_cadena.ledger.jsonl.locks"
+    if locks.exists():
+        for lock in locks.glob("*.lock"):
+            lock.unlink()
+    monkeypatch.setattr(coordinator, "_rollback_mutable_files", lambda *a, **k: None)
+    with pytest.raises(KeyError):
+        call()
+    roster = json.loads((tmp_path / "flight_roster.json").read_text(encoding="utf-8"))
+    assert (
+        _mutable_bytes(tmp_path)[tmp_path / "flight_roster.json"]
+        != before[tmp_path / "flight_roster.json"]
+    )
+    assert "ancestro_directo" in roster["active_roles"]
