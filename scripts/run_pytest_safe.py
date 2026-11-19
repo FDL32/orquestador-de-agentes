@@ -155,6 +155,9 @@ EX_TEMPFAIL = 75
 # reintentable) porque bloquear por rol no se arregla reintentando: se arregla
 # dejando que el Manager lo corra.
 EX_ROLE_NOT_PERMITTED = 77
+# sysexits(3) EX_CONFIG: configuration inherited from the parent blocks the
+# canonical pre-suite stage (WOT-2026-191a).
+EX_PRE_SUITE_BLOCKED = 78
 # WOT-2026-021w: append-only run-history (one JSON line per run). Lives under the
 # already-gitignored RUNTIME_DIR (.gitignore .agent/runtime/pytest-safe/), so it
 # NEVER enters git (defense-in-depth). The record schema itself is deliberately
@@ -252,6 +255,154 @@ EXPLICIT_ARGS_MODE = "explicit_args"
 
 def iso_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _runs_suite(args) -> bool:
+    """Return whether the invocation executes the canonical all-level suite.
+
+    Before: ``args`` contains the parsed runner flags.
+    During: checks the level and the non-executing mode switches.
+    After: returns True only for an active ``--level all`` execution.
+    """
+    return bool(
+        args.level == "all"
+        and not args.dry_run
+        and not args.status
+        and not args.cleanup_only
+    )
+
+
+def _espera_cli(argv: list[str]) -> tuple[int, str]:
+    """Run the wait-sentinel CLI and return its exit code and stdout.
+
+    Before: ``argv`` contains an action and its CLI options.
+    During: resolves the bootstrap CLI and captures UTF-8 stdout.
+    After: returns the real process result; startup errors are propagated.
+    """
+    cli = _PROJECT_ROOT_BOOTSTRAP / "scripts" / "espera_checklist_mode.py"
+    if not cli.is_file():
+        raise FileNotFoundError(str(cli))
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, str(cli), *argv], capture_output=True
+    )
+    return result.returncode, result.stdout.decode("utf-8", errors="replace")
+
+
+def _espera_warn(motivo: str) -> None:
+    """Print one fail-open warning for a sentinel problem.
+
+    Before: ``motivo`` may contain arbitrary CLI output.
+    During: folds all whitespace into one space and prints the fixed prefix.
+    After: exactly one stdout line is emitted and no exception is raised.
+    """
+    clean = " ".join(str(motivo).split())
+    print(
+        f"[pytest-safe] AVISO: centinela de espera: {clean} "
+        "(fail-open: la suite corre igual)."
+    )
+
+
+def _espera_mode_from_status(stdout: str) -> str | None:
+    """Extract an active supported mode from real sentinel status output.
+
+    Before: ``stdout`` is the captured output of the sentinel status command.
+    During: examines only the canonical ON prefix and validates the mode.
+    After: returns ``observe`` or ``block`` for an active sentinel, else None.
+    """
+    prefix = "espera_checklist_mode: ON (mode="
+    for line in stdout.splitlines():
+        if line.startswith(prefix):
+            mode = line[len(prefix) :].split(",", 1)[0]
+            return mode if mode in ("observe", "block") else None
+    return None
+
+
+def _espera_read_mode(root: Path) -> str | None:
+    """Read the active sentinel mode, failing open on CLI errors.
+
+    Before: ``root`` is the delivery root whose sentinel is being measured.
+    During: invokes status and parses only a successful response.
+    After: returns the active mode or None without warning for normal OFF state.
+    """
+    try:
+        rc, stdout = _espera_cli(["status", "--root", str(root)])
+    except (FileNotFoundError, OSError) as exc:
+        _espera_warn(str(exc))
+        return None
+    if rc != 0:
+        _espera_warn(f"status rc={rc}")
+        return None
+    return _espera_mode_from_status(stdout)
+
+
+def _espera_disarm(root: Path) -> dict | None:
+    """Disarm an active sentinel and retain its mode for restoration.
+
+    Before: ``root`` points at the delivery root.
+    During: reads status, then invokes off only for an active supported mode.
+    After: returns restoration state on success, otherwise None.
+    """
+    mode = _espera_read_mode(root)
+    if mode is None:
+        return None
+    try:
+        rc, stdout = _espera_cli(["off", "--root", str(root)])
+    except (FileNotFoundError, OSError) as exc:
+        _espera_warn(str(exc))
+        return None
+    if rc != 0:
+        _espera_warn(f"off rc={rc}: {stdout}")
+        return None
+    return {"mode": mode, "root": str(root)}
+
+
+def _espera_restore(state: dict) -> None:
+    """Restore a previously active sentinel without changing the suite rc.
+
+    Before: ``state`` contains the original supported mode and root.
+    During: invokes the real sentinel CLI on with that mode.
+    After: reports any startup or non-zero CLI failure and never raises it.
+    """
+    try:
+        rc, stdout = _espera_cli(
+            ["on", "--mode", state["mode"], "--root", state["root"]]
+        )
+    except (FileNotFoundError, OSError) as exc:
+        _espera_warn(str(exc))
+        return
+    if rc != 0:
+        _espera_warn(f"on rc={rc}: {stdout}")
+
+
+def _pre_suite_env_gate(args) -> int | None:
+    """Block canonical suite execution when PYTHONIOENCODING is inherited.
+
+    Before: parsed arguments and the inherited process environment are present.
+    During: writes the exact blocked stamp when the gate applies.
+    After: returns 78 for a blocked suite, otherwise None.
+    """
+    if "PYTHONIOENCODING" not in os.environ or args.allow_env:
+        return None
+    reason = "env_inherited:PYTHONIOENCODING"
+    print(
+        "[pytest-safe] PRE-SUITE BLOQUEADO (exit 78): "
+        "env_inherited:PYTHONIOENCODING. Remedio: desdefinirla "
+        "(quitar PYTHONIOENCODING del entorno) o pasar --allow-env para "
+        "ejecutar la suite."
+    )
+    stamp = {
+        "status": "pre_suite_blocked",
+        "exit_code": EX_PRE_SUITE_BLOCKED,
+        "level": args.level,
+        "started_at": iso_now(),
+        "finished_at": iso_now(),
+        "pre_suite": {"blocked": True, "reason": reason, "allow_env": False},
+    }
+    try:
+        write_json(LAST_RUN_JSON, stamp, fsync=True)
+    except OSError as exc:
+        print(f"[pytest-safe] AVISO: no se pudo escribir el bloqueo: {exc}")
+    return EX_PRE_SUITE_BLOCKED
 
 
 def _import_work_plan_authority():
@@ -2270,6 +2421,11 @@ def parse_args() -> argparse.Namespace:
         help="Muestra el comando final de pytest sin ejecutarlo.",
     )
     parser.add_argument(
+        "--allow-env",
+        action="store_true",
+        help="Permite PYTHONIOENCODING heredado para la suite canonica.",
+    )
+    parser.add_argument(
         "--level",
         choices=sorted(LEVEL_CHOICES),
         default="unit",
@@ -2620,6 +2776,10 @@ def main() -> int:  # noqa: C901
             return EX_ROLE_NOT_PERMITTED
     _abort_on_mismatch()
     ensure_runtime_dir()
+    if _runs_suite(args):
+        pre_suite_exit = _pre_suite_env_gate(args)
+        if pre_suite_exit is not None:
+            return pre_suite_exit
     if args.status:
         print_status(build_status_payload())
         return 0
@@ -2844,12 +3004,19 @@ def main() -> int:  # noqa: C901
     }
     if _runner == "unittest":
         summary["runner_reason"] = unittest_fallback_reason(_chosen_interpreter)
+    if "PYTHONIOENCODING" in os.environ:
+        summary["pre_suite"] = {
+            "blocked": False,
+            "allow_env": bool(args.allow_env),
+            "env_inherited": ["PYTHONIOENCODING"],
+        }
     write_json(LAST_RUN_JSON, summary, fsync=True)
 
     # WOT-2026-062e (Pieza C): preflight RAM warning (non-blocking).
     _emit_env_preflight(summary.get("environment_at_start", {}))
     _clock_monitor = _start_clock_gap_monitor(args.level)
 
+    espera_state = None
     try:
         if args.dry_run:
             print_default_discovery_notice(args_mode)
@@ -2864,6 +3031,7 @@ def main() -> int:  # noqa: C901
         print(f"[pytest-safe] Temp: {run_dir}")
         print_default_discovery_notice(args_mode)
         print(f"[pytest-safe] Ejecutando: {' '.join(command)}")
+        espera_state = _espera_disarm(_AGENT_DIR.parent) if _runs_suite(args) else None
         state_snapshot = snapshot_canonical_state()
         try:
             _cpu_counters_start = _read_cpu_counters()
@@ -3037,6 +3205,8 @@ def main() -> int:  # noqa: C901
                     summary["stamp_scope_error"] = str(exc)
         return exit_code
     finally:
+        if espera_state is not None:
+            _espera_restore(espera_state)
         cleanup_after = {"removed": [], "failed": []}
         if run_dir.exists():
             ok, error = remove_tree(run_dir)

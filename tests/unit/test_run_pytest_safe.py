@@ -4530,3 +4530,416 @@ def test_199a_m05_motivo_del_fallback_solo_en_rama_unittest(
     )
     assert f"pytest ausente en {interp_pt}" not in cap_pt.out, cap_pt.out
     assert "runner_reason" not in sum_pt, sum_pt
+
+
+# WOT-2026-191a: pre-suite sentinel tests.  These tests deliberately use the
+# real sentinel CLI through a delegated recorder to avoid a second protocol.
+def _load_espera_cli_for_191a(root: Path):
+    spec = importlib.util.spec_from_file_location(
+        "espera_checklist_mode_191a", root / "scripts" / "espera_checklist_mode.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _recorder_191a(mod, root: Path, monkeypatch, calls: list):
+    import io
+
+    cli = _load_espera_cli_for_191a(PROJECT_ROOT)
+
+    def run(argv):
+        calls.append(tuple(argv))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            rc = cli.main(argv)
+        return rc, out.getvalue()
+
+    monkeypatch.setattr(mod, "_espera_cli", run)
+
+
+def _harness_191a(
+    tmp_path, monkeypatch, capsys, argv, stream=None, snapshot=None, leak=None
+):
+    mod = load_runner_module()
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
+    base = tmp_path / ".agent" / "runtime" / "pytest-safe"
+    base.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(mod, "_AGENT_DIR", tmp_path / ".agent")
+    monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+    monkeypatch.setattr(mod, "LAST_RUN_JSON", base / "last-run.json")
+    monkeypatch.setattr(mod, "LAST_RUN_LOG", base / "last-run.log")
+    monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", base / "run_history.jsonl")
+    monkeypatch.setattr(mod, "_abort_on_mismatch", lambda: None)
+    monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "sha191a")
+    monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
+    monkeypatch.setattr(mod, "release_lock", lambda: None)
+    monkeypatch.setattr(mod, "release_cross_worktree_lock", lambda: None)
+    monkeypatch.setattr(
+        mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+    )
+    monkeypatch.setattr(
+        mod,
+        "ensure_cross_worktree_slot",
+        lambda **kwargs: (None, type("L", (), {"acquired": True, "holder": None})()),
+    )
+    monkeypatch.setattr(mod, "make_run_dir", lambda: tmp_path / "run")
+    monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: sys.executable)
+    monkeypatch.setattr(
+        mod, "select_test_runner", lambda *args, **kwargs: (["echo"], "pytest")
+    )
+    monkeypatch.setattr(
+        mod,
+        "_start_clock_gap_monitor",
+        lambda level: type("C", (), {"stop": lambda self: None})(),
+    )
+    monkeypatch.setattr(mod, "_apply_sleep_preflight", lambda *args: None)
+    monkeypatch.setattr(mod, "_invariant_capture_state", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        mod, "_invariant_verify_unchanged", lambda *args, **kwargs: None
+    )
+    monkeypatch.setattr(mod, "_delivery_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(mod, "snapshot_canonical_state", snapshot or (lambda: {}))
+    monkeypatch.setattr(mod, "check_canonical_state_leak", leak or (lambda snap: []))
+    monkeypatch.setattr(
+        mod, "stream_pytest", stream or (lambda cmd: (0, [], [], False))
+    )
+    monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py", *argv])
+    return mod, base
+
+
+def test_191a_p3_01_off_antes_del_snapshot_y_durante_la_suite(
+    tmp_path, monkeypatch, capsys
+):
+    cli = _load_espera_cli_for_191a(PROJECT_ROOT)
+    cli.main(["on", "--mode", "observe", "--root", str(tmp_path)])
+    calls = []
+
+    def real_snapshot():
+        calls.append(("snapshot",))
+        return {}
+
+    def stream(cmd):
+        calls.append(("stream",))
+        data = json.loads(
+            (tmp_path / ".agent/runtime/espera_checklist_mode.json").read_text()
+        )
+        assert data["mode"] == "off"
+        return 0, [], [], False
+
+    mod, _ = _harness_191a(
+        tmp_path, monkeypatch, capsys, ["--level", "all"], stream, real_snapshot
+    )
+    _recorder_191a(mod, tmp_path, monkeypatch, calls)
+    mod.main()
+    assert calls[0][0] == "status"
+    assert calls[1][0] == "off"
+    assert calls.index(("off", "--root", str(tmp_path))) < calls.index(("snapshot",))
+    assert calls.index(("snapshot",)) < calls.index(("stream",))
+
+
+@pytest.mark.parametrize("kind", ["exit0", "exit1", "exc_stream", "exc_snapshot"])
+def test_191a_p3_02_restaura_on_en_finally_cada_salida(
+    tmp_path, monkeypatch, capsys, kind
+):
+    cli = _load_espera_cli_for_191a(PROJECT_ROOT)
+    cli.main(["on", "--mode", "observe", "--root", str(tmp_path)])
+    calls = []
+
+    def leak(snap):
+        calls.append(("leak",))
+        return []
+
+    def stream(cmd):
+        if kind == "exc_stream":
+            raise RuntimeError("stream")
+        return (1 if kind == "exit1" else 0), [], [], False
+
+    def snapshot():
+        if kind == "exc_snapshot":
+            raise RuntimeError("snapshot")
+        return {}
+
+    mod, _ = _harness_191a(
+        tmp_path, monkeypatch, capsys, ["--level", "all"], stream, snapshot, leak
+    )
+    _recorder_191a(mod, tmp_path, monkeypatch, calls)
+    if kind.startswith("exc"):
+        with pytest.raises(RuntimeError):
+            mod.main()
+    else:
+        mod.main()
+    assert ("on", "--mode", "observe", "--root", str(tmp_path)) in calls
+    if kind in {"exit0", "exit1"}:
+        assert calls.index(
+            ("on", "--mode", "observe", "--root", str(tmp_path))
+        ) > calls.index(("leak",))
+    assert (
+        json.loads(
+            (tmp_path / ".agent/runtime/espera_checklist_mode.json").read_text()
+        )["mode"]
+        == "observe"
+    )
+
+
+@pytest.mark.parametrize(
+    "state", ["ausente", "off", "caducado", "vacio", "ilegible", "activo"]
+)
+def test_191a_p3_03_solo_actua_si_estaba_activo(tmp_path, monkeypatch, capsys, state):
+    cli = _load_espera_cli_for_191a(PROJECT_ROOT)
+    target = tmp_path / ".agent/runtime/espera_checklist_mode.json"
+    if state == "off":
+        cli.main(["off", "--root", str(tmp_path)])
+    elif state == "caducado":
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            '{"mode":"observe","activated_at":"2020-01-01T00:00:00+00:00"}'
+        )
+    elif state == "vacio":
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("{}")
+    elif state == "ilegible":
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("esto no es json")
+    elif state == "activo":
+        cli.main(["on", "--mode", "observe", "--root", str(tmp_path)])
+    calls = []
+    mod, _ = _harness_191a(tmp_path, monkeypatch, capsys, ["--level", "all"])
+    _recorder_191a(mod, tmp_path, monkeypatch, calls)
+    mod.main()
+    actions = [c[0] for c in calls]
+    assert actions == (["status", "off", "on"] if state == "activo" else ["status"])
+
+
+def test_191a_p3_04a_cli_ausente_fail_open_una_linea(tmp_path, monkeypatch, capsys):
+    calls = []
+    mod, _ = _harness_191a(tmp_path, monkeypatch, capsys, ["--level", "all"])
+    real = mod._espera_cli
+
+    def counted(argv):
+        calls.append(tuple(argv))
+        return real(argv)
+
+    monkeypatch.setattr(mod, "_espera_cli", counted)
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert sum("centinela de espera" in line for line in out.splitlines()) == 1
+    assert calls == [("status", "--root", str(tmp_path))]
+    assert not (tmp_path / ".agent/runtime/espera_checklist_mode.json").exists()
+
+
+def test_191a_p3_04b_off_rc1_fail_open_sin_restore(tmp_path, monkeypatch, capsys):
+    import io
+
+    cli = _load_espera_cli_for_191a(PROJECT_ROOT)
+    cli.main(["on", "--mode", "observe", "--root", str(tmp_path)])
+    calls = []
+    mod, _ = _harness_191a(tmp_path, monkeypatch, capsys, ["--level", "all"])
+    cli_real = _load_espera_cli_for_191a(PROJECT_ROOT)
+
+    def failing(argv):
+        calls.append(tuple(argv))
+        if argv[0] == "off":
+            return 1, "boom"
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = cli_real.main(argv)
+        return rc, buf.getvalue()
+
+    monkeypatch.setattr(mod, "_espera_cli", failing)
+    assert mod.main() == 0
+    assert [c[0] for c in calls] == ["status", "off"]
+    assert not any(c[0] == "on" for c in calls)
+    assert (
+        sum(
+            "centinela de espera" in line
+            for line in capsys.readouterr().out.splitlines()
+        )
+        == 1
+    )
+    data = json.loads(
+        (tmp_path / ".agent/runtime/espera_checklist_mode.json").read_text()
+    )
+    assert data["mode"] == "observe"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--level", "all", "--dry-run"],
+        ["--level", "all", "--status"],
+        ["--level", "all", "--cleanup-only"],
+        [],
+    ],
+)
+def test_191a_p3_05_modos_sin_ciclo_cli(tmp_path, monkeypatch, capsys, argv):
+    calls = []
+    mod, _ = _harness_191a(tmp_path, monkeypatch, capsys, argv)
+    _recorder_191a(mod, tmp_path, monkeypatch, calls)
+    mod.main()
+    assert calls == []
+
+
+@pytest.mark.parametrize("mode", ["observe", "off"])
+def test_191a_p3_06_lector_con_cli_real(tmp_path, monkeypatch, mode):
+    mod = load_runner_module()
+    if mode == "observe":
+        mod._espera_cli(["on", "--mode", "observe", "--root", str(tmp_path)])
+        assert mod._espera_read_mode(tmp_path) == "observe"
+    else:
+        mod._espera_cli(["off", "--root", str(tmp_path)])
+        assert mod._espera_read_mode(tmp_path) is None
+
+
+@pytest.mark.parametrize("value", ["utf-8", ""])
+def test_191a_p2_01_bloqueo_rc78_antes_de_locks_y_suite(
+    tmp_path, monkeypatch, capsys, value
+):
+    calls = []
+    mod, _ = _harness_191a(tmp_path, monkeypatch, capsys, ["--level", "all"])
+    monkeypatch.setenv("PYTHONIOENCODING", value)
+    for name in (
+        "cleanup_known_temp_dirs",
+        "ensure_cross_worktree_slot",
+        "acquire_lock",
+        "make_run_dir",
+        "stream_pytest",
+    ):
+        monkeypatch.setattr(
+            mod,
+            name,
+            lambda *a, _name=name, **k: (
+                calls.append(_name) or (_ for _ in ()).throw(AssertionError(_name))
+            ),
+        )
+    assert mod.main() == 78
+    out = capsys.readouterr().out
+    assert "env_inherited:PYTHONIOENCODING" in out
+    assert "desdefinirla" in out and "--allow-env" in out
+    assert calls == []
+
+
+def test_191a_p2_02_stamp_bloqueado_6_claves_exactas(tmp_path, monkeypatch, capsys):
+    from datetime import datetime
+
+    mod, base = _harness_191a(tmp_path, monkeypatch, capsys, ["--level", "all"])
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+    assert mod.main() == 78
+    data = json.loads((base / "last-run.json").read_text())
+    assert set(data) == {
+        "status",
+        "exit_code",
+        "level",
+        "started_at",
+        "finished_at",
+        "pre_suite",
+    }
+    assert isinstance(data["status"], str) and data["status"] == "pre_suite_blocked"
+    assert isinstance(data["exit_code"], int) and data["exit_code"] == 78
+    assert isinstance(data["level"], str) and data["level"] == "all"
+    datetime.fromisoformat(data["started_at"])
+    datetime.fromisoformat(data["finished_at"])
+    assert data["pre_suite"] == {
+        "blocked": True,
+        "reason": "env_inherited:PYTHONIOENCODING",
+        "allow_env": False,
+    }
+    assert data["status"] != "finished" and data["exit_code"] != 0
+
+
+def test_191a_p2_03_allow_env_escapa_y_se_registra(tmp_path, monkeypatch, capsys):
+    mod, base = _harness_191a(
+        tmp_path, monkeypatch, capsys, ["--level", "all", "--allow-env"]
+    )
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+    seen = []
+    monkeypatch.setattr(
+        mod, "stream_pytest", lambda cmd: seen.append(True) or (0, [], [], False)
+    )
+    assert mod.main() == 0
+    data = json.loads((base / "last-run.json").read_text())
+    assert seen and data["pre_suite"] == {
+        "blocked": False,
+        "allow_env": True,
+        "env_inherited": ["PYTHONIOENCODING"],
+    }
+
+
+@pytest.mark.parametrize(
+    "case", ["ausente_all", "dry_run", "status", "cleanup_only", "level_unit"]
+)
+def test_191a_p2_04_sin_variable_ni_otros_modos_bloquean(
+    tmp_path, monkeypatch, capsys, case
+):
+    argv = {
+        "ausente_all": ["--level", "all"],
+        "dry_run": ["--level", "all", "--dry-run"],
+        "status": ["--level", "all", "--status"],
+        "cleanup_only": ["--level", "all", "--cleanup-only"],
+        "level_unit": [],
+    }[case]
+    mod, base = _harness_191a(tmp_path, monkeypatch, capsys, argv)
+    if case != "ausente_all":
+        monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+    assert mod.main() != 78
+    if case == "ausente_all":
+        data = json.loads((base / "last-run.json").read_text())
+        assert "pre_suite" not in data
+
+
+def test_191a_p2_05a_rol_77_gana_a_78(tmp_path, monkeypatch, capsys):
+    mod, _ = _harness_191a(tmp_path, monkeypatch, capsys, ["--level", "all"])
+    turn = tmp_path / ".agent/collaboration/TURN.md"
+    turn.parent.mkdir(parents=True, exist_ok=True)
+    turn.write_text("| **ROL** | **BUILDER** |\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+    assert mod.main() == 77
+
+
+def test_191a_p2_05b_bloqueo_no_toca_el_centinela(tmp_path, monkeypatch, capsys):
+    mod, _ = _harness_191a(tmp_path, monkeypatch, capsys, ["--level", "all"])
+    calls = []
+    _recorder_191a(mod, tmp_path, monkeypatch, calls)
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+    assert mod.main() == 78 and calls == []
+
+
+def test_191a_p2_06_hijo_herda_ioenc_sin_utf8(tmp_path, monkeypatch):
+    mod = load_runner_module()
+    monkeypatch.setenv("PYTHONIOENCODING", "utf-8")
+    monkeypatch.setenv("PYTHONUTF8", "1")
+    captured = {}
+
+    class Process(_MockProcessWithWaitCaptureNormal):
+        pass
+
+    def popen(command, *args, **kwargs):
+        captured["env"] = kwargs["env"]
+        return Process()
+
+    monkeypatch.setattr(mod.subprocess, "Popen", popen)
+    mod.stream_pytest(["cmd"])
+    assert captured["env"]["PYTHONIOENCODING"] == "utf-8"
+    assert "PYTHONUTF8" not in captured["env"]
+
+
+def test_191a_p2_07_constante_78_distinta():
+    mod = load_runner_module()
+    assert mod.EX_PRE_SUITE_BLOCKED == 78
+    assert mod.EX_PRE_SUITE_BLOCKED not in {
+        0,
+        1,
+        2,
+        5,
+        mod.EX_TEMPFAIL,
+        mod.EX_ROLE_NOT_PERMITTED,
+    }
+
+
+@pytest.fixture(autouse=True)
+def _191a_clear_inherited_ioencoding(monkeypatch):
+    """Keep legacy in-process all-level harnesses independent of parent env."""
+    monkeypatch.delenv("PYTHONIOENCODING", raising=False)
