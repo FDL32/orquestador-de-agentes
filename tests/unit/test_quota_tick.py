@@ -842,3 +842,131 @@ def test_extra_fuera_de_censo_no_eleva_rc_ni_estado(rig):
     extra = next(item for item in payload["accounts"] if item["cuenta"] == "extra")
     assert rc == 0 and payload["rc_info"] == 0
     assert extra["en_censo"] is False and extra["block_pct"] == 99
+
+
+def test_m01_alvarovans_agotar_excluida_rc0_y_control_rc5(rig):
+    """Before: alvarovans is marked for exhaustion and brabander is healthy.
+
+    During: run the tick with and without the per-account exhaustion policy.
+    After: the marked account is visible as AGOTAR but excluded from global severity.
+    """
+    policy = {
+        "provider_map": {"p": "alvarovans", "h": "brabander"},
+        "preferred_account": "alvarovans",
+        "harbor_account": "brabander",
+        "alvarovans": {"consume_to_exhaustion": True},
+    }
+    rig.roster(raw=json.dumps({"quota": {"account_policy": policy}}))
+    rig.monitor_out = json.dumps(
+        accounts(alvarovans=acct(99, window="session"), brabander=acct(15))
+    )
+    rc, out = rig.tick()
+    assert rc == 0 and out.startswith("QUOTA OK")
+    segments = out.split(" | ")
+    assert any("alvarovans" in part and "AGOTAR" in part for part in segments)
+    assert all(not ("brabander" in part and "AGOTAR" in part) for part in segments)
+
+    control = {key: value for key, value in policy.items() if key != "alvarovans"}
+    rig.roster(raw=json.dumps({"quota": {"account_policy": control}}))
+    assert rig.tick()[0] == 5
+
+
+def test_m02_brabander_alta_sigue_freeze_con_alvarovans_marcada(rig):
+    """Before: both accounts are high and only alvarovans is exhaustible.
+
+    During: measure the per-account policy with brabander at hard stop.
+    After: brabander still determines HARD while alvarovans is only annotated.
+    """
+    rig.roster(
+        raw=json.dumps(
+            {
+                "quota": {
+                    "account_policy": {
+                        "provider_map": {"p": "alvarovans", "h": "brabander"},
+                        "preferred_account": "alvarovans",
+                        "harbor_account": "brabander",
+                        "alvarovans": {"consume_to_exhaustion": True},
+                    }
+                }
+            }
+        )
+    )
+    rig.monitor_out = json.dumps(
+        accounts(
+            alvarovans=acct(99, window="session"),
+            brabander=acct(98, window="weekly"),
+        )
+    )
+    rc, out = rig.tick()
+    assert rc == 5 and out.startswith("QUOTA HARD")
+    assert "alvarovans" in out and "AGOTAR" in out
+    assert "brabander weekly 98%" in out
+
+
+def test_m14_alvarovans_marcada_stale_es_no_medido(rig):
+    """Before: marked alvarovans is stale while brabander is fresh.
+
+    During: run the text tick and then clear stale on the same monitor input.
+    After: stale remains NO_MEDIDO and fresh marked input remains OK.
+    """
+    policy = {
+        "provider_map": {"p": "alvarovans", "h": "brabander"},
+        "preferred_account": "alvarovans",
+        "harbor_account": "brabander",
+        "alvarovans": {"consume_to_exhaustion": True},
+    }
+    rig.roster(raw=json.dumps({"quota": {"account_policy": policy}}))
+    rig.monitor_out = json.dumps(
+        accounts(
+            alvarovans=acct(99, window="session", stale=True),
+            brabander=acct(15),
+        )
+    )
+    rc, out = rig.tick()
+    assert rc == 9 and "alvarovans session 99% STALE" in out
+    rig.monitor_out = json.dumps(
+        accounts(
+            alvarovans=acct(99, window="session"),
+            brabander=acct(15),
+        )
+    )
+    assert rig.tick()[0] == 0
+
+
+def test_m15_json_v2_sin_cambios_con_marca(rig):
+    """Before: the same two accounts are measured with and without exhaustion marking.
+
+    During: request frozen JSON v2 for both rosters.
+    After: schema and account keys are identical and marked input stays rc zero.
+    """
+    base = {
+        "provider_map": {"p": "alvarovans", "h": "brabander"},
+        "preferred_account": "alvarovans",
+        "harbor_account": "brabander",
+    }
+    rig.monitor_out = json.dumps(accounts(alvarovans=acct(99), brabander=acct(15)))
+    payloads = []
+    for marked in (False, True):
+        policy = dict(base)
+        if marked:
+            policy["alvarovans"] = {"consume_to_exhaustion": True}
+        rig.roster(raw=json.dumps({"quota": {"account_policy": policy}}))
+        rc, out = rig.tick("--json")
+        if marked:
+            assert rc == 0
+        payloads.append(json.loads(out))
+    expected = {
+        "cuenta",
+        "en_censo",
+        "estado_operativo",
+        "calidad_medida",
+        "block_pct",
+        "ventana_peor",
+        "ventanas",
+    }
+    assert all(payload["QUOTA_JSON_SCHEMA"] == 2 for payload in payloads)
+    assert all(
+        set(item) == expected for payload in payloads for item in payload["accounts"]
+    )
+    assert set(payloads[0]) == set(payloads[1])
+    assert payloads[1]["rc_info"] == 0

@@ -15,6 +15,8 @@ After: UNA linea ``QUOTA <ESTADO> (soft S/hard H) | <cuenta> <ventana> <pct>% | 
     3 AVISO (>= 90), 4 FREEZE (>= soft), 5 HARD (>= hard), 9 NO_MEDIDO. Cualquier fallo interno
     (roster o monitor ausentes o ilegibles, cuentas vacias, porcentaje NaN, booleano o cadena)
     es rc 9 con la causa; nunca un traceback con rc 1 ni un OK sin haber medido nada.
+    Las cuentas con ``consume_to_exhaustion`` literal ``true`` se excluyen del worst global y
+    reciben la marca textual ``AGOTAR``; el esquema JSON v2 no cambia.
 
 Schema JSON v2 congelado: ``QUOTA_JSON_SCHEMA``; cada cuenta lleva ``cuenta``,
 ``en_censo``, ``estado_operativo``, ``calidad_medida``, ``block_pct``,
@@ -422,7 +424,8 @@ def _tick(a):
     """Ejecuta una medicion completa de cupo y escribe su linea de resultado.
 
     Before: ``a`` contiene los argumentos CLI; vuelo, roster y monitor deben ser resolubles.
-    During: resuelve roster y umbrales, ejecuta el monitor, anade la sonda informativa y clasifica.
+    During: resuelve roster y umbrales, excluye por cuenta las politicas de agotamiento del worst,
+        anade ``AGOTAR`` solo al segmento textual de cada cuenta y clasifica.
     After: devuelve el rc del estado; ``NoMedidoError`` sube al ``main`` y no se modifica ningun fichero.
     """
     env = os.environ
@@ -431,6 +434,19 @@ def _tick(a):
     accounts = _accounts(a.monitor or env.get(MONITOR_ENV))
     census = _census(policy)
     worst, parts, bad = _measure(accounts, census)
+    agotar = {
+        nombre
+        for nombre, valor in policy.items()
+        if isinstance(valor, dict) and valor.get("consume_to_exhaustion") is True
+    }
+    if agotar:
+        worst = _measure(
+            {key: value for key, value in accounts.items() if key not in agotar}, census
+        )[0]
+        parts = [
+            f"{part} AGOTAR" if part.split(maxsplit=1)[0] in agotar else part
+            for part in parts
+        ]
     home = a.codex_home or env.get(CODEX_HOME_ENV) or (Path.home() / ".codex")
     codex_text, codex_item = _codex(
         a.probe or env.get(PROBE_ENV), Path(home).as_posix()
