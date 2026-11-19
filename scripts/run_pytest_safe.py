@@ -347,6 +347,41 @@ def incomplete_interpreter_diagnostic(interpreter: str) -> str:
     )
 
 
+# WOT-2026-199a: explicita el motivo del fallback y evita acreditar como verde
+# una corrida unittest que no encontro ningun test.
+def unittest_fallback_reason(interpreter: str) -> str:
+    """Construir el motivo canonico del fallback a unittest.
+
+    Before: `interpreter` es la ruta del interprete seleccionado.
+    During: concatena el literal canonico sin hacer I/O ni sondeos.
+    After: devuelve exactamente el motivo que se muestra y persiste.
+    """
+    return f"pytest ausente en {interpreter}"
+
+
+def unittest_declares_zero_tests(log_text: str) -> bool:
+    """Detectar si el resumen de unittest declara cero tests.
+
+    Before: `log_text` contiene el log de la corrida de unittest.
+    During: busca una linea que empiece exactamente por `Ran 0 tests`.
+    After: devuelve True solo para ese resumen, sin confundir otros conteos.
+    """
+    return re.search(r"^Ran 0 tests\b", log_text, re.MULTILINE) is not None
+
+
+def _read_last_run_log_text() -> str:
+    """Leer el log actual y degradar a texto vacio si falla la lectura.
+
+    Before: LAST_RUN_LOG apunta al log de la corrida actual.
+    During: lee el fichero con UTF-8 y captura errores de sistema.
+    After: devuelve el texto leido o una cadena vacia ante OSError.
+    """
+    try:
+        return LAST_RUN_LOG.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
 def _warn_if_interpreter_is_not_root_venv(interpreter: str, root: Path) -> None:
     """WARN when running the motor suite outside its own ``.venv``.
 
@@ -2641,6 +2676,8 @@ def main() -> int:  # noqa: C901
         run_dir,
         test_dir=default_test_target().rstrip("/"),
     )
+    if _runner == "unittest":
+        print(unittest_fallback_reason(_chosen_interpreter))
 
     # WOT-2026-017a: capture the baseline failed_test_ids from the previous
     # last-run.json (if it exists and has the field) BEFORE this run overwrites
@@ -2805,6 +2842,8 @@ def main() -> int:  # noqa: C901
         # Written with fsync so it persists even if the process is killed.
         "environment_at_start": env_at_start,
     }
+    if _runner == "unittest":
+        summary["runner_reason"] = unittest_fallback_reason(_chosen_interpreter)
     write_json(LAST_RUN_JSON, summary, fsync=True)
 
     # WOT-2026-062e (Pieza C): preflight RAM warning (non-blocking).
@@ -2852,6 +2891,14 @@ def main() -> int:  # noqa: C901
         if timed_out:
             summary["status"] = "timeout"
             summary["timed_out"] = True
+        if (
+            _runner == "unittest"
+            and not timed_out
+            and exit_code == 0
+            and unittest_declares_zero_tests(_read_last_run_log_text())
+        ):
+            exit_code = 5
+            summary["exit_code"] = exit_code
         # WOT-2026-055j: un `exit_code: 5` (pytest: NINGUN TEST RECOLECTADO) no
         # puede quedar registrado como `status: finished` indistinguible de una
         # corrida legitima. Ver helper _mark_no_tests_collected.

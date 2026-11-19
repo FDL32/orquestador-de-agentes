@@ -4284,3 +4284,249 @@ class TestCrossWorktreeCliWiring:
             # el marcador es SEPARADO: el lock ajeno sigue en disco, intacto,
             # incluso tras el release del finally de main() (ownership check).
             assert lock_file.read_bytes() == before
+
+
+# ---------------------------------------------------------------------------
+# WOT-2026-199a: la rama unittest con CERO tests no acredita
+# (exit 5 + stamp no-tests-collected + motivo del fallback ruidoso)
+# ---------------------------------------------------------------------------
+
+_UNITTEST_EMPTY_LOG_199A = (
+    "----------------------------------------------------------------------\n"
+    "Ran 0 tests in 0.000s\n"
+    "\n"
+    "OK\n"
+)
+_UNITTEST_ONE_TEST_LOG_199A = (
+    "----------------------------------------------------------------------\n"
+    "Ran 1 tests in 0.001s\n"
+    "\n"
+    "OK\n"
+)
+
+
+def _run_main_199a(
+    tmp_path: Path,
+    monkeypatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    runner: str,
+    interpreter: str,
+    log_text: str,
+    returncode: int,
+) -> tuple[int, dict, pytest.CaptureFixture[str]]:
+    """Drive main() with a SIMULATED runner branch plus its captured log.
+
+    WOT-2026-199a. Before: caller supplies the branch the runner must take
+        (pytest/unittest), the interpreter the resolution seam must return, the
+        exact last-run.log text the subprocess would have produced, and that
+        subprocess' return code.
+    During: every write path (last-run.json / last-run.log / run_history /
+        cross lock) is redirected under tmp_path, stream_pytest is stubbed so
+        it NEVER overwrites the simulated log, and main() runs in-process with
+        the default CLI (level unit, the same shape as the real reproduction).
+    After: returns (the exit code main() returned, the persisted last-run.json
+        as a dict, the captured stdout/stderr). Never touches the real motor
+        runtime (state-leak guards of this file: autouse redirect + explicit
+        patching below).
+    """
+    mod = load_runner_module()
+    base = tmp_path / "runtime" / ".agent" / "runtime" / "pytest-safe"
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "last-run.log").write_text(log_text, encoding="utf-8")
+
+    monkeypatch.setattr(mod, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(mod, "_PROJECT_ROOT_BOOTSTRAP", tmp_path)
+    monkeypatch.setattr(mod, "LAST_RUN_JSON", base / "last-run.json")
+    monkeypatch.setattr(mod, "LAST_RUN_LOG", base / "last-run.log")
+    monkeypatch.setattr(mod, "RUN_HISTORY_JSONL", base / "run_history.jsonl")
+    # stream_pytest must NOT rewrite the simulated log we just planted.
+    monkeypatch.setattr(mod, "stream_pytest", lambda cmd: (returncode, [], [], False))
+    monkeypatch.setattr(mod, "_delivery_head_sha", lambda: "sha199a")
+    monkeypatch.setattr(mod, "acquire_lock", lambda force_unlock=False: {"pid": 0})
+    monkeypatch.setattr(mod, "release_lock", lambda: None)
+    monkeypatch.setattr(
+        mod, "cleanup_known_temp_dirs", lambda: {"removed": [], "failed": []}
+    )
+    monkeypatch.setattr(mod, "check_canonical_state_leak", lambda snap: [])
+    monkeypatch.setattr(mod, "snapshot_canonical_state", lambda: {})
+    monkeypatch.setattr(
+        mod,
+        "select_test_runner",
+        lambda interp, args, xdist, run_dir, test_dir: (["echo"], runner),
+    )
+    monkeypatch.setattr(mod, "resolve_test_interpreter", lambda: interpreter)
+    monkeypatch.setattr(sys, "argv", ["run_pytest_safe.py"])
+
+    rc = mod.main()
+    summary = json.loads((base / "last-run.json").read_text(encoding="utf-8"))
+    return rc, summary, capsys.readouterr()
+
+
+def test_199a_m01_unittest_cero_tests_sale_con_exit_5(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """m-01: en la rama unittest, 'Ran 0 tests' con rc 0 sale con exit 5.
+
+    Medido 2026-11-19 por la ruta real (ficha s.1): un destino con .venv sin
+    pytest ejecuta `unittest discover` sobre tests/ vacio, imprime "Ran 0
+    tests / OK" y el proceso sale con 0 -- un artefacto que acredita igual que
+    una corrida verde. Ni el proceso ni el sello pueden decir "finished" sin
+    haber medido nada.
+
+    ROJO EN EL HEAD BASE: main() devuelve 0 (reproducida en la rama base
+    da2831fe). CONTROL POSITIVO: revertido el cambio en run_pytest_safe.py el
+    asert falla con exit 0.
+
+    MUTANTE QUE LA MATA: elevar a 5 sin mirar el resumen ('Ran 1 tests' o un
+    rc != 0) -- la mata el test hermano m-03/m-04, esta queda verde.
+    """
+    interpreter = str(tmp_path / "venv-ut" / "Scripts" / "python.exe")
+    rc, summary, _ = _run_main_199a(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        runner="unittest",
+        interpreter=interpreter,
+        log_text=_UNITTEST_EMPTY_LOG_199A,
+        returncode=0,
+    )
+    assert rc == 5, f"rc del proceso: se esperaba 5, llego {rc}"
+    assert summary["exit_code"] == 5, summary
+
+
+def test_199a_m02_unittest_cero_tests_estampa_no_tests_collected(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """m-02: ESE sello es no-tests-collected (exit 5), nunca finished/0.
+
+    Tres aserciones sobre el mismo last-run.json: status, exit_code y la marca
+    explicita no_tests_collected. Sin la marca, cualquier lector de
+    last-run.json acredita la corrida igual que una legitima (el defecto
+    medido por CO-131 con una lente que emitio BLOCKER falso).
+
+    MUTANTE QUE LA MATA: no llamar a _mark_no_tests_collected en esta rama
+    (status se queda 'finished') -- las tres aserciones caen.
+    """
+    interpreter = str(tmp_path / "venv-ut" / "Scripts" / "python.exe")
+    _, summary, _ = _run_main_199a(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        runner="unittest",
+        interpreter=interpreter,
+        log_text=_UNITTEST_EMPTY_LOG_199A,
+        returncode=0,
+    )
+    assert summary["status"] == "no-tests-collected", summary
+    assert summary["exit_code"] == 5, summary
+    assert summary["no_tests_collected"] is True, summary
+
+
+def test_199a_m03_unittest_con_tests_reales_no_cambia(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """m-03: con al menos UN test ejecutado el exit y el stamp NO cambian.
+
+    'Ran 1 tests' + rc 0 sigue siendo exit 0 y status finished: el fix solo
+    castiga el vacio, no al fallback unittest en si (un destino sin pytest
+    PUEDE tener tests validos y debe acreditar).
+
+    ROJO EN EL HEAD BASE: por el runner_reason ausente (el resto del contrato
+    ya se cumplia en base; este test declara la rama unittest completa: su
+    motivo ruidoso existe tambien cuando la corrida trae tests).
+
+    MUTANTE QUE LA MATA: elevar a 5 siempre que el runner sea unittest -- aqui
+    rc pasaria a 5 y status a no-tests-collected.
+    """
+    interpreter = str(tmp_path / "venv-ut" / "Scripts" / "python.exe")
+    rc, summary, _ = _run_main_199a(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        runner="unittest",
+        interpreter=interpreter,
+        log_text=_UNITTEST_ONE_TEST_LOG_199A,
+        returncode=0,
+    )
+    assert rc == 0, f"rc del proceso: se esperaba 0, llego {rc}"
+    assert summary["status"] == "finished", summary
+    assert "no_tests_collected" not in summary, summary
+    assert summary.get("runner_reason") == f"pytest ausente en {interpreter}", summary
+
+
+def test_199a_m04_unittest_rc_distinto_no_se_enmascara(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """m-04: un rc distinto de 0 y de 5 NO se enmascara.
+
+    'Ran 0 tests' con rc 1 (resumen mentiroso o fallo real) conserva exit 1:
+    la elevacion a 5 solo esta justificada cuando el proceso dijo exito sin
+    ejecutar nada. Enmascarar aqui ocultaria fallos reales detras del sello
+    no-acreditante.
+
+    ROJO EN EL HEAD BASE: por el runner_reason ausente (el rc ya salia 1).
+
+    MUTANTE QUE LA MATA: elevar a 5 sin mirar el rc -- rc pasa a 1 -> 5.
+    """
+    interpreter = str(tmp_path / "venv-ut" / "Scripts" / "python.exe")
+    rc, summary, _ = _run_main_199a(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        runner="unittest",
+        interpreter=interpreter,
+        log_text=_UNITTEST_EMPTY_LOG_199A,
+        returncode=1,
+    )
+    assert rc == 1, f"rc del proceso: se esperaba 1, llego {rc}"
+    assert summary["exit_code"] == 1, summary
+    assert summary["status"] == "finished", summary
+    assert "no_tests_collected" not in summary, summary
+    assert summary.get("runner_reason") == f"pytest ausente en {interpreter}", summary
+
+
+def test_199a_m05_motivo_del_fallback_solo_en_rama_unittest(
+    tmp_path: Path, monkeypatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """m-05: las DOS ramas -- el motivo sale en stdout y en runner_reason SOLO
+    en la rama unittest; la rama pytest no lo lleva.
+
+    Literal exigido por la ficha: 'pytest ausente en <ruta del interprete>'.
+    En stdout, porque un operador que mira la consola ve el sintoma ("Ran 0
+    tests") y no la causa; en last-run.json, porque el lector del sello no
+    ve stdout. Solo en la rama unittest: en la rama pytest el interprete SIEMPRE
+    tiene pytest, asi que declararlo ahi seria mentira ruidosa.
+
+    ROJO EN EL HEAD BASE: ni la linea de stdout ni el campo existen.
+
+    MUTANTE QUE LA MATA: publicar runner_reason tambien en la rama pytest --
+    la asercion de ausencia cae.
+    """
+    interp_ut = str(tmp_path / "venv-ut" / "Scripts" / "python.exe")
+    _, sum_ut, cap_ut = _run_main_199a(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        runner="unittest",
+        interpreter=interp_ut,
+        log_text=_UNITTEST_EMPTY_LOG_199A,
+        returncode=0,
+    )
+    motivo = f"pytest ausente en {interp_ut}"
+    assert motivo in cap_ut.out, f"stdout de la rama unittest: {cap_ut.out!r}"
+    assert sum_ut.get("runner_reason") == motivo, sum_ut
+
+    interp_pt = str(tmp_path / "venv-pt" / "Scripts" / "python.exe")
+    _, sum_pt, cap_pt = _run_main_199a(
+        tmp_path,
+        monkeypatch,
+        capsys,
+        runner="pytest",
+        interpreter=interp_pt,
+        log_text="===== 5 passed in 1.23s =====\n",
+        returncode=0,
+    )
+    assert f"pytest ausente en {interp_pt}" not in cap_pt.out, cap_pt.out
+    assert "runner_reason" not in sum_pt, sum_pt
