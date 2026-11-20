@@ -18,6 +18,15 @@
             "command": "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'pretooluse_bash_wait_guard.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'pretooluse_bash_wait_guard.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else (sys.stderr.write('HOOK INACTIVE: pretooluse_bash_wait_guard.py not found; hook failed (fail-closed).'),sys.exit(2))\""
           }
         ]
+      },
+      {
+        "matcher": "Agent|Task|mcp__t3-code__delegate_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"with __import__('contextlib').suppress(Exception): import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); s=r/'.agent'/'hooks'/'pretooluse_triaje_notice.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; s=s if s.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'pretooluse_triaje_notice.py') if l.exists() else s); sys.exit(subprocess.run([sys.executable,str(s)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if s.exists() else sys.exit(0)\""
+          }
+        ]
       }
     ],
     "PostToolUse": [
