@@ -1,1 +1,0 @@
-Brief de Agent para revisar el protocolo de triaje y confirmar la celda antes de continuar.
