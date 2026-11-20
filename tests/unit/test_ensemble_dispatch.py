@@ -1557,6 +1557,7 @@ def test_real_config_codex_delivers_multiline_prompt_intact(monkeypatch):
 def _capture_argv(monkeypatch, profile, backend_cfg, prompt="hola"):
     """Ejerce `_transport_agent` con Popen capturado y devuelve el argv real."""
     captured: dict = {}
+    monkeypatch.setattr(ed, "_agent_missing_reason", lambda *args: None)
 
     class _ArgvCapturingPopen:
         pid = 4747
@@ -7570,6 +7571,7 @@ def test_transport_agent_binds_readonly_agent_when_profile_declares_no_write(
     Mutation: quitar la inyeccion de `--agent` -> este test cae en RED.
     """
     captured: dict = {}
+    monkeypatch.setattr(ed, "_agent_missing_reason", lambda *args: None)
 
     class _CapturingPopen:
         pid = 444
@@ -7601,6 +7603,69 @@ def test_transport_agent_binds_readonly_agent_when_profile_declares_no_write(
     assert cmd.index("--agent") < cmd.index("audita esto"), (
         "--agent debe preceder al prompt en argv"
     )
+
+
+def test_readonly_agent_missing_blocks_before_popen(monkeypatch, tmp_path):
+    """m-05: agente ausente bloquea la lente y no lanza opencode run."""
+    launches = []
+    monkeypatch.setattr(
+        ed, "_agent_missing_reason", lambda *args: "agente auditor ausente"
+    )
+    monkeypatch.setattr(
+        ed.subprocess, "Popen", lambda *args, **kwargs: launches.append(args)
+    )
+
+    with pytest.raises(ed.DispatchBlockedError, match="auditor"):
+        ed._transport_agent(
+            {"write": False},
+            {
+                "executable": "opencode",
+                "readonly_agent": "auditor",
+                "repo_root": str(tmp_path),
+            },
+            [{"role": "user", "content": "audita"}],
+            timeout=10,
+        )
+    assert launches == []
+
+
+def test_readonly_agent_present_reaches_popen(monkeypatch, tmp_path):
+    """m-05 control: el mismo camino lanza con --agent cuando está presente."""
+    captured = {}
+    monkeypatch.setattr(ed, "_agent_missing_reason", lambda *args: None)
+
+    class _FakePopen:
+        pid = 1
+        returncode = 0
+
+        def __init__(self, cmd, *args, **kwargs):
+            captured["cmd"] = cmd
+
+        def communicate(self, input=None, timeout=None):
+            return "respuesta", ""
+
+    monkeypatch.setattr(ed.subprocess, "Popen", _FakePopen)
+    ed._transport_agent(
+        {"write": False},
+        {
+            "executable": "opencode",
+            "readonly_agent": "auditor",
+            "repo_root": str(tmp_path),
+        },
+        [{"role": "user", "content": "audita"}],
+        timeout=10,
+    )
+    assert captured["cmd"][captured["cmd"].index("--agent") + 1] == "auditor"
+
+
+def test_real_agent_listing_helper_blocks_without_agent(tmp_path):
+    """m-05: el helper real usa el CLI y falla en un cwd sin agente local."""
+    reason = ed._agent_missing_reason(
+        r"C:\Users\fdl\opencode\opencode.exe",
+        str(tmp_path),
+        "agent_that_does_not_exist_209a",
+    )
+    assert reason is not None
 
 
 def test_transport_agent_does_not_bind_agent_when_profile_allows_write(monkeypatch):

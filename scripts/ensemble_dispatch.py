@@ -2052,6 +2052,46 @@ def _render_readonly_agent_flag(profile: dict, backend_cfg: dict) -> list[str]:
     return ["--agent", agent_name]
 
 
+def _agent_missing_reason(executable: str, cwd: str, agent: str) -> str | None:
+    """Comprueba que el agente read-only existe desde el cwd final.
+
+    Before: `executable` es el CLI del backend, `cwd` la raíz efectiva de la
+        lente y `agent` el nombre explícito que se pasará a `run`.
+    During: ejecuta únicamente `<executable> agent list` con el mismo cwd,
+        captura stdout y exige que el primer token de una línea no vacía sea
+        el agente solicitado. Cualquier error es fail-closed.
+    After: devuelve `None` si el agente aparece; en otro caso devuelve una
+        razón legible que identifica agente y cwd.
+    """
+    try:
+        proc = subprocess.run(
+            [executable, "agent", "list"],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            shell=False,
+            check=False,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired) as exc:
+        return f"no se pudo listar el agente '{agent}' desde cwd={cwd}: {exc}"
+    except Exception as exc:
+        return f"no se pudo listar el agente '{agent}' desde cwd={cwd}: {exc}"
+    if proc.returncode != 0:
+        return (
+            f"`{executable} agent list` rc={proc.returncode} no pudo resolver "
+            f"el agente '{agent}' desde cwd={cwd}"
+        )
+    names = {
+        line.strip().split(maxsplit=1)[0]
+        for line in (proc.stdout or "").splitlines()
+        if line.strip()
+    }
+    if agent not in names:
+        return f"el agente '{agent}' no aparece desde cwd={cwd}"
+    return None
+
+
 def _transport_agent(
     profile: dict, backend_cfg: dict, messages: list[dict], timeout: int
 ) -> str:
@@ -2129,6 +2169,14 @@ def _transport_agent(
     popen_kwargs: dict = {}
     if repo_root is not None:
         popen_kwargs["cwd"] = repo_root
+    readonly_agent = backend_cfg.get("readonly_agent")
+    if profile.get("write") is False and readonly_agent:
+        final_cwd = repo_root or os.getcwd()
+        missing_reason = _agent_missing_reason(
+            backend_cfg["executable"], final_cwd, readonly_agent
+        )
+        if missing_reason is not None:
+            raise DispatchBlockedError(missing_reason)
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,

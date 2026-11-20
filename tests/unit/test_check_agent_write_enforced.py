@@ -9,12 +9,258 @@ y un gate que grita donde no hay riesgo acaba con allowlist o desactivado.
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
+import pytest
 from scripts.check_agent_write_enforced import (
+    NON_READ_PERMISSION_KEYS,
+    _permissive_write_permissions,
     find_unenforced_pairs,
     has_native_sandbox,
     main,
 )
+
+
+MOTOR_AUDITOR_PATH = (
+    Path(__file__).resolve().parents[2] / ".opencode" / "agents" / "auditor.md"
+)
+_MOTOR_ROOT = Path(__file__).resolve().parents[2]
+DESTINO_AUDITOR_TEXT = """---
+description: Read-only audit lens for ensemble governance loops
+mode: primary
+permission:
+  "*": deny
+  read: allow
+  glob: allow
+  grep: allow
+  list: allow
+  edit: deny
+  bash: deny
+  task: deny
+  todowrite: deny
+  webfetch: deny
+  websearch: deny
+  codesearch: deny
+  skill: deny
+  external_directory:
+    "*": deny
+    "C:\\Users\\fdl\\Proyectos_Python\\orquestador_de_agentes\\**": allow
+---
+
+You are a READ-ONLY audit lens for the orquestador_de_agentes repo, running through OpenCode
+as one participant of an ensemble governance loop (`scripts/ensemble_dispatch.py`).
+
+Your job is to JUDGE the bundle you receive, not to implement anything.
+
+## Why this agent exists
+
+Ensemble profiles declare `write: false` in `.agent/config/agents.json`. Before WOT-2026-048k
+that field was DECORATIVE: the dispatcher never translated it into anything on the command
+line, so `opencode run` fell back to `default_agent` (`builder`), and an audit lens received
+the BUILDER system prompt -- with `edit`, `bash` and `task` allowed -- while being asked to
+audit. Measured 2026-08-05: a GLM lens deliberated about whether to call `--mark-ready` and
+about its `Files Likely Touched` whitelist, neither of which appeared anywhere in its bundle.
+The only thing standing between an audit lens and a write was the model's own restraint.
+
+This agent is the enforcement half of that contract: a profile declaring `write: false` is
+dispatched with `--agent auditor`, and the permissions above make the declaration real.
+
+## Operating rules
+
+- Answer ONLY what the bundle asks. Do not implement, refactor or "fix while you are there".
+- Never call `--mark-ready`, never emit `BUILDER_EXIT`, never close a ticket. You are not the
+  Builder; there is usually no active Builder ticket that corresponds to your bundle.
+- Do not treat the repository's collaboration state (`.agent/collaboration/*`) as your task.
+  If the bundle embeds content, judge the EMBEDDED content -- that is the point of a bundle.
+- If a claim cannot be settled with the evidence you were given, say `INSUFICIENTE` and name
+  the exact measurement that is missing. Do not infer the missing link and do not soften it.
+- Prefer refuting over confirming. A confirmation that is wrong is far more expensive than a
+  refutation that is wrong: the loop exists to catch plausible-but-false claims.
+- Report verdicts in the format the bundle requests. Your final text IS the return value.
+"""
+DESTINO_OPENCODE_JSON = """{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "github": {
+      "enabled": false
+    }
+  }
+}
+"""
+
+
+def derive_destino_auditor(motor_text: str) -> str:
+    """Deriva la copia destino desde el auditor del motor.
+
+    Before: `motor_text` contiene el artefacto canónico con el bloque scalar.
+    During: reemplaza únicamente la regla scalar de `external_directory`.
+    After: devuelve el artefacto destino con el allow específico al motor.
+    """
+    slash = chr(92)
+    destination_path = slash.join(
+        ("C:", "Users", "fdl", "Proyectos_Python", "orquestador_de_agentes", "**")
+    )
+    replacement = (
+        '  external_directory:\n    "*": deny\n    "' + destination_path + '": allow'
+    )
+    return motor_text.replace("  external_directory: deny", replacement)
+
+
+def _skip_construct_count(text: str) -> int:
+    """Cuenta construcciones de salto sin dejar patrones literales en el test.
+
+    Before: `text` es fuente de test potencialmente peligrosa.
+    During: ensambla los tokens de control y cuenta sus apariciones.
+    After: devuelve el número de construcciones prohibidas encontradas.
+    """
+    tokens = [
+        "pytest." + "mark.skip",
+        "pytest." + "skip(",
+        "import" + "orskip",
+        "skip" + "if",
+    ]
+    return sum(text.count(token) for token in tokens)
+
+
+def test_destino_fixture_is_derived_from_motor_and_materialized(tmp_path):
+    """La fixture literal es una copia fiel derivada del único origen motor."""
+    motor_text = MOTOR_AUDITOR_PATH.read_text(encoding="utf-8")
+    assert derive_destino_auditor(motor_text) == DESTINO_AUDITOR_TEXT
+    root = Path(r"C:\Temp\co141\im-209a\destino_fixture\.opencode")
+    (root / "agents").mkdir(parents=True, exist_ok=True)
+    (root / "agents" / "auditor.md").write_text(DESTINO_AUDITOR_TEXT, encoding="utf-8")
+    (root / "opencode.json").write_text(DESTINO_OPENCODE_JSON, encoding="utf-8")
+    assert (root / "agents" / "auditor.md").read_text(
+        encoding="utf-8"
+    ) == DESTINO_AUDITOR_TEXT
+    assert (root / "opencode.json").read_text(encoding="utf-8") == DESTINO_OPENCODE_JSON
+
+
+def test_motor_and_destino_have_same_resolved_non_read_rules():
+    """Motor y destino difieren solo en el allow específico de external_directory."""
+    import scripts.check_agent_write_enforced as cawe
+
+    motor = cawe._agent_permission_rules(
+        r"C:\Users\fdl\opencode\opencode.exe",
+        str(MOTOR_AUDITOR_PATH.parents[2]),
+        "auditor",
+    )
+    assert motor is not None
+    destino_rules = [
+        {"permission": "*", "action": "deny", "pattern": "*"},
+        *[
+            {
+                "permission": key,
+                "action": "allow"
+                if key in {"read", "glob", "grep", "list"}
+                else "deny",
+                "pattern": "*",
+            }
+            for key in {"read", "glob", "grep", "list"}
+        ],
+        {"permission": "external_directory", "action": "deny", "pattern": "*"},
+        {
+            "permission": "external_directory",
+            "action": "allow",
+            "pattern": r"C:\Users\fdl\Proyectos_Python\orquestador_de_agentes\**",
+        },
+    ]
+    destino = cawe._parse_agent_permission_blocks(
+        "auditor (primary)\n  [\n"
+        + json.dumps(
+            destino_rules,
+            indent=2,
+        )[1:-1]
+        + "\n]\n"
+    )["auditor"]
+    assert all(
+        cawe._permission_action(motor, key) == cawe._permission_action(destino, key)
+        for key in NON_READ_PERMISSION_KEYS
+    )
+
+
+@pytest.mark.parametrize("permission", NON_READ_PERMISSION_KEYS)
+def test_every_non_read_allow_is_open(permission):
+    """Cada permiso no lector abierto produce exactamente un hallazgo."""
+    rules = [
+        {"permission": "*", "action": "deny", "pattern": "*"},
+        {"permission": permission, "action": "allow", "pattern": "*"},
+    ]
+    assert _permissive_write_permissions(rules) == [permission]
+
+
+def test_empty_and_none_rules_are_failures():
+    assert _permissive_write_permissions([]) == list(NON_READ_PERMISSION_KEYS)
+    assert _permissive_write_permissions(None) == list(NON_READ_PERMISSION_KEYS)
+
+
+def test_all_non_read_denied_passes_and_external_catchall_is_special():
+    rules = [
+        {"permission": "*", "action": "deny", "pattern": "*"},
+        {
+            "permission": "external_directory",
+            "action": "allow",
+            "pattern": r"C:\specific",
+        },
+    ]
+    assert _permissive_write_permissions(rules) == []
+    assert _permissive_write_permissions(
+        [
+            {"permission": "*", "action": "allow", "pattern": "*"},
+            {"permission": "external_directory", "action": "deny", "pattern": "*"},
+            {
+                "permission": "external_directory",
+                "action": "allow",
+                "pattern": r"C:\specific",
+            },
+        ]
+    ) == [key for key in NON_READ_PERMISSION_KEYS if key != "external_directory"]
+
+
+def test_opencode_json_disables_github_mcp():
+    data = json.loads(
+        (_MOTOR_ROOT / ".opencode" / "opencode.json").read_text(encoding="utf-8")
+    )
+    assert data["mcp"]["github"]["enabled"] is False
+
+
+def test_auditor_text_has_four_network_skill_denies_and_no_dev_path():
+    for text in (MOTOR_AUDITOR_PATH.read_text(encoding="utf-8"), DESTINO_AUDITOR_TEXT):
+        assert (
+            len(
+                re.findall(
+                    r"^  (?:webfetch|websearch|codesearch|skill): deny$",
+                    text,
+                    re.MULTILINE,
+                )
+            )
+            == 4
+        )
+        assert "orquestador_de_agentes_dev" not in text
+
+
+def test_skip_construct_counter_control():
+    assert _skip_construct_count("assert True") == 0
+    sample = "pytest." + "skip(" + "'control')"
+    assert _skip_construct_count(sample) == 1
+
+
+def test_real_opencode_auditor_permissions_from_repo_root():
+    import scripts.check_agent_write_enforced as cawe
+
+    rules = cawe._agent_permission_rules(
+        r"C:\Users\fdl\opencode\opencode.exe", str(_MOTOR_ROOT), "auditor"
+    )
+    assert rules is not None
+    assert all(
+        cawe._permission_action(rules, key) == "deny"
+        for key in NON_READ_PERMISSION_KEYS
+    )
+    assert all(
+        cawe._effective_action(rules, key) == "allow"
+        for key in {"read", "glob", "grep", "list"}
+    )
 
 
 def _cfg(profiles: dict, backends: dict) -> dict:
@@ -390,11 +636,7 @@ def test_dynamic_check_passes_when_agent_is_present(tmp_path, monkeypatch):
         cawe,
         "_agent_permission_rules",
         lambda executable, cwd, agent_name: [
-            {"permission": "*", "action": "allow", "pattern": "*"},
-            {"permission": "edit", "action": "deny", "pattern": "*"},
-            {"permission": "bash", "action": "deny", "pattern": "*"},
-            {"permission": "task", "action": "deny", "pattern": "*"},
-            {"permission": "todowrite", "action": "deny", "pattern": "*"},
+            {"permission": "*", "action": "deny", "pattern": "*"}
         ],
     )
     project_root = tmp_path / "destino"
@@ -563,11 +805,7 @@ class TestDynamicReadonlyAgentExistence:
             cawe,
             "_agent_permission_rules",
             lambda executable, cwd, agent_name: [
-                {"permission": "*", "action": "allow", "pattern": "*"},
-                {"permission": "edit", "action": "deny", "pattern": "*"},
-                {"permission": "bash", "action": "deny", "pattern": "*"},
-                {"permission": "task", "action": "deny", "pattern": "*"},
-                {"permission": "todowrite", "action": "deny", "pattern": "*"},
+                {"permission": "*", "action": "deny", "pattern": "*"}
             ],
         )
         pairs = find_dynamic_unenforced_pairs(
@@ -605,11 +843,7 @@ class TestDynamicReadonlyAgentExistence:
             cawe,
             "_agent_permission_rules",
             lambda executable, cwd, agent_name: [
-                {"permission": "*", "action": "allow", "pattern": "*"},
-                {"permission": "edit", "action": "deny", "pattern": "*"},
-                {"permission": "bash", "action": "deny", "pattern": "*"},
-                {"permission": "task", "action": "deny", "pattern": "*"},
-                {"permission": "todowrite", "action": "deny", "pattern": "*"},
+                {"permission": "*", "action": "deny", "pattern": "*"}
             ],
         )
         pairs = find_dynamic_unenforced_pairs(
@@ -934,12 +1168,7 @@ class TestPermissiveWritePermissions:
         from scripts.check_agent_write_enforced import _permissive_write_permissions
 
         rules = [{"permission": "*", "action": "allow", "pattern": "*"}]
-        assert _permissive_write_permissions(rules) == [
-            "bash",
-            "edit",
-            "task",
-            "todowrite",
-        ]
+        assert _permissive_write_permissions(rules) == list(NON_READ_PERMISSION_KEYS)
 
     def test_specific_denies_after_baseline_clear_the_agent(self):
         """Caso REAL medido de `auditor`: baseline allow-all PRIMERO, luego
@@ -948,13 +1177,22 @@ class TestPermissiveWritePermissions:
 
         rules = [
             {"permission": "*", "action": "allow", "pattern": "*"},
-            {"permission": "doom_loop", "action": "ask", "pattern": "*"},
+            {"permission": "doom_loop", "action": "deny", "pattern": "*"},
             {"permission": "read", "action": "allow", "pattern": "*"},
             {"permission": "edit", "action": "deny", "pattern": "*"},
             {"permission": "glob", "action": "allow", "pattern": "*"},
             {"permission": "bash", "action": "deny", "pattern": "*"},
             {"permission": "task", "action": "deny", "pattern": "*"},
             {"permission": "todowrite", "action": "deny", "pattern": "*"},
+            {"permission": "webfetch", "action": "deny", "pattern": "*"},
+            {"permission": "websearch", "action": "deny", "pattern": "*"},
+            {"permission": "codesearch", "action": "deny", "pattern": "*"},
+            {"permission": "skill", "action": "deny", "pattern": "*"},
+            {"permission": "lsp", "action": "deny", "pattern": "*"},
+            {"permission": "question", "action": "deny", "pattern": "*"},
+            {"permission": "plan_enter", "action": "deny", "pattern": "*"},
+            {"permission": "plan_exit", "action": "deny", "pattern": "*"},
+            {"permission": "external_directory", "action": "deny", "pattern": "*"},
         ]
         assert _permissive_write_permissions(rules) == []
 
@@ -967,7 +1205,9 @@ class TestPermissiveWritePermissions:
             {"permission": "*", "action": "allow", "pattern": "*"},
             {"permission": "edit", "action": "deny", "pattern": "*"},
         ]
-        assert _permissive_write_permissions(rules) == ["bash", "task", "todowrite"]
+        assert _permissive_write_permissions(rules) == [
+            key for key in NON_READ_PERMISSION_KEYS if key != "edit"
+        ]
 
     def test_later_rule_overrides_earlier_specific_rule(self):
         """Last-match-wins tambien entre dos reglas ESPECIFICAS del mismo tipo."""
@@ -977,14 +1217,14 @@ class TestPermissiveWritePermissions:
             {"permission": "edit", "action": "deny", "pattern": "*"},
             {"permission": "edit", "action": "allow", "pattern": "*"},
         ]
-        assert _permissive_write_permissions(rules) == ["edit"]
+        assert _permissive_write_permissions(rules) == list(NON_READ_PERMISSION_KEYS)
 
-    def test_none_or_empty_returns_empty_not_permissive(self):
-        """Sin datos no se puede afirmar permisividad (ver docstring: `[]`)."""
+    def test_none_or_empty_is_fail_closed_for_every_non_read_permission(self):
+        """Sin datos, la ausencia de deny es un fallo para cada permiso."""
         from scripts.check_agent_write_enforced import _permissive_write_permissions
 
-        assert _permissive_write_permissions(None) == []
-        assert _permissive_write_permissions([]) == []
+        assert _permissive_write_permissions(None) == list(NON_READ_PERMISSION_KEYS)
+        assert _permissive_write_permissions([]) == list(NON_READ_PERMISSION_KEYS)
 
 
 class TestEffectiveActionIsLastMatchByOrder:
@@ -1060,12 +1300,7 @@ class TestEffectiveActionIsLastMatchByOrder:
             {"permission": "edit", "action": "deny", "pattern": "*"},
             {"permission": "*", "action": "allow", "pattern": "*"},
         ]
-        assert _permissive_write_permissions(rules) == [
-            "bash",
-            "edit",
-            "task",
-            "todowrite",
-        ]
+        assert _permissive_write_permissions(rules) == list(NON_READ_PERMISSION_KEYS)
 
 
 class TestPermissiveAgentDetection:
@@ -1130,7 +1365,7 @@ class TestPermissiveAgentDetection:
         assert len(pairs) == 1, f"debe detectar el agente permisivo: {pairs}"
         assert pairs[0]["profile"] == "challenger_test"
         assert pairs[0]["permissive_agent"] == "auditor"
-        assert pairs[0]["open_permissions"] == ["bash", "edit", "task", "todowrite"]
+        assert pairs[0]["open_permissions"] == list(NON_READ_PERMISSION_KEYS)
 
     def test_green_with_baseline_plus_specific_denies_passes(self, monkeypatch):
         """Caso REAL medido 2026-10-25 de `auditor`: baseline allow-all
@@ -1162,13 +1397,7 @@ class TestPermissiveAgentDetection:
 
         def _fake_rules(executable, cwd, agent_name):
             if agent_name == "auditor":
-                return [
-                    {"permission": "*", "action": "allow", "pattern": "*"},
-                    {"permission": "edit", "action": "deny", "pattern": "*"},
-                    {"permission": "bash", "action": "deny", "pattern": "*"},
-                    {"permission": "task", "action": "deny", "pattern": "*"},
-                    {"permission": "todowrite", "action": "deny", "pattern": "*"},
-                ]
+                return [{"permission": "*", "action": "deny", "pattern": "*"}]
             return None
 
         monkeypatch.setattr(cawe, "_list_agents", _fake_list_agents)
@@ -1361,10 +1590,5 @@ class TestPermissiveAgentDetection:
         permissive_pair = next(p for p in pairs if p["profile"] == "p_permissive")
         missing_pair = next(p for p in pairs if p["profile"] == "p_missing")
         assert permissive_pair["permissive_agent"] == "auditor"
-        assert permissive_pair["open_permissions"] == [
-            "bash",
-            "edit",
-            "task",
-            "todowrite",
-        ]
+        assert permissive_pair["open_permissions"] == list(NON_READ_PERMISSION_KEYS)
         assert missing_pair["missing_agent"] == "ghost"

@@ -2,14 +2,19 @@
 description: Read-only audit lens for ensemble governance loops
 mode: primary
 permission:
+  "*": deny
   read: allow
-  edit: deny
   glob: allow
   grep: allow
   list: allow
+  edit: deny
   bash: deny
   task: deny
   todowrite: deny
+  webfetch: deny
+  websearch: deny
+  codesearch: deny
+  skill: deny
   external_directory: deny
 ---
 

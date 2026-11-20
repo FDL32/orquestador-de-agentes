@@ -290,11 +290,26 @@ def _agent_permission_rules(
     return blocks[agent_name]
 
 
-# Tipos de permiso capaces de MUTAR el arbol en el vocabulario de opencode.
-# Espejo de `WRITE_CAPABLE_TOOLS` (arriba) pero a nivel de `agent list`:
-# coincide exactamente con los 4 permisos que `.opencode/agents/auditor.md`
-# deniega explicitamente (edit/bash/task/todowrite).
-WRITE_CAPABLE_PERMISSIONS = {"edit", "bash", "task", "todowrite"}
+# Universo cerrado de permisos no lectores de `PermissionConfig` en OpenCode.
+# Incluye las claves de escritura, control, red, skill y ámbito que el CLI
+# renderiza y que el agente auditor debe denegar explícitamente.
+NON_READ_PERMISSION_KEYS = (
+    "edit",
+    "bash",
+    "task",
+    "todowrite",
+    "webfetch",
+    "websearch",
+    "codesearch",
+    "skill",
+    "doom_loop",
+    "lsp",
+    "question",
+    "plan_enter",
+    "plan_exit",
+    "external_directory",
+)
+WRITE_CAPABLE_PERMISSIONS = set(NON_READ_PERMISSION_KEYS)
 
 
 def _effective_action(rules: list[dict], permission: str) -> str | None:
@@ -323,7 +338,7 @@ def _effective_action(rules: list[dict], permission: str) -> str | None:
 
 
 def _permissive_write_permissions(rules: list[dict] | None) -> list[str]:
-    """Permisos de ESCRITURA cuya accion efectiva resuelve a "allow".
+    """Permisos no lectores cuya accion efectiva no resuelve a ``deny``.
 
     Before: `rules` es la lista COMPLETA de reglas de un agente (o None/vacia
         si no se pudo determinar).
@@ -338,20 +353,47 @@ def _permissive_write_permissions(rules: list[dict] | None) -> list[str]:
     `bash: deny`, `task: deny`, `todowrite: deny` para `auditor`, coincidiendo
     con su YAML) aparecen mas abajo en la MISMA lista y nunca se miraban.
 
-    During: puro, sin I/O. Resuelve la accion EFECTIVA (last-match-wins) de
-        cada permiso en `WRITE_CAPABLE_PERMISSIONS` via `_effective_action`.
-    After: lista (puede ser vacia) de los permisos de escritura cuya accion
-        efectiva es "allow" -- vacia significa que todos resuelven a
-        "deny"/"ask", o que `rules` es None/vacia (no se puede afirmar
-        permisividad sin datos).
+    During: puro, sin I/O. Resuelve cada clave de
+        `NON_READ_PERMISSION_KEYS`; `ask`, `None` y la ausencia de reglas son
+        abiertos por fail-closed. `external_directory` solo usa su catch-all
+        final; los patrones específicos son excepciones de lectura.
+    After: lista (puede ser vacía) de las claves abiertas. Vacía significa
+        que todas resuelven a `deny` y que hubo datos verificables.
     """
     if not rules:
-        return []
-    return sorted(
+        return list(NON_READ_PERMISSION_KEYS)
+    return [
         perm
-        for perm in WRITE_CAPABLE_PERMISSIONS
-        if _effective_action(rules, perm) == "allow"
-    )
+        for perm in NON_READ_PERMISSION_KEYS
+        if _permission_action(rules, perm) != "deny"
+    ]
+
+
+def _permission_action(rules: list[dict] | None, permission: str) -> str | None:
+    """Resuelve una clave no lectora con la semántica de OpenCode.
+
+    Before: `rules` es la lista completa de permisos y `permission` pertenece
+        al universo cerrado `NON_READ_PERMISSION_KEYS`.
+    During: aplica last-match-wins para todas las claves. Para
+        `external_directory` selecciona solo el último catch-all específico;
+        si falta, usa el último catch-all genérico. Así no confunde un allow
+        interno de salida de herramienta con la política global.
+    After: devuelve la acción efectiva o `None` cuando no hay una regla válida.
+    """
+    if permission != "external_directory":
+        return _effective_action(rules or [], permission)
+    candidates = [
+        rule
+        for rule in (rules or [])
+        if rule.get("permission") == "external_directory" and rule.get("pattern") == "*"
+    ]
+    if not candidates:
+        candidates = [
+            rule
+            for rule in (rules or [])
+            if rule.get("permission") == "*" and rule.get("pattern") == "*"
+        ]
+    return candidates[-1].get("action") if candidates else None
 
 
 def _list_agents(executable: str, cwd: str) -> list[str]:
