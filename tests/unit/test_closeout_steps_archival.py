@@ -23,6 +23,7 @@ from scripts.closeout_steps.archival import (
     step_archive_arranques,
     step_archive_execution_log,
     step_purge_arranques_archive,
+    step_rotate_kilo_logs,
 )
 from scripts.session_closeout import StepResult
 
@@ -487,3 +488,72 @@ def test_step_archive_event_bus_real_git_stages_the_gitignored_archive(
         check=True,
     ).stdout
     assert rel_path in staged_after
+
+
+def test_m01_closeout_no_informa_pass_sin_rotar() -> None:
+    captured_args: list[str] = []
+
+    def run_script_fn(script_name, args, project_root, timeout=60):
+        captured_args.extend(args)
+        return SimpleNamespace(
+            returncode=0,
+            stdout='{"compressed": ["a.log", "b.log"], "purged": ["c.log.gz"], "dry_run": true}',
+            stderr="",
+        )
+
+    result = step_rotate_kilo_logs(
+        Path("unused"),
+        False,
+        run_script_fn=run_script_fn,
+        step_result_cls=StepResult,
+    )
+
+    assert "--json" in captured_args
+    assert "--" + "apply" not in captured_args
+    assert result.status == "WARN"
+    assert result.detail == "dry-run: 3 candidatos, nada rotado"
+
+
+def test_m02_rc_distinto_de_cero_sigue_warn_sin_parsear() -> None:
+    result = step_rotate_kilo_logs(
+        Path("unused"),
+        False,
+        run_script_fn=fake_run_script_fn(2, "esto no es json"),
+        step_result_cls=StepResult,
+    )
+
+    assert result.status == "WARN"
+    assert "exit 2" in result.detail
+
+
+def test_m05_salida_no_interpretable_nunca_da_pass() -> None:
+    outputs = [
+        "esto no es json",
+        "",
+        '{"denominator": 1, "compressed": []}',
+        "[1, 2]",
+        '{"dry_run": null}',
+        '{"dry_run": 0}',
+        '{"dry_run": "false"}',
+    ]
+
+    for stdout in outputs:
+        result = step_rotate_kilo_logs(
+            Path("unused"),
+            False,
+            run_script_fn=fake_run_script_fn(0, stdout),
+            step_result_cls=StepResult,
+        )
+        assert result.status == "WARN", stdout
+        assert result.detail == "rotacion no verificada: salida no interpretable", (
+            stdout
+        )
+
+    result = step_rotate_kilo_logs(
+        Path("unused"),
+        False,
+        run_script_fn=fake_run_script_fn(0, '{"dry_run": false}'),
+        step_result_cls=StepResult,
+    )
+    assert result.status == "PASS"
+    assert result.detail == "Log rotation completed"

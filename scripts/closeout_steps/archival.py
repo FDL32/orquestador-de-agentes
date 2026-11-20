@@ -290,9 +290,13 @@ def step_rotate_kilo_logs(
 ) -> StepResult:
     """Run rotate_kilo_logs.py (R13a: rotacion/purga de logs Kilo).
 
-    Before: `project_root` has `.agent/planning/**/*.log` and locks.
-    During: executes rotate_kilo_logs.py as subprocess with --project-root.
-    After: returns StepResult with PASS/WARN/SKIP.
+    Before: `project_root` has `.agent/planning/**/*.log` and locks, and the
+        closeout step is not in dry-run mode.
+    During: executes rotate_kilo_logs.py with --project-root and --json, then
+        interprets the JSON report without requesting mutation.
+    After: returns SKIP for dry-run mode, WARN for a nonzero exit or an
+        uninterpretable report, WARN with the candidate count for JSON
+        dry-run output, and PASS only when JSON reports dry_run set to false.
     """
     if dry_run:
         return step_result_cls(
@@ -303,7 +307,7 @@ def step_rotate_kilo_logs(
     try:
         result = run_script_fn(
             "rotate_kilo_logs.py",
-            ["--project-root", str(project_root)],
+            ["--project-root", str(project_root), "--json"],
             project_root,
             timeout=120,
         )
@@ -324,10 +328,33 @@ def step_rotate_kilo_logs(
                 f"{stderr.strip()[:300] or stdout[:300]}"
             ),
         )
+    try:
+        report = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError):
+        report = None
+    if isinstance(report, dict):
+        dry = report.get("dry_run")
+        if dry is True:
+            compressed = report.get("compressed") or []
+            purged = report.get("purged") or []
+            candidates = (len(compressed) if isinstance(compressed, list) else 0) + (
+                len(purged) if isinstance(purged, list) else 0
+            )
+            return step_result_cls(
+                name="rotate_kilo_logs",
+                status="WARN",
+                detail=f"dry-run: {candidates} candidatos, nada rotado",
+            )
+        if dry is False:
+            return step_result_cls(
+                name="rotate_kilo_logs",
+                status="PASS",
+                detail="Log rotation completed",
+            )
     return step_result_cls(
         name="rotate_kilo_logs",
-        status="PASS",
-        detail="Log rotation completed",
+        status="WARN",
+        detail="rotacion no verificada: salida no interpretable",
     )
 
 
