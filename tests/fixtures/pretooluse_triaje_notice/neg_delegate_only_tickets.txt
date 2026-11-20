@@ -1,0 +1,1 @@
+delegate_task para revisar tickets asignados y preparar una lista de cambios.

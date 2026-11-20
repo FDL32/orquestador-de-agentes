@@ -2,6 +2,15 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Agent|Task|mcp__t3-code__delegate_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"with __import__('contextlib').suppress(Exception): import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'pretooluse_triaje_notice.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'pretooluse_triaje_notice.py') if l.exists() else e); sys.exit(subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)).returncode) if e.exists() else sys.exit(0)\""
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
           {
