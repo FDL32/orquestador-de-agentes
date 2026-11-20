@@ -44,7 +44,9 @@ _CONFIGURED_FAMILY_PATTERNS = {
         "glm",
         "gpt",
         "haiku",
+        "hy",
         "kimi",
+        "longcat",
         "mimo",
         "minimax",
         "mistral",
@@ -145,6 +147,20 @@ def test_local_readonly_artifact_is_never_blocked():
     errors = hiac.check_action_consent(text)
 
     assert errors == []
+
+
+def test_new_free_families_are_detected_in_a_loop():
+    text = "Lanza un bucle con hy4-flash y longcat-2.5-free.\n"
+
+    errors = hiac.check_action_consent(text)
+
+    assert any("dispatch_externo" in error for error in errors)
+
+
+def test_new_free_families_as_substrings_are_not_detected():
+    text = "Lanza un bucle con hymn y longcatapult.\n"
+
+    assert hiac.check_action_consent(text) == []
 
 
 def test_main_cli_exits_1_naming_the_category(tmp_path, capsys):

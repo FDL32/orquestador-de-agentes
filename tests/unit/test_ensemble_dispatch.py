@@ -7865,9 +7865,15 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "challenger_kilo_qwen",
         "challenger_kilo_qwen_flash",
         "challenger_opencode_deepseek_flash",
+        "challenger_opencode_deepseek_free",
         "challenger_opencode_gemma",
         "challenger_opencode_glm_flash",
+        "challenger_opencode_hy_free",
+        "challenger_opencode_longcat_free",
         "challenger_opencode_mimo_flash",
+        "challenger_opencode_mimo_free",
+        "challenger_opencode_nemotron_lightning_free",
+        "challenger_opencode_nemotron_super_vl_free",
         "challenger_opencode_qwen",
         "challenger_opencode_qwen_flash",
         "proposer_claude",
@@ -7892,6 +7898,12 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "BA258",
         "BA259",
         "BA260",
+        "BA261",
+        "BA262",
+        "BA263",
+        "BA264",
+        "BA265",
+        "BA266",
     ], "lentes con arbol = backend_key DISTINTAS, no perfiles cualesquiera"
 
 

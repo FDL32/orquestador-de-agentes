@@ -124,7 +124,7 @@ ACTION_PATTERNS: dict[str, re.Pattern[str]] = {
 _LOOP_PROVIDER_BASES = (
     r"anthropic|claude|codex|cohere|gemini|groq|kilo|kiosapi|llm7|mistral|"
     r"nan|nvidia|opencode|openrouter|tokenharbor|deepseek|glm|qwen|opus|"
-    r"sonnet|haiku|gemma|mimo|kimi|minimax|nemotron|codestral|command|north|"
+    r"sonnet|haiku|gemma|hy|mimo|kimi|longcat|minimax|nemotron|codestral|command|north|"
     r"gpt|alvarovans|gamsgo"
 )
 _LOOP_PROVIDER_VARIANT = r"(?:\d+(?:\.\d+)?|-[a-z0-9]+(?:[.-][a-z0-9]+)*)?"

@@ -41,10 +41,8 @@ EXPECTED_NEW = {
 def _real_config() -> dict:
     """Carga el agents.json real del motor y comprueba su cardinalidad."""
     config = ed.load_motor_config()
-    # 65 = 60 del contrato 161s/163d + BA256..BA260 (perfiles opencode para los
-    # modelos nan; commits 5b2bb7ae y 30134f53, orden directa del usuario
-    # 2026-11-16). Este snapshot se quedo en 60 y nadie lo actualizo entonces.
-    assert len(config["ensemble_registry"]["backend_keys"]) == 65
+    # 71 = 65 previas + BA261..BA266 (lote opencode/*-free WOT-2026-204a).
+    assert len(config["ensemble_registry"]["backend_keys"]) == 71
     return config
 
 

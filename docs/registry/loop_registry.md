@@ -88,6 +88,12 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA259 | opencode | nan/gemma4 | active |
 | BA26 | nan_api | glm5.3 | deprecated |
 | BA260 | opencode | nan/qwen3.8-flash | active |
+| BA261 | opencode | opencode/deepseek-v4.1-flash-free | active |
+| BA262 | opencode | opencode/hy4-flash-free | active |
+| BA263 | opencode | opencode/longcat-2.5-free | active |
+| BA264 | opencode | opencode/mimo-v2.6-flash-free | active |
+| BA265 | opencode | opencode/nemotron-3.5-lightning-free | active |
+| BA266 | opencode | opencode/nemotron-3.5-super-vl-free | active |
 | BA27 | nan_api | deepseek-v4-pro | deprecated |
 | BA28 | nan_api | hy4 | deprecated |
 | BA29 | nan_api | qwen3.8-max | deprecated |

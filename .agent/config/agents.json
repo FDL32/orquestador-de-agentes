@@ -352,6 +352,66 @@
       "backend_key": "BA260",
       "repo_scope": "destino"
     },
+    "challenger_opencode_deepseek_free": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "opencode/deepseek-v4.1-flash-free",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA261",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_hy_free": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "opencode/hy4-flash-free",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA262",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_longcat_free": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "opencode/longcat-2.5-free",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA263",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_mimo_free": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "opencode/mimo-v2.6-flash-free",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA264",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_nemotron_lightning_free": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "opencode/nemotron-3.5-lightning-free",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA265",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_nemotron_super_vl_free": {
+      "backend": "opencode",
+      "channel": "agent",
+      "model": "opencode/nemotron-3.5-super-vl-free",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA266",
+      "repo_scope": "destino"
+    },
     "challenger_kilo_deepseek_flash": {
       "backend": "kilo",
       "channel": "agent",
@@ -1466,6 +1526,72 @@
         "family": "qwen",
         "tier": "flash",
         "generation": 1
+      },
+      "BA261": {
+        "backend": "opencode",
+        "model": "opencode/deepseek-v4.1-flash-free",
+        "backend_version": null,
+        "status": "active",
+        "lab": "DeepSeek",
+        "family": "deepseek",
+        "tier": "flash",
+        "generation": 2,
+        "source": "https://openrouter.ai/deepseek/deepseek-v4.1-flash"
+      },
+      "BA262": {
+        "backend": "opencode",
+        "model": "opencode/hy4-flash-free",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Tencent",
+        "family": "hy",
+        "tier": "flash",
+        "generation": 1,
+        "source": "https://openrouter.ai/tencent/hy4-flash"
+      },
+      "BA263": {
+        "backend": "opencode",
+        "model": "opencode/longcat-2.5-free",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Meituan",
+        "family": "longcat",
+        "tier": "full",
+        "generation": 1,
+        "source": "familia LongCat (Meituan): https://openrouter.ai/meituan/longcat-2.0"
+      },
+      "BA264": {
+        "backend": "opencode",
+        "model": "opencode/mimo-v2.6-flash-free",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Xiaomi",
+        "family": "mimo",
+        "tier": "flash",
+        "generation": 1,
+        "source": "https://openrouter.ai/xiaomi/mimo-v2.6-flash"
+      },
+      "BA265": {
+        "backend": "opencode",
+        "model": "opencode/nemotron-3.5-lightning-free",
+        "backend_version": null,
+        "status": "active",
+        "lab": "NVIDIA",
+        "family": "nemotron",
+        "tier": "full",
+        "generation": 2,
+        "source": "https://openrouter.ai/nvidia/nemotron-3.5-lightning"
+      },
+      "BA266": {
+        "backend": "opencode",
+        "model": "opencode/nemotron-3.5-super-vl-free",
+        "backend_version": null,
+        "status": "active",
+        "lab": "NVIDIA",
+        "family": "nemotron",
+        "tier": "full",
+        "generation": 2,
+        "source": "https://openrouter.ai/nvidia/nemotron-3.5-super-vl"
       }
     },
     "loop_shapes": {
@@ -1606,6 +1732,7 @@
         "Cohere",
         "DeepSeek",
         "Google",
+        "Meituan",
         "MiniMax",
         "Mistral AI",
         "Moonshot",
