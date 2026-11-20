@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
@@ -27,15 +28,587 @@ ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "flight" / "archive_tree.py"
 
 
-def _run(*args: str) -> subprocess.CompletedProcess[str]:
+def _run(*args: str, home: Path | None = None) -> subprocess.CompletedProcess[str]:
+    """Before: CLI arguments target only a temporary fixture.
+    During: run the script with optional isolated user-home variables.
+    After: return captured process evidence without changing the real environment.
+    """
+    environment = os.environ.copy()
+    if home is not None:
+        environment["USERPROFILE"] = str(home)
+        environment["HOME"] = str(home)
     return subprocess.run(
         [sys.executable, str(SCRIPT), *args],
         cwd=ROOT,
         capture_output=True,
         text=True,
         encoding="utf-8",
+        env=environment,
         check=False,
     )
+
+
+_MESSAGES_DDL_189A = """
+CREATE TABLE orchestration_v2_projection_messages (
+ message_id TEXT PRIMARY KEY, thread_id TEXT NOT NULL, run_id TEXT, node_id TEXT,
+ role TEXT NOT NULL, streaming INTEGER NOT NULL, created_at TEXT NOT NULL,
+ updated_at TEXT NOT NULL, payload_json TEXT NOT NULL);
+"""
+_THREADS_DDL_189A = """
+CREATE TABLE orchestration_v2_projection_threads (
+ thread_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL,
+ default_provider TEXT NOT NULL, runtime_mode TEXT NOT NULL,
+ interaction_mode TEXT NOT NULL, active_provider_thread_id TEXT,
+ created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT,
+ deleted_at TEXT, payload_json TEXT NOT NULL, provider_instance_id TEXT);
+"""
+
+
+def _seed_retire_auth(
+    tmp_path: Path,
+    home: Path,
+    *,
+    text: str | None = None,
+    created_at: str | None = None,
+) -> tuple[str, str]:
+    """Before: archive index contains one ARCHIVADO family.
+    During: create the isolated state store with one valid user anchor.
+    After: return the thread and message identifiers used by retire subprocesses.
+    """
+    row = next(
+        item
+        for item in reversed(
+            p7_common.load_jsonl_index(tmp_path / "archive" / "index.jsonl")
+        )
+        if item.get("status") == "ARCHIVADO"
+    )
+    thread_id = "11111111-1111-4111-8111-111111111111"
+    message_id = "22222222-2222-4222-8222-222222222222"
+    expected = f"RETIRAR {row['family']} {str(row['list_sha256'])[:12].lower()} {len(row['clones'])}"
+    text = expected if text is None else text
+    created_at = "2026-11-20T12:00:00.000Z" if created_at is None else created_at
+    store = home / ".t3" / "userdata" / "statev2.sqlite"
+    store.parent.mkdir(parents=True)
+    connection = sqlite3.connect(store)
+    connection.executescript(_MESSAGES_DDL_189A + _THREADS_DDL_189A)
+    connection.execute(
+        "INSERT INTO orchestration_v2_projection_threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            thread_id,
+            "p",
+            "t",
+            "provider",
+            "mode",
+            "mode",
+            None,
+            created_at,
+            created_at,
+            None,
+            None,
+            "{}",
+            None,
+        ),
+    )
+    payload = json.dumps({"createdBy": "user", "creationSource": "web", "text": text})
+    connection.execute(
+        "INSERT INTO orchestration_v2_projection_messages VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            message_id,
+            thread_id,
+            "run",
+            "node",
+            "user",
+            0,
+            created_at,
+            created_at,
+            payload,
+        ),
+    )
+    connection.commit()
+    connection.close()
+    return thread_id, message_id
+
+
+def _archive_fixture(tmp_path: Path) -> tuple[Path, Path, Path, str]:
+    """Before: a fresh clone fixture is available.
+    During: publish its archive-only evidence in the temporary archive root.
+    After: return the roots, approval file, and list digest for retire tests.
+    """
+    origin, archive, approved = _fixture(tmp_path)
+    archive.mkdir()
+    list_hash = _approved(origin, approved)
+    result = _run(
+        "--origin",
+        str(origin),
+        "--archive-root",
+        str(archive),
+        "--apply-archive",
+        "--list",
+        str(approved),
+        "--list-sha256",
+        list_hash,
+    )
+    assert result.returncode == 0, result.stderr
+    return origin, archive, approved, list_hash
+
+
+def _retire_args(
+    origin: Path,
+    archive: Path,
+    approved: Path,
+    list_hash: str,
+    thread: str,
+    message: str,
+) -> tuple[str, ...]:
+    """Before: retire fixture paths and an authorization identity are known.
+    During: construct the complete explicit retire argument vector.
+    After: return immutable subprocess arguments without executing them.
+    """
+    return (
+        "--origin",
+        str(origin),
+        "--archive-root",
+        str(archive),
+        "--apply-retire",
+        "--list",
+        str(approved),
+        "--list-sha256",
+        list_hash,
+        "--thread-id",
+        thread,
+        "--message-id",
+        message,
+    )
+
+
+def test_189a_apply_is_disabled(tmp_path: Path) -> None:
+    """Before: legacy apply is requested.
+    During: invoke both its valid and incomplete forms.
+    After: both fail before touching either tree.
+    """
+    origin, archive, approved = _fixture(tmp_path)
+    archive.mkdir()
+    digest = _approved(origin, approved)
+    before = archive_tree.tree_hash(origin)
+    for extra in (("--list", str(approved), "--list-sha256", digest), ()):
+        result = _run(
+            "--origin", str(origin), "--archive-root", str(archive), "--apply", *extra
+        )
+        assert result.returncode == 2
+        assert (
+            "ERROR: --apply is disabled; use --apply-archive or --apply-retire"
+            in result.stderr
+        )
+    assert archive_tree.tree_hash(origin) == before
+    assert not (archive / "index.jsonl").exists()
+
+
+def test_189a_recover_is_disabled(tmp_path: Path) -> None:
+    """Before: archive evidence and recovery state exist.
+    During: request the retired recovery command.
+    After: the command is rejected without changing the recovery bytes.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    row = p7_common.load_jsonl_index(archive / "index.jsonl")[0]
+    ledger = _write_recovery_ledger(
+        archive, origin, row, json.loads(Path(row["manifest"]).read_text())
+    )
+    before = ledger.read_bytes()
+    result = _run(
+        "--origin",
+        str(origin),
+        "--archive-root",
+        str(archive),
+        "--recover-retirement",
+        "--list",
+        str(approved),
+        "--list-sha256",
+        digest,
+    )
+    assert result.returncode == 2
+    assert "ERROR: --recover-retirement is disabled" in result.stderr
+    assert ledger.read_bytes() == before
+    assert origin.exists()
+    assert not (archive / ".p7.lock").exists()
+
+
+def test_189a_resume_is_forbidden_for_retire(tmp_path: Path) -> None:
+    """Before: a valid retire authorization is available.
+    During: combine resume with retire.
+    After: usage rejection precedes store access and deletion.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    result = _run(
+        *_retire_args(origin, archive, approved, digest, thread, message),
+        "--resume",
+        home=tmp_path,
+    )
+    assert result.returncode == 2
+    assert "ERROR: --resume cannot be used with --apply-retire" in result.stderr
+    assert (
+        origin.exists()
+        and len(p7_common.load_jsonl_index(archive / "index.jsonl")) == 1
+    )
+
+
+def test_189a_exact_phrase_and_replay(tmp_path: Path) -> None:
+    """Before: the archive has one exact user authorization.
+    During: reject near phrases, consume the exact phrase, then replay it.
+    After: only one ledger transition and one RETIRADO row exist.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    row = p7_common.load_jsonl_index(archive / "index.jsonl")[0]
+    exact = f"RETIRAR {row['family']} {digest[:12].lower()} 1"
+    ledger_path = archive / "chain_authority_ledger.jsonl"
+    seeded = {"messageId": message, "step": 2, "outCode": "X", "inCode": "Y"}
+    ledger_path.write_text(json.dumps(seeded) + "\n", encoding="utf-8")
+    result = _run(
+        *_retire_args(origin, archive, approved, digest, thread, message), home=tmp_path
+    )
+    assert result.returncode == 1 and "ERROR: retire-consumed" in result.stderr
+    assert ledger_path.read_text(encoding="utf-8").splitlines() == [json.dumps(seeded)]
+    assert origin.exists()
+    assert len(p7_common.load_jsonl_index(archive / "index.jsonl")) == 1
+    ledger_path.write_text("", encoding="utf-8")
+    ledger_path.unlink()
+    db = tmp_path / ".t3" / "userdata" / "statev2.sqlite"
+    variants = (
+        "wrong",
+        f"{exact} 2",
+        f"{exact[:-1]}0",
+        f"{row['family']}X {digest[:12].lower()} 1",
+        f"{exact} por favor",
+    )
+    for text in variants:
+        connection = sqlite3.connect(db)
+        connection.execute(
+            "UPDATE orchestration_v2_projection_messages SET payload_json=?",
+            (json.dumps({"createdBy": "user", "creationSource": "web", "text": text}),),
+        )
+        connection.commit()
+        connection.close()
+        result = _run(
+            *_retire_args(origin, archive, approved, digest, thread, message),
+            home=tmp_path,
+        )
+        assert result.returncode == 1 and "ERROR: text-mismatch" in result.stderr
+        assert not ledger_path.exists()
+        assert origin.exists()
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "UPDATE orchestration_v2_projection_messages SET payload_json=?",
+        (json.dumps({"createdBy": "user", "creationSource": "web", "text": exact}),),
+    )
+    connection.commit()
+    connection.close()
+    result = _run(
+        *_retire_args(origin, archive, approved, digest, thread, message), home=tmp_path
+    )
+    assert result.returncode == 0, result.stderr
+    ledger_rows = [json.loads(line) for line in ledger_path.read_text().splitlines()]
+    assert len(ledger_rows) == 1
+    assert ledger_rows[0]["messageId"] == message
+    assert ledger_rows[0]["step"] == 1
+    assert ledger_rows[0]["outCode"] == "ARCHIVADO"
+    assert ledger_rows[0]["inCode"] == "RETIRADO"
+    assert [
+        row["status"] for row in p7_common.load_jsonl_index(archive / "index.jsonl")
+    ] == [
+        "ARCHIVADO",
+        "RETIRADO",
+    ]
+    result = _run(
+        *_retire_args(origin, archive, approved, digest, thread, message), home=tmp_path
+    )
+    assert result.returncode == 1 and "ERROR: retire-consumed" in result.stderr
+    assert len(ledger_path.read_text().splitlines()) == 1
+
+
+def test_189a_origin_record_mismatch(tmp_path: Path) -> None:
+    """Before: an archived record names origin one.
+    During: retire is requested for an identical but different path.
+    After: origin mismatch rejects before consumption.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    other = tmp_path / "origin-copy"
+    shutil.copytree(origin, other)
+    thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    result = _run(
+        *_retire_args(other, archive, approved, digest, thread, message), home=tmp_path
+    )
+    assert result.returncode == 1 and "ERROR: origin-mismatch" in result.stderr
+    assert origin.exists() and other.exists()
+    if sys.platform == "win32":
+        result = _run(
+            *(
+                _retire_args(
+                    Path(str(origin).upper()),
+                    archive,
+                    approved,
+                    digest,
+                    thread,
+                    message,
+                )
+            ),
+            home=tmp_path,
+        )
+        assert result.returncode == 0, result.stderr
+        assert not origin.exists()
+        assert (
+            sum(
+                row.get("status") == "RETIRADO"
+                for row in p7_common.load_jsonl_index(archive / "index.jsonl")
+            )
+            == 1
+        )
+
+
+def test_189a_foreign_message(tmp_path: Path) -> None:
+    """Before: the message exists in a different live thread.
+    During: authorize with a foreign thread id.
+    After: thread mismatch rejects without ledger consumption.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    _thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    db = tmp_path / ".t3" / "userdata" / "statev2.sqlite"
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "INSERT INTO orchestration_v2_projection_threads VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "33333333-3333-4333-8333-333333333333",
+            "p",
+            "t",
+            "provider",
+            "mode",
+            "mode",
+            None,
+            "2026-11-20T12:00:00.000Z",
+            "2026-11-20T12:00:00.000Z",
+            None,
+            None,
+            "{}",
+            None,
+        ),
+    )
+    connection.commit()
+    connection.close()
+    result = _run(
+        *_retire_args(
+            origin,
+            archive,
+            approved,
+            digest,
+            "33333333-3333-4333-8333-333333333333",
+            message,
+        ),
+        home=tmp_path,
+    )
+    assert result.returncode == 1 and "ERROR: thread-mismatch" in result.stderr
+    assert origin.exists()
+
+
+def test_189a_missing_thread_has_cause(tmp_path: Path) -> None:
+    """Before: the archive exists and the store has one valid anchor.
+    During: use a missing thread and then a missing message.
+    After: each cause is explicit and origin remains intact.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    result = _run(
+        *_retire_args(
+            origin,
+            archive,
+            approved,
+            digest,
+            "44444444-4444-4444-8444-444444444444",
+            message,
+        ),
+        home=tmp_path,
+    )
+    assert result.returncode == 1 and "ERROR: anchor-thread-missing" in result.stderr
+    result = _run(
+        *_retire_args(
+            origin,
+            archive,
+            approved,
+            digest,
+            thread,
+            "55555555-5555-4555-8555-555555555555",
+        ),
+        home=tmp_path,
+    )
+    assert result.returncode == 1 and "ERROR: anchor-missing" in result.stderr
+    assert origin.exists()
+
+
+@pytest.mark.parametrize(
+    "extra, expected",
+    [
+        (
+            ("--apply", "--apply-retire"),
+            "ERROR: --apply cannot be combined with --apply-archive or --apply-retire",
+        ),
+        (
+            ("--apply", "--apply-retire", "--recover-retirement"),
+            "ERROR: --apply cannot be combined with --apply-archive or --apply-retire",
+        ),
+        (
+            ("--apply",),
+            "ERROR: --apply is disabled; use --apply-archive or --apply-retire",
+        ),
+        (
+            ("--recover-retirement", "--resume", "--apply-retire"),
+            "ERROR: --recover-retirement is disabled",
+        ),
+        (
+            ("--resume", "--apply-retire"),
+            "ERROR: --resume cannot be used with --apply-retire",
+        ),
+        (("--apply-retire",), "ERROR: --thread-id es obligatorio"),
+        (("--apply-retire", "--thread-id", "T"), "ERROR: --message-id es obligatorio"),
+        (
+            ("--apply-retire", "--thread-id", "T", "--message-id", "M"),
+            "ERROR: --apply requires --list and --list-sha256",
+        ),
+    ],
+)
+def test_189a_exact_rc2_texts(
+    tmp_path: Path, extra: tuple[str, ...], expected: str
+) -> None:
+    """Before: each invalid argument combination is isolated.
+    During: invoke the CLI with the contract priority matrix.
+    After: rc 2 and the exact required diagnostic are observed.
+    """
+    result = _run(
+        "--origin",
+        str(tmp_path / "origin"),
+        "--archive-root",
+        str(tmp_path / "archive"),
+        *extra,
+    )
+    assert result.returncode == 2 and expected in result.stderr
+
+
+def test_189a_home_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Before: the process home is redirected to a temporary directory.
+    During: inspect the path and perform a complete authorized retirement.
+    After: no real home store is consulted and the clone is removed.
+    """
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert (
+        archive_tree._store_path() == tmp_path / ".t3" / "userdata" / "statev2.sqlite"
+    )
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    result = _run(
+        *_retire_args(origin, archive, approved, digest, thread, message), home=tmp_path
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_189a_publish_after_origin_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Before: authorization is valid but deletion fails on its first file.
+    During: run retire with a destructive primitive that raises.
+    After: no RETIRADO row is published and recovery remains IN_PROGRESS.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    monkeypatch.setattr(
+        archive_tree,
+        "_safe_remove",
+        lambda _path: (_ for _ in ()).throw(PermissionError("blocked")),
+    )
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    result = archive_tree.main(
+        [*(_retire_args(origin, archive, approved, digest, thread, message))]
+    )
+    assert result == 1
+    assert not any(
+        r.get("status") == "RETIRADO"
+        for r in p7_common.load_jsonl_index(archive / "index.jsonl")
+    )
+    assert (
+        json.loads((archive / "retirement_recovery.json").read_text())["status"]
+        == "IN_PROGRESS"
+    )
+    assert any(origin.rglob("*"))
+
+
+def test_189a_noncanonical_timestamp(tmp_path: Path) -> None:
+    """Before: the user message timestamp lacks canonical milliseconds.
+    During: attempt retirement with an otherwise correct phrase.
+    After: timestamp-form rejects before consumption.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    thread, message = _seed_retire_auth(
+        tmp_path, tmp_path, created_at="2026-11-20T12:00:00Z"
+    )
+    result = _run(
+        *_retire_args(origin, archive, approved, digest, thread, message), home=tmp_path
+    )
+    assert result.returncode == 1 and "ERROR: timestamp-form" in result.stderr
+    assert origin.exists()
+
+
+def test_189a_preflight_fail_after_consume(tmp_path: Path) -> None:
+    """Before: archive authorization is valid but the clone is readonly.
+    During: consume authority, then let preflight reject the origin.
+    After: one spent ledger line exists and replay is refused.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    try:
+        (origin / "clone-a" / "data.txt").chmod(0o444)
+        result = _run(
+            *_retire_args(origin, archive, approved, digest, thread, message),
+            home=tmp_path,
+        )
+        assert result.returncode == 1
+        assert (archive / "chain_authority_ledger.jsonl").exists()
+        assert not (archive / "retirement_recovery.json").exists()
+        assert not any(
+            row.get("status") == "RETIRADO"
+            for row in p7_common.load_jsonl_index(archive / "index.jsonl")
+        )
+        assert (origin / "clone-a" / "data.txt").exists()
+        assert "read-only" in result.stderr.lower()
+        replay = _run(
+            *_retire_args(origin, archive, approved, digest, thread, message),
+            home=tmp_path,
+        )
+        assert replay.returncode == 1 and "ERROR: retire-consumed" in replay.stderr
+    finally:
+        (origin / "clone-a" / "data.txt").chmod(0o666)
+
+
+@pytest.mark.parametrize("kind", ["missing-store", "corrupt-ledger"])
+def test_189a_infra_rc1(tmp_path: Path, kind: str) -> None:
+    """Before: either the state store or chain ledger is infrastructure-invalid.
+    During: invoke retirement through the subprocess boundary.
+    After: rc 1 names the infrastructure cause without a traceback.
+    """
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    home = tmp_path / "isolated-home"
+    if kind == "missing-store":
+        thread, message = "T", "M"
+        expected = "store-missing"
+    else:
+        thread, message = _seed_retire_auth(tmp_path, home)
+        (archive / "chain_authority_ledger.jsonl").write_text(
+            "{broken", encoding="utf-8"
+        )
+        expected = "chain-ledger-corrupt-line"
+    result = _run(
+        *_retire_args(origin, archive, approved, digest, thread, message), home=home
+    )
+    assert result.returncode == 1 and f"ERROR: {expected}" in result.stderr
+    assert "Traceback" not in result.stderr and origin.exists()
 
 
 def _restore_manifest_mtimes(manifest: Path, restored: Path) -> None:
@@ -96,7 +669,9 @@ def test_apply_requires_and_checks_approval(tmp_path: Path) -> None:
     After: a valid list is the only accepted apply input.
     """
     origin, archive, approved = _fixture(tmp_path)
-    result = _run("--origin", str(origin), "--archive-root", str(archive), "--apply")
+    result = _run(
+        "--origin", str(origin), "--archive-root", str(archive), "--apply-archive"
+    )
     assert result.returncode == 2
     list_hash = _approved(origin, approved)
     approved.write_text(
@@ -108,7 +683,7 @@ def test_apply_requires_and_checks_approval(tmp_path: Path) -> None:
         str(origin),
         "--archive-root",
         str(archive),
-        "--apply",
+        "--apply-archive",
         "--list",
         str(approved),
         "--list-sha256",
@@ -130,7 +705,7 @@ def test_apply_rejects_missing_root_and_entry_hash(tmp_path: Path) -> None:
         str(origin),
         "--archive-root",
         str(archive),
-        "--apply",
+        "--apply-archive",
         "--list",
         str(approved),
         "--list-sha256",
@@ -148,7 +723,7 @@ def test_apply_rejects_missing_root_and_entry_hash(tmp_path: Path) -> None:
         str(origin),
         "--archive-root",
         str(archive),
-        "--apply",
+        "--apply-archive",
         "--list",
         str(approved),
         "--list-sha256",
@@ -190,6 +765,7 @@ def test_archive_and_retire_are_separate_phases(tmp_path: Path) -> None:
     )
     assert archive_result.returncode == 0, archive_result.stderr
     assert (origin / "clone-a").exists()
+    thread_id, message_id = _seed_retire_auth(tmp_path, tmp_path)
     retire_result = _run(
         "--origin",
         str(origin),
@@ -200,6 +776,11 @@ def test_archive_and_retire_are_separate_phases(tmp_path: Path) -> None:
         str(approved),
         "--list-sha256",
         list_hash,
+        "--thread-id",
+        thread_id,
+        "--message-id",
+        message_id,
+        home=tmp_path,
     )
     assert retire_result.returncode == 0, retire_result.stderr
     assert not (origin / "clone-a").exists()
@@ -216,6 +797,19 @@ def test_readonly_abort_keeps_origin_intact(tmp_path: Path) -> None:
     origin, archive, approved = _fixture(tmp_path)
     archive.mkdir()
     list_hash = _approved(origin, approved)
+    archive_result = _run(
+        "--origin",
+        str(origin),
+        "--archive-root",
+        str(archive),
+        "--apply-archive",
+        "--list",
+        str(approved),
+        "--list-sha256",
+        list_hash,
+    )
+    assert archive_result.returncode == 0, archive_result.stderr
+    thread_id, message_id = _seed_retire_auth(tmp_path, tmp_path)
     file_path = origin / "clone-a" / "data.txt"
     file_path.chmod(0o444)
     before = archive_tree.tree_hash(origin)
@@ -225,11 +819,16 @@ def test_readonly_abort_keeps_origin_intact(tmp_path: Path) -> None:
             str(origin),
             "--archive-root",
             str(archive),
-            "--apply",
+            "--apply-retire",
             "--list",
             str(approved),
             "--list-sha256",
             list_hash,
+            "--thread-id",
+            thread_id,
+            "--message-id",
+            message_id,
+            home=tmp_path,
         )
         assert result.returncode == 1
         assert (origin / "clone-a").exists()
@@ -321,11 +920,17 @@ def test_apply_round_trip_and_p7_index(tmp_path: Path) -> None:
         str(origin),
         "--archive-root",
         str(archive),
-        "--apply",
+        "--apply-archive",
         "--list",
         str(approved),
         "--list-sha256",
         list_hash,
+    )
+    assert result.returncode == 0, result.stderr
+    thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    result = _run(
+        *(_retire_args(origin, archive, approved, list_hash, thread, message)),
+        home=tmp_path,
     )
     assert result.returncode == 0, result.stderr
     rows = p7_common.load_jsonl_index(archive / "index.jsonl")
@@ -829,7 +1434,7 @@ def _assert_abort_keeps_origin(tmp_path: Path, mutate: object) -> None:
         str(origin),
         "--archive-root",
         str(archive),
-        "--apply",
+        "--apply-archive",
         "--list",
         str(approved),
         "--list-sha256",
@@ -860,15 +1465,18 @@ def _assert_abort_keeps_origin(tmp_path: Path, mutate: object) -> None:
     ],
 )
 def test_b05_abort_matrix_keeps_origin(tmp_path: Path, case: str) -> None:
-    """Before: one unsafe-origin condition is introduced.
-    During: combined apply runs the real preflight.
-    After: rc is nonzero, origin hash is unchanged, and no family exists.
+    """Before: archive evidence exists and retire authorization is valid.
+    During: mutate the origin and run retire-only preflight for one unsafe case.
+    After: retirement aborts without changing the mutated origin or family set.
     """
-    origin, archive, approved = _fixture(tmp_path)
-    archive.mkdir()
-    list_hash = _approved(origin, approved)
+    origin, archive, approved, digest = _archive_fixture(tmp_path)
+    thread, message = _seed_retire_auth(tmp_path, tmp_path)
+    families_before = {
+        path.name
+        for path in archive.iterdir()
+        if path.is_dir() and not path.name.endswith(".locks")
+    }
     target = tmp_path / "junction-target"
-    target.mkdir()
     junction = origin / "clone-a" / "link"
     read_only = origin / "clone-a" / "data.txt"
     try:
@@ -880,6 +1488,7 @@ def test_b05_abort_matrix_keeps_origin(tmp_path: Path, case: str) -> None:
             path = origin / "clone-a" / "data.txt"
             os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 10))
         elif case == "junction":
+            target.mkdir()
             made = subprocess.run(
                 [
                     os.environ["COMSPEC"],
@@ -896,24 +1505,26 @@ def test_b05_abort_matrix_keeps_origin(tmp_path: Path, case: str) -> None:
             assert made.returncode == 0, made.stderr
         else:
             read_only.chmod(0o444)
-        before = archive_tree.tree_hash(origin)
+        mutated_hash = archive_tree.tree_hash(origin)
         result = _run(
-            "--origin",
-            str(origin),
-            "--archive-root",
-            str(archive),
-            "--apply",
-            "--list",
-            str(approved),
-            "--list-sha256",
-            list_hash,
+            *_retire_args(origin, archive, approved, digest, thread, message),
+            home=tmp_path,
         )
-        assert result.returncode != 0
-        assert archive_tree.tree_hash(origin) == before
+        assert result.returncode == 1
+        assert archive_tree.tree_hash(origin) == mutated_hash
+        assert (origin / "clone-a").exists()
         assert not any(
-            path.is_dir() and path.name.startswith("clone_archive_")
-            for path in archive.iterdir()
+            row.get("status") == "RETIRADO"
+            for row in p7_common.load_jsonl_index(archive / "index.jsonl")
         )
+        assert families_before == {
+            path.name
+            for path in archive.iterdir()
+            if path.is_dir() and not path.name.endswith(".locks")
+        }
+        if case == "junction":
+            error = result.stderr.lower()
+            assert "link" in error or "reparse" in error or "enlace" in error
     finally:
         if junction.exists():
             subprocess.run(
@@ -1254,7 +1865,7 @@ def test_b05_live_process_abort_keeps_origin(tmp_path: Path) -> None:
             str(origin),
             "--archive-root",
             str(archive),
-            "--apply",
+            "--apply-archive",
             "--list",
             str(approved),
             "--list-sha256",
@@ -1292,7 +1903,7 @@ def test_b03_live_process_commandline_abort_keeps_origin(tmp_path: Path) -> None
             str(origin),
             "--archive-root",
             str(archive),
-            "--apply",
+            "--apply-archive",
             "--list",
             str(approved),
             "--list-sha256",
@@ -1330,7 +1941,7 @@ def test_b03_real_shell_cwd_abort_keeps_origin(tmp_path: Path) -> None:
             str(origin),
             "--archive-root",
             str(archive),
-            "--apply",
+            "--apply-archive",
             "--list",
             str(approved),
             "--list-sha256",
@@ -1370,7 +1981,7 @@ def test_b03_claude_exe_fixture_cwd_abort_keeps_origin(tmp_path: Path) -> None:
             str(origin),
             "--archive-root",
             str(archive),
-            "--apply",
+            "--apply-archive",
             "--list",
             str(approved),
             "--list-sha256",
@@ -1446,37 +2057,6 @@ def test_b06_permission_error_leaves_recoverable_ledger(
         == "IN_PROGRESS"
     )
     assert any(origin.rglob("*"))
-
-
-def test_b06_recovery_after_index_failure_is_idempotent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Before: deletion completes but index publication raises.
-    During: recover through the real CLI and repeat recovery.
-    After: exactly one RETIRADO row exists and the ledger is gone.
-    """
-    origin, archive, record, manifest = _archived_fixture(tmp_path)
-    original = p7_common.write_jsonl_index_atomic
-
-    def fail_index(path: Path, rows: object) -> None:
-        if path.name == "index.jsonl" and any(
-            row.get("status") == "RETIRADO" for row in rows
-        ):
-            raise RuntimeError("simulated death")
-        original(path, rows)
-
-    monkeypatch.setattr(p7_common, "write_jsonl_index_atomic", fail_index)
-    with pytest.raises(RuntimeError):
-        archive_tree._retire(origin, archive, str(record["family"]), record, manifest)
-    assert (archive / "retirement_recovery.json").exists()
-    recovered = _run(
-        "--origin", str(origin), "--archive-root", str(archive), "--recover-retirement"
-    )
-    assert recovered.returncode == 0, recovered.stderr
-    rows = p7_common.load_jsonl_index(archive / "index.jsonl")
-    assert sum(row.get("status") == "RETIRADO" for row in rows) == 1
-    assert not origin.exists()
-    assert not (archive / "retirement_recovery.json").exists()
 
 
 def test_b10_mixed_archive_tree_and_p7_retire_index(tmp_path: Path) -> None:
@@ -1585,96 +2165,3 @@ def test_b10_mixed_archive_tree_and_p7_retire_index(tmp_path: Path) -> None:
         )
         assert dry.returncode == 0, dry.stderr
         assert p7_common.reconcile_index(archive, rows, str(family)) == []
-
-
-@pytest.mark.parametrize(
-    "mutation",
-    [
-        pytest.param("extra"),
-        pytest.param("mtime"),
-        pytest.param(
-            "junction",
-            marks=pytest.mark.skipif(
-                sys.platform != "win32",
-                reason="Requires COMSPEC mklink /J mutation setup.",
-            ),
-        ),
-    ],
-)
-def test_b05_archive_first_mutation_aborts_retire(
-    tmp_path: Path, mutation: str
-) -> None:
-    """Before: a clone has been archived while its origin remains present.
-    During: mutate the archived origin, then attempt retire-only from that origin.
-    After: preflight rejects without RETIRADO or origin changes; junction rejection names links.
-    """
-    origin, archive, approved = _fixture(tmp_path)
-    archive.mkdir()
-    list_sha = _approved(origin, approved)
-    archived = _run(
-        "--origin",
-        str(origin),
-        "--archive-root",
-        str(archive),
-        "--apply-archive",
-        "--list",
-        str(approved),
-        "--list-sha256",
-        list_sha,
-    )
-    assert archived.returncode == 0, archived.stderr
-    rows_before = p7_common.load_jsonl_index(archive / "index.jsonl")
-    assert len(rows_before) == 1 and rows_before[0]["status"] == "ARCHIVADO"
-    target = tmp_path / "junction-target"
-    junction = origin / "clone-a" / "link"
-    read_only = origin / "clone-a" / "data.txt"
-    try:
-        if mutation == "extra":
-            (origin / "clone-a" / "extra.txt").write_text("extra", encoding="utf-8")
-        elif mutation == "mtime":
-            path = origin / "clone-a" / "data.txt"
-            os.utime(path, (path.stat().st_atime, path.stat().st_mtime + 10))
-        else:
-            target.mkdir()
-            made = subprocess.run(
-                [
-                    os.environ["COMSPEC"],
-                    "/c",
-                    "mklink",
-                    "/J",
-                    str(junction),
-                    str(target),
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            assert made.returncode == 0, made.stderr
-        mutated_hash = archive_tree.tree_hash(origin)
-        retired = _run(
-            "--origin",
-            str(origin),
-            "--archive-root",
-            str(archive),
-            "--apply-retire",
-            "--list",
-            str(approved),
-            "--list-sha256",
-            list_sha,
-        )
-        assert retired.returncode != 0
-        assert archive_tree.tree_hash(origin) == mutated_hash
-        assert (origin / "clone-a").exists()
-        rows_after = p7_common.load_jsonl_index(archive / "index.jsonl")
-        assert sum(row.get("status") == "RETIRADO" for row in rows_after) == 0
-        if mutation == "junction":
-            error = retired.stderr.lower()
-            assert "link" in error or "reparse" in error or "enlace" in error
-    finally:
-        if junction.exists():
-            subprocess.run(
-                [os.environ["COMSPEC"], "/c", "rmdir", str(junction)],
-                capture_output=True,
-                check=False,
-            )
-        read_only.chmod(0o666)

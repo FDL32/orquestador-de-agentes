@@ -30,7 +30,11 @@ _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from scripts.flight import p7_common  # noqa: E402
+from scripts.flight import p7_common, verify_user_authorization as vua  # noqa: E402
+
+
+RETIRE_STEP = 1
+CHAIN_LEDGER_NAME = "chain_authority_ledger.jsonl"
 
 
 class ArchiveTreeError(RuntimeError):
@@ -631,20 +635,6 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901
     moved_to_stage = False
     resumed_stage = stage.exists() and args.resume
     try:
-        if args.apply and not args.apply_archive and not args.apply_retire:
-            preliminary_manifest = _manifest_for_entries(origin, entries)
-            _preflight_retirement(origin, preliminary_manifest)
-        if (
-            args.apply
-            and not args.apply_archive
-            and not args.apply_retire
-            and not stage.exists()
-        ):
-            stage.mkdir()
-            for entry in entries:
-                shutil.move(str(origin / entry["rel"]), str(stage / entry["rel"]))
-            origin = stage
-            moved_to_stage = True
         if args.apply_retire:
             _retire_existing(origin, archive_root, args.list_sha256)
             return 0
@@ -685,10 +675,8 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901
                 if staged.exists():
                     shutil.move(str(staged), str(original_origin / entry["rel"]))
             stage.rmdir()
-        if args.apply and not args.apply_archive:
-            _retire(origin, archive_root, family, record, manifest)
-            if stage == origin and stage.exists():
-                stage.rmdir()
+        if stage == origin and stage.exists():
+            stage.rmdir()
         return 0
     except Exception:
         if moved_to_stage and stage.exists():
@@ -703,7 +691,89 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901
         p7_common.release_lock(lock)
 
 
-def main(argv: list[str] | None = None) -> int:
+def _store_path() -> Path:
+    """Before: the host home directory is the user-data root.
+    During: append the canonical T3 state-store path to ``Path.home()``.
+    After: return the path without opening or creating the store.
+    """
+    return Path.home() / ".t3" / "userdata" / "statev2.sqlite"
+
+
+def _authorization_spent(ledger: vua.ChainAuthorityLedger, message_id: str) -> bool:
+    """Before: ``ledger`` identifies the retirement authority log.
+    During: validate the fixed step through the ledger, then inspect every step.
+    After: return whether this message has been consumed by any chain step.
+    """
+    if ledger.is_consumed(message_id, RETIRE_STEP):
+        return True
+    if not ledger.path.exists():
+        return False
+    try:
+        with ledger.path.open("r", encoding="utf-8") as handle:
+            for raw in handle:
+                if raw.strip():
+                    item = ledger._strict_json_loads(raw.strip())
+                    if isinstance(item, dict) and item.get("messageId") == message_id:
+                        return True
+    except (OSError, UnicodeError, TypeError, ValueError, RecursionError) as exc:
+        raise vua.InfraError("chain-ledger-corrupt-line", str(exc)) from exc
+    return False
+
+
+def _authorize_retire(args: argparse.Namespace) -> tuple[int, str | None] | None:  # noqa: C901
+    """Before: retire arguments identify an archived family and user message.
+    During: validate store provenance, exact phrase, origin identity, and ledger state.
+    After: consume one authority step or return a fail-closed cause/rc.
+    """
+    if not args.archive_root.is_dir():
+        return 4, None
+    connection = vua.open_store_ro(_store_path())
+    try:
+        vua.check_schema(connection)
+        cause = vua._thread_rejection(connection, args.thread_id)
+        if cause:
+            return 1, cause
+        record, decision = vua._load_anchor(connection, args.message_id)
+        if record is None:
+            return 1, decision.reason
+        if record.thread_id != args.thread_id:
+            return 1, "thread-mismatch"
+        rows = p7_common.load_jsonl_index(args.archive_root / "index.jsonl")
+        row = next(
+            (
+                item
+                for item in reversed(rows)
+                if item.get("status") == "ARCHIVADO"
+                and item.get("list_sha256") == args.list_sha256
+            ),
+            None,
+        )
+        if row is None:
+            raise ArchiveTreeError("no archived family matches list hash")
+        expected = (
+            f"RETIRAR {row['family']} {str(row['list_sha256'])[:12].lower()} "
+            f"{len(row['clones'])}"
+        )
+        failure = vua._chain_candidate_failure(record, expected)
+        if failure is not None:
+            return 1, failure
+        if os.path.normcase(str(args.origin.resolve())) != os.path.normcase(
+            str(Path(str(row["origin"])).resolve())
+        ):
+            return 1, "origin-mismatch"
+        ledger = vua.ChainAuthorityLedger(args.archive_root / CHAIN_LEDGER_NAME)
+        if _authorization_spent(ledger, args.message_id):
+            return 1, "retire-consumed"
+        if not args.origin.is_dir() or p7_common.is_reparse_or_link(args.origin):
+            return 4, None
+        if not ledger.consume(args.message_id, RETIRE_STEP, "ARCHIVADO", "RETIRADO"):
+            return 1, "retire-consumed"
+        return None
+    finally:
+        connection.close()
+
+
+def main(argv: list[str] | None = None) -> int:  # noqa: C901
     """Before: command-line arguments are untrusted.
     During: parse defaults and dispatch the fail-closed operation.
     After: print a diagnostic and return the documented integer status.
@@ -720,6 +790,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--apply-retire", action="store_true")
     parser.add_argument("--recover-retirement", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument("--thread-id")
+    parser.add_argument("--message-id")
     parser.add_argument("--min-dias", type=int, default=0)
     parser.add_argument("--max-bytes", type=int, default=-1)
     parser.add_argument("--min-libre", type=int, default=0)
@@ -728,6 +800,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--prefijo-familia", dest="prefix", default="clone_archive")
     parser.add_argument("--umbral-hilo", type=int, default=1024 * 1024)
     args = parser.parse_args(argv)
+    apply_plain = args.apply
+    if apply_plain and (args.apply_archive or args.apply_retire):
+        print(
+            "ERROR: --apply cannot be combined with --apply-archive or --apply-retire",
+            file=sys.stderr,
+        )
+        return 2
+    if apply_plain:
+        print(
+            "ERROR: --apply is disabled; use --apply-archive or --apply-retire",
+            file=sys.stderr,
+        )
+        return 2
+    if args.recover_retirement:
+        print("ERROR: --recover-retirement is disabled", file=sys.stderr)
+        return 2
+    if args.resume and args.apply_retire:
+        print("ERROR: --resume cannot be used with --apply-retire", file=sys.stderr)
+        return 2
+    if args.apply_retire and not args.thread_id:
+        print("ERROR: --thread-id es obligatorio", file=sys.stderr)
+        return 2
+    if args.apply_retire and not args.message_id:
+        print("ERROR: --message-id es obligatorio", file=sys.stderr)
+        return 2
     args.apply = args.apply or args.apply_archive or args.apply_retire
     args.dry_run = not args.apply
     if args.recover_retirement:
@@ -754,6 +851,13 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: --apply requires --list and --list-sha256", file=sys.stderr)
         return 2
     try:
+        if args.apply_retire:
+            authorization = _authorize_retire(args)
+            if authorization is not None:
+                rc, cause = authorization
+                if cause is not None:
+                    print(f"ERROR: {cause}", file=sys.stderr)
+                return rc
         return run(args)
     except (
         ArchiveTreeError,
@@ -761,6 +865,7 @@ def main(argv: list[str] | None = None) -> int:
         OSError,
         ValueError,
         zipfile.BadZipFile,
+        vua.InfraError,
     ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
