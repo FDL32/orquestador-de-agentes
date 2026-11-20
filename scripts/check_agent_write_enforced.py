@@ -370,29 +370,35 @@ def _permissive_write_permissions(rules: list[dict] | None) -> list[str]:
 
 
 def _permission_action(rules: list[dict] | None, permission: str) -> str | None:
-    """Resuelve una clave no lectora con la semántica de OpenCode.
+    """Resuelve una clave no lectora con la semantica de OpenCode.
 
     Before: `rules` es la lista completa de permisos y `permission` pertenece
         al universo cerrado `NON_READ_PERMISSION_KEYS`.
-    During: aplica last-match-wins para todas las claves. Para
-        `external_directory` selecciona solo el último catch-all específico;
-        si falta, usa el último catch-all genérico. Así no confunde un allow
-        interno de salida de herramienta con la política global.
-    After: devuelve la acción efectiva o `None` cuando no hay una regla válida.
+    During: para las 13 claves distintas de `external_directory` aplica
+        last-match-wins via `_effective_action` (la ultima regla que matchea,
+        generica o especifica, gana; `ask` y `None` NO son `deny`). Para
+        `external_directory` solo participan las reglas CATCH-ALL
+        (`pattern == "*"`) cuyo `permission` sea `external_directory` o el
+        generico `"*"`: se recorren en orden de la lista y GANA LA ULTIMA
+        (WOT-2026-209a F7: el orden entre catch-alls externo y generico se
+        respeta, asi un `"*": allow` posterior a un catch-all deny NO deja el
+        gate en verde). Los patrones ESPECIFICOS (tool-output interno,
+        skills globales, el allow del motor en la copia destino) no
+        participan NUNCA: son excepciones de LECTURA acotadas declaradas, no
+        la politica global; un allow especifico amplio pasa el gate por
+        diseno y esta documentado como limite.
+    After: devuelve la accion efectiva del catch-all o `None` cuando no hay
+        ninguna regla con pattern `"*"` aplicable (fail-closed: ausencia de
+        deny no es deny).
     """
     if permission != "external_directory":
         return _effective_action(rules or [], permission)
     candidates = [
         rule
         for rule in (rules or [])
-        if rule.get("permission") == "external_directory" and rule.get("pattern") == "*"
+        if rule.get("pattern") == "*"
+        and rule.get("permission") in ("external_directory", "*")
     ]
-    if not candidates:
-        candidates = [
-            rule
-            for rule in (rules or [])
-            if rule.get("permission") == "*" and rule.get("pattern") == "*"
-        ]
     return candidates[-1].get("action") if candidates else None
 
 

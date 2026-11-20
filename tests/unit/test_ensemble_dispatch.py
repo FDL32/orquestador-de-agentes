@@ -27,6 +27,7 @@ import inspect
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -7658,14 +7659,99 @@ def test_readonly_agent_present_reaches_popen(monkeypatch, tmp_path):
     assert captured["cmd"][captured["cmd"].index("--agent") + 1] == "auditor"
 
 
+def _opencode_bin() -> str:
+    """Resuelve el binario de opencode sin skip: PATH o fallo explicito.
+
+    F4 (P34 r1): fuera de la ruta absoluta de la maquina del autor. Solo
+    `shutil.which("opencode")` (sin leer variables de entorno: el guard
+    025z de este fichero prohibe esa familia de tokens en el bloque de
+    tests posterior a su marcador) y `pytest.fail` explicito si falta -- el
+    contrato m-06 es FALLAR si no hay binario, nunca saltar el test.
+    """
+    found = shutil.which("opencode")
+    if found:
+        return found
+    pytest.fail(
+        "binario opencode ausente de PATH; el test exige el binario y NO "
+        "se salta (WOT-2026-209a m-06)"
+    )
+
+
 def test_real_agent_listing_helper_blocks_without_agent(tmp_path):
-    """m-05: el helper real usa el CLI y falla en un cwd sin agente local."""
+    """m-05: el helper real usa el CLI y falla en un cwd sin agente local.
+
+    F4: el binario se resuelve por entorno/PATH y la razon debe distinguir
+    "agente ausente" (el caso del test) de "binario ausente" (que este
+    helper capturaria como error de listado): se exige el texto nominal
+    "no aparece".
+    """
     reason = ed._agent_missing_reason(
-        r"C:\Users\fdl\opencode\opencode.exe",
+        _opencode_bin(),
         str(tmp_path),
         "agent_that_does_not_exist_209a",
     )
     assert reason is not None
+    assert "no aparece" in reason, reason
+
+
+def test_agent_missing_reason_parses_present_agent_from_stdout(monkeypatch):
+    """F5: la rama POSITIVA del helper con salida real parcheada (hermetica).
+
+    Un fallo en el parseo del stdout de `agent list` bloquearia TODAS las
+    lentes; sin este test nadie lo detectaria. Formato medido: una linea
+    `nombre (primary)` seguida del bloque JSON de permisos.
+    """
+
+    class _FakeProc:
+        returncode = 0
+        stdout = 'auditor (primary)\n  [\n  {\n    "permission": "*"\n  }\n]\n'
+        stderr = ""
+
+    monkeypatch.setattr(ed.subprocess, "run", lambda *a, **k: _FakeProc())
+    assert ed._agent_missing_reason("opencode", "anywhere", "auditor") is None
+    assert ed._agent_missing_reason("opencode", "anywhere", "otro") is not None
+
+
+def test_m05_blocked_from_cli_keeps_blocked_prefix_and_exit_one(
+    tmp_path, monkeypatch, capsys
+):
+    """F5: el aborto m-05 sale por el CLI como [BLOCKED] con rc 1.
+
+    `DispatchBlockedError` (la clase que lanza el check antes de Popen) debe
+    conservar la rama de veto de politica del CLI: prefijo `[BLOCKED]` en
+    stderr y codigo 1 -- esa es la "salida distinta de 0" del DoD m-05.
+    `_cmd_run` se parchea para lanzar la excepcion en el punto exacto en el
+    que la levantaria el check de agente (sin tocar red ni Popen).
+    """
+    monkeypatch.setattr(ed, "load_motor_config", lambda: _config())
+
+    def _boom(*args, **kwargs):
+        raise ed.DispatchBlockedError("el agente 'auditor' no aparece desde cwd=probe")
+
+    monkeypatch.setattr(ed, "_cmd_run", _boom)
+    payload_file = tmp_path / "payload.txt"
+    payload_file.write_text("material", encoding="utf-8")
+    rc = ed.main(
+        [
+            "run",
+            "--pipeline",
+            "pipe",
+            "--ticket",
+            "WOT-TEST-209a",
+            "--task-type",
+            "audit",
+            "--payload-file",
+            str(payload_file),
+            "--data-sensitivity",
+            "public",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    err = capsys.readouterr().err
+    assert rc == 1, f"el veto de politica debe salir con rc 1: rc={rc}"
+    assert "[BLOCKED]" in err, f"el prefijo observable es [BLOCKED]: {err!r}"
+    assert "auditor" in err, f"la razon debe nombrar el agente: {err!r}"
 
 
 def test_transport_agent_does_not_bind_agent_when_profile_allows_write(monkeypatch):

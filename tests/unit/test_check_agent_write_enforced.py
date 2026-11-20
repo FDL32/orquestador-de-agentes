@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
+import yaml
 from scripts.check_agent_write_enforced import (
     NON_READ_PERMISSION_KEYS,
     _permissive_write_permissions,
@@ -26,7 +28,11 @@ MOTOR_AUDITOR_PATH = (
     Path(__file__).resolve().parents[2] / ".opencode" / "agents" / "auditor.md"
 )
 _MOTOR_ROOT = Path(__file__).resolve().parents[2]
-DESTINO_AUDITOR_TEXT = """---
+# Cadena RAW a proposito: la clave del mapa external_directory lleva barras
+# dobles YAML ("C:\\Users\\...") y un \U simple se leeria como escape unicode
+# de 8 digitos, rompiendo el frontmatter (WOT-2026-209a F3, medido A/B
+# 2026-11-20: con barra simple el parser falla y opencode DESCARTA el agente).
+DESTINO_AUDITOR_TEXT = r"""---
 description: Read-only audit lens for ensemble governance loops
 mode: primary
 permission:
@@ -79,6 +85,14 @@ dispatched with `--agent auditor`, and the permissions above make the declaratio
   refutation that is wrong: the loop exists to catch plausible-but-false claims.
 - Report verdicts in the format the bundle requests. Your final text IS the return value.
 """
+# F6 (P34 r1): este JSON es un DELTA DE FUSION, no un fichero de
+# reemplazo. La coordinadora debe FUSIONAR "mcp": {"github": {"enabled":
+# false}} en el .opencode/opencode.json EXISTENTE del destino (creandolo con
+# estas claves si aun no existe), conservando cualquier clave que ya traiga
+# (default_agent, model, share, ...). Rutas destino exactas, con <destino> =
+# C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace:
+#   <destino>/.opencode/agents/auditor.md  -> REEMPLAZAR por DESTINO_AUDITOR_TEXT
+#   <destino>/.opencode/opencode.json      -> FUSIONAR mcp.github.enabled=false (sin reemplazar)
 DESTINO_OPENCODE_JSON = """{
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
@@ -93,18 +107,43 @@ DESTINO_OPENCODE_JSON = """{
 def derive_destino_auditor(motor_text: str) -> str:
     """Deriva la copia destino desde el auditor del motor.
 
-    Before: `motor_text` contiene el artefacto canónico con el bloque scalar.
-    During: reemplaza únicamente la regla scalar de `external_directory`.
-    After: devuelve el artefacto destino con el allow específico al motor.
+    Before: `motor_text` contiene el artefacto canonico con el bloque scalar.
+    During: reemplaza unicamente la regla scalar de `external_directory` por
+        el mapa destino: catch-all `"*": deny` PRIMERO y el allow del arbol
+        del motor AL FINAL (orden de la correccion). La clave del allow se
+        escribe con barras DOBLES YAML: con barra simple `\\U` es un escape
+        unicode invalido, el frontmatter no parsea y opencode descarta el
+        agente entero (medido A/B 2026-11-20, WOT-2026-209a F3).
+    After: devuelve el artefacto destino; `derive_destino_auditor(motor)`
+        debe ser byte-igual al literal `DESTINO_AUDITOR_TEXT`.
     """
     slash = chr(92)
     destination_path = slash.join(
         ("C:", "Users", "fdl", "Proyectos_Python", "orquestador_de_agentes", "**")
     )
-    replacement = (
-        '  external_directory:\n    "*": deny\n    "' + destination_path + '": allow'
-    )
+    yaml_path = destination_path.replace(slash, slash * 2)
+    replacement = '  external_directory:\n    "*": deny\n    "' + yaml_path + '": allow'
     return motor_text.replace("  external_directory: deny", replacement)
+
+
+def _opencode_bin() -> str:
+    """Resuelve el binario de opencode sin skip: PATH o fallo explicito.
+
+    Before: sin binario no hay medida posible; el contrato del ticket exige
+        FALLAR, nunca saltar el test (m-06).
+    During: `shutil.which("opencode")` -- sin variables de entorno, para que
+        el helper sea hermetico y identico al del fichero de
+        test_ensemble_dispatch (alli el guard 025z ademas prohibe
+        `os.environ`). Si no resuelve, `pytest.fail` explicito.
+    After: ruta absoluta ejecutable del CLI de opencode.
+    """
+    found = shutil.which("opencode")
+    if found:
+        return found
+    pytest.fail(
+        "binario opencode ausente de PATH; el test exige el binario y NO "
+        "se salta (WOT-2026-209a m-06)"
+    )
 
 
 def _skip_construct_count(text: str) -> int:
@@ -124,10 +163,16 @@ def _skip_construct_count(text: str) -> int:
 
 
 def test_destino_fixture_is_derived_from_motor_and_materialized(tmp_path):
-    """La fixture literal es una copia fiel derivada del único origen motor."""
+    """La fixture literal es una copia fiel derivada del unico origen motor.
+
+    F4 (P34 r1): la materializacion es HERMETICA, bajo `tmp_path` -- nunca
+    en una ruta absoluta de la maquina del autor. La copia de entrega fuera
+    del repo (C:/Temp/co141/im-209a/destino_fixture) se regenera out-of-band
+    por el IM; este test solo prueba fidelidad y materializacion.
+    """
     motor_text = MOTOR_AUDITOR_PATH.read_text(encoding="utf-8")
     assert derive_destino_auditor(motor_text) == DESTINO_AUDITOR_TEXT
-    root = Path(r"C:\Temp\co141\im-209a\destino_fixture\.opencode")
+    root = tmp_path / ".opencode"
     (root / "agents").mkdir(parents=True, exist_ok=True)
     (root / "agents" / "auditor.md").write_text(DESTINO_AUDITOR_TEXT, encoding="utf-8")
     (root / "opencode.json").write_text(DESTINO_OPENCODE_JSON, encoding="utf-8")
@@ -137,47 +182,124 @@ def test_destino_fixture_is_derived_from_motor_and_materialized(tmp_path):
     assert (root / "opencode.json").read_text(encoding="utf-8") == DESTINO_OPENCODE_JSON
 
 
+def _frontmatter_permission(text: str) -> dict:
+    """Parsea el mapping `permission` del frontmatter YAML de un auditor.md.
+
+    Before: `text` es el contenido completo del artefacto (frontmatter
+        cerrado por lineas `---`).
+    During: extrae el bloque entre el primer par de lineas `---` y lo parsea
+        con PyYAML -- la misma semantica de escapes de doble comilla que el
+        parser de opencode (js-yaml). Un `\\U` sin escapar levanta
+        ScannerError aqui: exactamente el defecto F3 que este test caza.
+    After: el mapping `permission` (escalar por clave o mapa patron->accion).
+    """
+    match = re.match(r"\A---\s*\n(.*?)\n---\s*\n", text, re.DOTALL)
+    assert match, "el artefacto debe llevar frontmatter YAML cerrado por ---"
+    document = yaml.safe_load(match.group(1))
+    permission = (document or {}).get("permission")
+    assert isinstance(permission, dict) and permission, "permission vacio"
+    return permission
+
+
+def _permission_map_to_rules(permission: dict) -> list[dict]:
+    """Convierte el mapping `permission` a la lista de reglas tipo `agent list`.
+
+    Before: `permission` es el mapping crudo del frontmatter.
+    During: cada escalar vira a `{permission, action, pattern:"*"}` y cada
+        mapa (patron -> accion) a una regla por entrada, conservando el
+        orden del documento (el orden es semantica, F7).
+    After: lista de reglas comparable con las que devuelve
+        `_agent_permission_rules` de produccion.
+    """
+    rules: list[dict] = []
+    for key, value in permission.items():
+        if isinstance(value, dict):
+            for pattern, action in value.items():
+                rules.append({"permission": key, "action": action, "pattern": pattern})
+        else:
+            rules.append({"permission": key, "action": value, "pattern": "*"})
+    return rules
+
+
 def test_motor_and_destino_have_same_resolved_non_read_rules():
-    """Motor y destino difieren solo en el allow específico de external_directory."""
+    """m-01: motor y destino resuelven identicas las 14 claves no-lectura.
+
+    F3 (P34 r1): las reglas destino ya NO se escriben a mano -- se construyen
+    PARSEANDO el frontmatter de `DESTINO_AUDITOR_TEXT` (el texto real que
+    aplicara la coordinadora). Asi un error de escape o de orden en el
+    artefacto rompe este test en vez de quedar tapado por una lista
+    inventada. La UNICA diferencia permitida es el allow especifico de
+    `external_directory` al arbol del motor, y se afirma explicitamente.
+    """
     import scripts.check_agent_write_enforced as cawe
 
-    motor = cawe._agent_permission_rules(
-        r"C:\Users\fdl\opencode\opencode.exe",
-        str(MOTOR_AUDITOR_PATH.parents[2]),
-        "auditor",
+    motor_rules = _permission_map_to_rules(
+        _frontmatter_permission(MOTOR_AUDITOR_PATH.read_text(encoding="utf-8"))
     )
-    assert motor is not None
-    destino_rules = [
-        {"permission": "*", "action": "deny", "pattern": "*"},
-        *[
-            {
-                "permission": key,
-                "action": "allow"
-                if key in {"read", "glob", "grep", "list"}
-                else "deny",
-                "pattern": "*",
-            }
-            for key in {"read", "glob", "grep", "list"}
-        ],
-        {"permission": "external_directory", "action": "deny", "pattern": "*"},
-        {
-            "permission": "external_directory",
-            "action": "allow",
-            "pattern": r"C:\Users\fdl\Proyectos_Python\orquestador_de_agentes\**",
-        },
+    destino_rules = _permission_map_to_rules(
+        _frontmatter_permission(DESTINO_AUDITOR_TEXT)
+    )
+    for key in NON_READ_PERMISSION_KEYS:
+        motor_action = cawe._permission_action(motor_rules, key)
+        destino_action = cawe._permission_action(destino_rules, key)
+        assert motor_action == destino_action, (
+            f"m-01: {key} difiere entre motor ({motor_action}) y "
+            f"destino ({destino_action})"
+        )
+    # La diferencia declarada: el motor NO tiene allow especifico de
+    # external_directory; el destino tiene EXACTAMENTE uno, al arbol real
+    # del motor y sin la ruta _dev inexistente.
+    motor_specific = [
+        r
+        for r in motor_rules
+        if r["permission"] == "external_directory" and r["pattern"] != "*"
     ]
-    destino = cawe._parse_agent_permission_blocks(
-        "auditor (primary)\n  [\n"
-        + json.dumps(
-            destino_rules,
-            indent=2,
-        )[1:-1]
-        + "\n]\n"
-    )["auditor"]
-    assert all(
-        cawe._permission_action(motor, key) == cawe._permission_action(destino, key)
-        for key in NON_READ_PERMISSION_KEYS
+    destino_specific = [
+        r
+        for r in destino_rules
+        if r["permission"] == "external_directory" and r["pattern"] != "*"
+    ]
+    assert motor_specific == []
+    assert len(destino_specific) == 1
+    assert destino_specific[0]["action"] == "allow"
+    assert "orquestador_de_agentes" in destino_specific[0]["pattern"]
+    assert "orquestador_de_agentes_dev" not in destino_specific[0]["pattern"]
+
+
+def test_destino_artifact_parses_and_renders_via_opencode(tmp_path):
+    """F3: opencode PARSEA y RENDERIZA el artefacto destino real (binario).
+
+    Before: el texto de `DESTINO_AUDITOR_TEXT` debe ser aceptado por el
+        parser real de opencode (no solo por PyYAML): un frontmatter roto
+        hace que el CLI DESCARTE el agente entero (medido A/B 2026-11-20).
+    During: materializa el artefacto bajo `tmp_path` (hermetico) y ejecuta
+        `<opencode> agent list` desde ahi con los helpers de produccion.
+        Si el binario falta, `_opencode_bin` hace `pytest.fail` (sin skip).
+    After: el agente `auditor` aparece en el listado y sus 14 claves
+        no-lectura resuelven `deny`, con el allow especifico al motor
+        presente entre las reglas renderizadas.
+    """
+    import scripts.check_agent_write_enforced as cawe
+
+    root = tmp_path / ".opencode" / "agents"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "auditor.md").write_text(DESTINO_AUDITOR_TEXT, encoding="utf-8")
+    rules = cawe._agent_permission_rules(_opencode_bin(), str(tmp_path), "auditor")
+    assert rules is not None, (
+        "opencode NO listo el auditor desde la fixture: el frontmatter del "
+        "artefacto destino no esta parseando (escape/orden)"
     )
+    for key in NON_READ_PERMISSION_KEYS:
+        assert cawe._permission_action(rules, key) == "deny", key
+    specific = [
+        r
+        for r in rules
+        if r.get("permission") == "external_directory" and r.get("pattern") != "*"
+    ]
+    assert any(
+        r.get("action") == "allow" and "orquestador_de_agentes" in str(r.get("pattern"))
+        for r in specific
+    ), "el allow especifico al motor debe sobrevivir al render real"
 
 
 @pytest.mark.parametrize("permission", NON_READ_PERMISSION_KEYS)
@@ -193,6 +315,43 @@ def test_every_non_read_allow_is_open(permission):
 def test_empty_and_none_rules_are_failures():
     assert _permissive_write_permissions([]) == list(NON_READ_PERMISSION_KEYS)
     assert _permissive_write_permissions(None) == list(NON_READ_PERMISSION_KEYS)
+
+
+def test_non_read_universe_is_exactly_the_declared_fourteen():
+    """F1 (P34 r1): el oraculo del universo es INDEPENDIENTE de la constante.
+
+    Sin este test, quitar una clave de `NON_READ_PERMISSION_KEYS` (p.ej.
+    `skill`) encogeria los parametrizados y nada fallaria: el universo
+    cerrado de 14 claves se afirma aqui contra literales escritos a mano.
+    """
+    esperadas = {
+        "edit",
+        "bash",
+        "task",
+        "todowrite",
+        "webfetch",
+        "websearch",
+        "codesearch",
+        "skill",
+        "doom_loop",
+        "lsp",
+        "question",
+        "plan_enter",
+        "plan_exit",
+        "external_directory",
+    }
+    assert len(NON_READ_PERMISSION_KEYS) == 14
+    assert len(set(NON_READ_PERMISSION_KEYS)) == 14, "claves duplicadas"
+    assert set(NON_READ_PERMISSION_KEYS) == esperadas
+
+
+def test_ask_counts_as_open():
+    """F2 (P34 r1): `ask` esta declarado ABIERTO y ahora tiene test propio."""
+    rules = [
+        {"permission": "*", "action": "deny", "pattern": "*"},
+        {"permission": "doom_loop", "action": "ask", "pattern": "*"},
+    ]
+    assert _permissive_write_permissions(rules) == ["doom_loop"]
 
 
 def test_all_non_read_denied_passes_and_external_catchall_is_special():
@@ -216,6 +375,49 @@ def test_all_non_read_denied_passes_and_external_catchall_is_special():
             },
         ]
     ) == [key for key in NON_READ_PERMISSION_KEYS if key != "external_directory"]
+
+
+def test_external_directory_catchall_respects_order_and_ignores_specific():
+    """F7 (P34 r1): de external_directory solo cuentan los catch-alls, en orden.
+
+    Documenta y fija la semantica elegida (ver docstring de
+    `_permission_action`):
+    (a) un `"*": allow` GENERICO posterior a un catch-all deny gana ->
+        abierto (el orden entre catch-alls se respeta, sin fail-open);
+    (b) con el catch-all deny al final, deny -> cerrado;
+    (c) los patrones especificos NO participan aunque sean amplios
+        (`C:\\**`: allow pasa el gate): excepciones de lectura acotadas
+        por diseno, limite declarado;
+    (d) sin ningun catch-all externo, manda el ultimo catch-all generico.
+    """
+    import scripts.check_agent_write_enforced as cawe
+
+    externo_deny_generico_allow = [
+        {"permission": "external_directory", "action": "deny", "pattern": "*"},
+        {"permission": "*", "action": "allow", "pattern": "*"},
+    ]
+    assert (
+        cawe._permission_action(externo_deny_generico_allow, "external_directory")
+        == "allow"
+    )
+    generico_allow_externo_deny = [
+        {"permission": "*", "action": "allow", "pattern": "*"},
+        {"permission": "external_directory", "action": "deny", "pattern": "*"},
+    ]
+    assert (
+        cawe._permission_action(generico_allow_externo_deny, "external_directory")
+        == "deny"
+    )
+    catchall_deny_allow_amplio = [
+        {"permission": "external_directory", "action": "deny", "pattern": "*"},
+        {"permission": "external_directory", "action": "allow", "pattern": "C:**"},
+    ]
+    assert (
+        cawe._permission_action(catchall_deny_allow_amplio, "external_directory")
+        == "deny"
+    )
+    solo_generico = [{"permission": "*", "action": "allow", "pattern": "*"}]
+    assert cawe._permission_action(solo_generico, "external_directory") == "allow"
 
 
 def test_opencode_json_disables_github_mcp():
@@ -249,9 +451,7 @@ def test_skip_construct_counter_control():
 def test_real_opencode_auditor_permissions_from_repo_root():
     import scripts.check_agent_write_enforced as cawe
 
-    rules = cawe._agent_permission_rules(
-        r"C:\Users\fdl\opencode\opencode.exe", str(_MOTOR_ROOT), "auditor"
-    )
+    rules = cawe._agent_permission_rules(_opencode_bin(), str(_MOTOR_ROOT), "auditor")
     assert rules is not None
     assert all(
         cawe._permission_action(rules, key) == "deny"
