@@ -69,13 +69,17 @@ import difflib
 import gzip
 import hashlib
 import importlib.util
+import io
 import json
 import math
 import os
 import re
 import secrets
+import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -2046,7 +2050,7 @@ def _render_readonly_agent_flag(profile: dict, backend_cfg: dict) -> list[str]:
     """
     if profile.get("write") is not False:
         return []
-    agent_name = backend_cfg.get("readonly_agent")
+    agent_name = profile.get("readonly_agent") or backend_cfg.get("readonly_agent")
     if not agent_name:
         return []
     return ["--agent", agent_name]
@@ -2169,7 +2173,7 @@ def _transport_agent(
     popen_kwargs: dict = {}
     if repo_root is not None:
         popen_kwargs["cwd"] = repo_root
-    readonly_agent = backend_cfg.get("readonly_agent")
+    readonly_agent = profile.get("readonly_agent") or backend_cfg.get("readonly_agent")
     if profile.get("write") is False and readonly_agent:
         final_cwd = repo_root or os.getcwd()
         missing_reason = _agent_missing_reason(
@@ -2338,6 +2342,178 @@ def resolve_lens_repo_root(
     return str(resuelto), "destino"
 
 
+def create_lens_snapshot(repo_root: Path) -> Path:
+    """Create a disposable, filtered git-archive snapshot for a verifier.
+
+    Before: ``repo_root`` is a git repository whose current HEAD is the
+        evidence source.
+    During: archive HEAD without a shell, extract into a fresh temporary
+        directory, remove forbidden paths, and compare remaining files to
+        ``git ls-files`` under the same exclusion predicate.
+    After: return the snapshot path, or raise ``DispatchBlockedError`` without
+        returning a partial snapshot when the invariant cannot be proven.
+    """
+    root = Path(repo_root).resolve()
+    target = Path(tempfile.mkdtemp(prefix="ensemble-lens-"))
+    try:
+        proc = subprocess.run(
+            ["git", "archive", "--format=tar", "HEAD"],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            shell=False,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise DispatchBlockedError(
+                f"no se pudo crear snapshot git archive desde {root}: {proc.stderr.decode(errors='replace')}"
+            )
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout), mode="r:") as archive:
+            archive.extractall(target)  # noqa: S202
+
+        def excluded(path: Path) -> bool:
+            posix = path.as_posix()
+            return (
+                ".git" in path.parts
+                or posix in {".agent/runtime", ".agent/collaboration"}
+                or posix.startswith(".agent/runtime/")
+                or posix.startswith(".agent/collaboration/")
+                or path.name == ".env"
+                or path.name.startswith(".env.")
+            )
+
+        for candidate in sorted(target.rglob("*"), reverse=True):
+            relative = candidate.relative_to(target)
+            if excluded(relative):
+                if candidate.is_dir():
+                    shutil.rmtree(candidate)
+                elif candidate.exists():
+                    candidate.unlink()
+        actual = sorted(
+            path.relative_to(target).as_posix()
+            for path in target.rglob("*")
+            if path.is_file()
+        )
+        listed = subprocess.run(
+            ["git", "ls-files"],  # noqa: S607
+            cwd=root,
+            capture_output=True,
+            text=True,
+            shell=False,
+            check=False,
+        )
+        if listed.returncode != 0:
+            raise DispatchBlockedError(
+                f"git ls-files fallo al validar snapshot: rc={listed.returncode}"
+            )
+        expected = sorted(
+            name for name in listed.stdout.splitlines() if not excluded(Path(name))
+        )
+        if actual != expected:
+            raise DispatchBlockedError(
+                f"snapshot git incompleto o contaminado: esperado={expected!r}, actual={actual!r}"
+            )
+        return target
+    except Exception:
+        shutil.rmtree(target, ignore_errors=True)
+        raise
+
+
+def tree_fingerprint(root: Path) -> str:
+    """Return a stable content fingerprint plus git-status observation.
+
+    Before: ``root`` is the real repository tree to monitor around a round.
+    During: hash sorted relative file names and file contents, skipping ``.git``;
+        append the exact porcelain status or an explicit command-failure mark.
+    After: return a deterministic SHA-256 digest for the measured observation.
+    """
+    root = Path(root).resolve()
+    entries = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or ".git" in path.relative_to(root).parts:
+            continue
+        relative = path.relative_to(root).as_posix()
+        entries.append(f"{relative}\0{hashlib.sha256(path.read_bytes()).hexdigest()}")
+    status = subprocess.run(
+        ["git", "status", "--porcelain"],  # noqa: S607
+        cwd=root,
+        capture_output=True,
+        text=True,
+        shell=False,
+        check=False,
+    )
+    status_value = (
+        f"status:{status.stdout}"
+        if status.returncode == 0
+        else f"status-command-failed:{status.returncode}:{status.stderr}"
+    )
+    return hashlib.sha256(
+        ("\n".join(entries) + "\n" + status_value).encode()
+    ).hexdigest()
+
+
+def post_round_incident(before: str, after: str) -> bool:
+    """Report whether a post-round tree fingerprint differs from its baseline.
+
+    Before: ``before`` and ``after`` are fingerprints around one verifier round.
+    During: compare them without interpreting the underlying filesystem delta.
+    After: return ``True`` only for a changed observation.
+    """
+    return before != after
+
+
+def check_loop_lenses(
+    lens_names: list[str], *, config: dict, author_family: str | None
+) -> None:
+    """Validate verifier presence and family independence before loop spend.
+
+    Before: ``lens_names`` names profiles in ``config`` and ``author_family``
+        is the resolved author family or ``None``.
+    During: reject missing profiles, compositions without a verifier, and a
+        verifier set wholly matching the author family when resolvable.
+    After: return for an admissible composition; raise ``DispatchBlockedError``
+        naming the violated cause otherwise.
+    """
+    profiles = config.get("ensemble_profiles") or {}
+    selected = []
+    for name in lens_names:
+        if name not in profiles:
+            raise DispatchBlockedError(f"lente no existe: {name}")
+        selected.append((name, profiles[name]))
+    verifiers = [
+        (name, profile)
+        for name, profile in selected
+        if profile.get("lens_class") == "verificadora"
+        and not is_legacy_profile(profile)
+    ]
+    if not verifiers:
+        raise DispatchBlockedError("composicion sin lente lens_class=verificadora")
+    if author_family is None:
+        print(
+            "[ensemble] WARN: familia del autor no resoluble; no se puede comprobar independencia",
+            file=sys.stderr,
+        )
+        return
+    from scripts.check_loop_execution import FamilyResolutionError, model_family
+
+    resolved = []
+    for name, profile in verifiers:
+        try:
+            family = model_family(
+                profile.get("backend"), profile.get("model"), MODEL_FAMILY_MAP
+            )
+        except FamilyResolutionError:  # noqa: PERF203
+            print(
+                f"[ensemble] WARN: familia no resoluble para lente verificadora {name}",
+                file=sys.stderr,
+            )
+        else:
+            resolved.append(family)
+    if resolved and all(family == author_family for family in resolved):
+        raise DispatchBlockedError(
+            f"familia: todas las lentes verificadoras resolubles coinciden con la familia del autor ({author_family})"
+        )
+
+
 def send_to_profile(
     profile_name: str,
     messages: list[dict],
@@ -2382,6 +2558,7 @@ def send_to_profile(
         se pudo resolver, la etiqueta lo dice.
     """
     profile = config["ensemble_profiles"][profile_name]
+    profile.pop("post_round_incident", None)
     if is_legacy_profile(profile):
         print(
             f"[ensemble] WARN: el perfil '{profile_name}' es LEGACY (sustituido "
@@ -2455,7 +2632,28 @@ def send_to_profile(
     receipt_canary(payload_text, root=MOTOR_ROOT, ticket=profile_name)
     if transport is None:
         transport = _transport_api if profile["channel"] == "api" else _transport_agent
-    return transport(profile, backend_cfg, messages, timeout)
+    verifier_snapshot = None
+    verifier_before = None
+    if (
+        profile.get("lens_class") == "verificadora"
+        and profile.get("channel") == "agent"
+        and cwd_lente
+        and (Path(cwd_lente) / ".git").exists()
+    ):
+        verifier_before = tree_fingerprint(Path(cwd_lente))
+        verifier_snapshot = create_lens_snapshot(Path(cwd_lente))
+        backend_cfg = {**backend_cfg, "repo_root": str(verifier_snapshot)}
+    try:
+        return transport(profile, backend_cfg, messages, timeout)
+    finally:
+        if verifier_snapshot is not None:
+            try:
+                verifier_after = tree_fingerprint(Path(cwd_lente))
+                if post_round_incident(verifier_before, verifier_after):
+                    profile["post_round_incident"] = True
+                    print("POST-ROUND-INCIDENT", file=sys.stderr)
+            finally:
+                shutil.rmtree(verifier_snapshot, ignore_errors=True)
 
 
 @contextlib.contextmanager
@@ -5827,6 +6025,11 @@ def _record_round(
             # este registrador. None cuando la fila no llego a leer un bundle
             # (usage-error, missing-nonce).
             "bundle_sha256": bundle_sha256_value,
+            **(
+                {"post_round_incident": True}
+                if profile.get("post_round_incident")
+                else {}
+            ),
         },
     )
 
@@ -6423,7 +6626,7 @@ def _retry_with_similar_fallback(
     )
 
 
-def run_pipeline(
+def run_pipeline(  # noqa: C901
     pipeline_name: str,
     *,
     config: dict,
@@ -6460,6 +6663,40 @@ def run_pipeline(
         ("proposer", pipe["proposer"]),
         ("challenger", pipe["challenger"]),
     )
+    author_family = None
+    try:
+        from scripts.check_loop_execution import model_family
+        from scripts.flight.integrate_ticket import parse_ficha_models
+
+        ficha = project_root / ".agent" / "collaboration" / f"FICHA_{ticket}.md"
+        ficha_text = ficha.read_text(encoding="utf-8")
+        declarations = parse_ficha_models(ficha_text)
+        author_backend, author_model = declarations["autor"]
+        author_family = model_family(author_backend, author_model, MODEL_FAMILY_MAP)
+    except (
+        FileNotFoundError,
+        OSError,
+        UnicodeDecodeError,
+        KeyError,
+        ValueError,
+    ) as exc:
+        print(
+            f"[ensemble] WARN: familia del autor no resoluble: {exc}", file=sys.stderr
+        )
+    if any(
+        "lens_class" in config.get("ensemble_profiles", {}).get(name, {})
+        for _role, name in participants
+    ):
+        check_loop_lenses(
+            [name for _role, name in participants],
+            config=config,
+            author_family=author_family,
+        )
+    else:
+        print(
+            "[ensemble] WARN: perfiles legacy sin lens_class; se omite la barrera de composicion",
+            file=sys.stderr,
+        )
     versions = {
         rol: _backend_version(
             config["backends"][config["ensemble_profiles"][prof]["backend"]]
@@ -7339,7 +7576,7 @@ def _validated_governance_pair(
     return sha40
 
 
-def _warn_bundle_protocol(content_path: Path) -> None:
+def _warn_bundle_protocol(content_path: Path, lens_class: str | None = None) -> None:
     """PROTOCOLO DE BUNDLE (2026-08-05): avisa ANTES de gastar la ronda si el
     encargo no declara sus invariantes de suficiencia.
 
@@ -7377,6 +7614,16 @@ def _warn_bundle_protocol(content_path: Path) -> None:
                 "Medido: una lente sin protocolo devolvio 106 bytes; con el, 4708.",
                 file=sys.stderr,
             )
+        if lens_class == "texto":
+            from scripts.check_loop_bundle_protocol import has_lens_class_section
+
+            if not has_lens_class_section(
+                content_path.read_text(encoding="utf-8", errors="replace"), "texto"
+            ):
+                print(
+                    "[loop-bundle] WARN: falta CLASE DE LENTE: texto para esta lente.",
+                    file=sys.stderr,
+                )
     except Exception as exc:  # un aviso NUNCA rompe el despacho
         print(f"[loop-bundle] aviso no disponible: {exc}", file=sys.stderr)
 
@@ -7910,7 +8157,8 @@ def _cmd_loop_round(args, config) -> int:  # noqa: C901 - WOT-2026-152s-2 anade 
             loop_id=args.loop_id,
         )
     content_path = Path(args.content_file)
-    _warn_bundle_protocol(content_path)
+    profile_cfg = config.get("ensemble_profiles", {}).get(args.profile, {})
+    _warn_bundle_protocol(content_path, profile_cfg.get("lens_class"))
 
     # Hallazgo de auditoria de cableado (2026-09-29): un typo en --phase cae
     # SILENCIOSAMENTE en "no es gobierno" y pasa sin nonce. Aviso NO

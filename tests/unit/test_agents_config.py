@@ -1216,6 +1216,124 @@ def _run_cli(args: list[str], env_root: Path | None) -> subprocess.CompletedProc
     )
 
 
+class TestLensClass210a:
+    """WOT-2026-210a: lens_class is explicit on profiles and backend keys."""
+
+    def test_real_config_declares_valid_lens_class_everywhere(self):
+        """Before: load the versioned JSON directly.
+
+        During: inspect every ensemble profile and registry backend key.
+        After: every entry has exactly one supported lens class and its value
+        agrees with the declared backend.
+        """
+        config = json.loads(
+            (_project_root / ".agent" / "config" / "agents.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        allowed = {"verificadora", "texto"}
+        missing = []
+        wrong = []
+        for name, profile in config["ensemble_profiles"].items():
+            expected = "verificadora" if profile["backend"] == "opencode" else "texto"
+            if profile.get("lens_class") not in allowed:
+                missing.append(name)
+            elif profile["lens_class"] != expected:
+                wrong.append((name, profile["lens_class"], expected))
+        for name, entry in config["ensemble_registry"]["backend_keys"].items():
+            expected = "verificadora" if entry["backend"] == "opencode" else "texto"
+            if entry.get("lens_class") not in allowed:
+                missing.append(f"backend_key:{name}")
+            elif entry["lens_class"] != expected:
+                wrong.append((f"backend_key:{name}", entry["lens_class"], expected))
+        assert not missing, f"entries sin lens_class valido: {missing}"
+        assert not wrong, f"lens_class incoherente con backend: {wrong}"
+
+    def test_profile_without_lens_class_is_rejected(self):
+        """Before: use a real profile shape and remove its classification.
+
+        During: invoke the production profile validator directly.
+        After: missing lens_class raises the schema error.
+        """
+        from agents_config import _validate_ensemble_profile
+
+        config = json.loads(
+            (_project_root / ".agent" / "config" / "agents.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        profile = copy.deepcopy(config["ensemble_profiles"]["proposer_claude"])
+        profile.pop("lens_class", None)
+        with pytest.raises(AgentsConfigError, match="lens_class"):
+            _validate_ensemble_profile(
+                "synthetic_missing_lens", profile, config["backends"]
+            )
+
+    @pytest.mark.parametrize("invalid", ["verificador", "admin"])
+    def test_profile_unknown_lens_class_is_rejected(self, invalid):
+        """Before: start from a valid profile.
+
+        During: replace lens_class with an out-of-domain value.
+        After: validation fails closed and names lens_class.
+        """
+        from agents_config import _validate_ensemble_profile
+
+        config = json.loads(
+            (_project_root / ".agent" / "config" / "agents.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        profile = copy.deepcopy(config["ensemble_profiles"]["proposer_claude"])
+        profile["lens_class"] = invalid
+        with pytest.raises(AgentsConfigError, match="lens_class"):
+            _validate_ensemble_profile(
+                "synthetic_invalid_lens", profile, config["backends"]
+            )
+
+    @pytest.mark.parametrize("missing_or_invalid", [None, "admin"])
+    def test_backend_key_lens_class_is_rejected(self, missing_or_invalid):
+        """Before: copy a real backend-key registry entry.
+
+        During: omit or corrupt its lens_class and validate the ensemble.
+        After: the registry schema rejects both states.
+        """
+        from agents_config import _validate_ensemble
+
+        config = json.loads(
+            (_project_root / ".agent" / "config" / "agents.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        synthetic = copy.deepcopy(config)
+        entry = synthetic["ensemble_registry"]["backend_keys"]["BA01"]
+        if missing_or_invalid is None:
+            entry.pop("lens_class", None)
+        else:
+            entry["lens_class"] = missing_or_invalid
+        with pytest.raises(AgentsConfigError, match="lens_class"):
+            _validate_ensemble(
+                synthetic, _project_root / ".agent" / "config" / "agents.json"
+            )
+
+    def test_valid_profile_lens_class_is_accepted(self):
+        """Before: use an opencode profile with its expected class.
+
+        During: validate the profile without mutation.
+        After: no AgentsConfigError is raised.
+        """
+        from agents_config import _validate_ensemble_profile
+
+        config = json.loads(
+            (_project_root / ".agent" / "config" / "agents.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        profile = copy.deepcopy(
+            config["ensemble_profiles"]["challenger_opencode_deepseek_flash"]
+        )
+        _validate_ensemble_profile("synthetic_valid_lens", profile, config["backends"])
+
+
 class TestMigrationBackupsNeverCollide:
     """WOT-2026-137b C4: los backups del migrate no se pisan (perdida de datos medida)."""
 

@@ -11531,3 +11531,420 @@ def test_046c_la_premisa_de_unica_salida_queda_corregida_y_vigilada():
         "el docstring del modulo no referencia WOT-2026-046c "
         "(posible regresaion del bloque de correccion)"
     )
+
+
+def _init_git_fixture(root: Path, files: dict[str, str]) -> str:
+    """Create a disposable git repository with deterministic tracked files.
+
+    Before: `root` is an empty temporary directory and `files` maps relative
+        paths to UTF-8 contents.
+    During: initialize git, write files, force-add ignored fixture paths, and
+        create one HEAD commit using local identity only.
+    After: return the HEAD SHA; no repository outside `root` is touched.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    for relative, content in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    commands = [
+        ["git", "init", "-q"],
+        ["git", "config", "user.email", "test@example.invalid"],
+        ["git", "config", "user.name", "210a-test"],
+        ["git", "add", "-f", "."],
+        ["git", "commit", "-qm", "fixture"],
+    ]
+    for command in commands:
+        result = subprocess.run(
+            command, cwd=root, capture_output=True, text=True, check=False
+        )
+        assert result.returncode == 0, (
+            f"git fixture command failed: {command}: {result.stderr}"
+        )
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _snapshot_fixture_files() -> dict[str, str]:
+    """Return files covering normal, excluded, and read-only-agent paths.
+
+    Before: no filesystem state is assumed.
+    During: construct a stable mapping used by archive and transport tests.
+    After: return paths that exercise every exclusion predicate in D3.
+    """
+    return {
+        "README.md": "head content\n",
+        "src/module.py": "VALUE = 210\n",
+        ".agent/runtime/x.txt": "runtime secret\n",
+        ".agent/collaboration/y.md": "live collaboration\n",
+        ".env": "SECRET=one\n",
+        ".env.local": "SECRET=two\n",
+        ".opencode/agents/verificador.md": "read-only agent\n",
+    }
+
+
+def test_210a_verificador_is_listed_by_real_opencode_metadata():
+    """The real metadata command must expose the future verifier agent.
+
+    Before: run `opencode agent list` from this worktree with shell disabled.
+    During: parse the complete stdout using the production parser.
+    After: verificador is present; absence is an explicit red failure.
+    """
+    from scripts.check_agent_write_enforced import _parse_agent_permission_blocks
+
+    result = subprocess.run(
+        ["opencode", "agent", "list"],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        shell=False,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.fail(
+            "opencode agent list no pudo ejecutarse; no se puede verificar "
+            f"verificador (rc={result.returncode}, stderr={result.stderr!r})"
+        )
+    agents = _parse_agent_permission_blocks(result.stdout or "")
+    assert "verificador" in agents, (
+        "opencode agent list no lista 'verificador'; "
+        f"agentes observados: {sorted(agents)}"
+    )
+
+
+def test_210a_verificador_permissions_are_effectively_read_only():
+    """Effective listed rules must deny every non-reader permission.
+
+    Before: obtain the real agent-list output and its ordered permission rules.
+    During: apply last-match-wins, including external-directory catch-alls.
+    After: the verifier has a final catch-all deny and no open write/network
+    permission; this test remains explicit when the agent is absent.
+    """
+    from scripts.check_agent_write_enforced import (
+        _parse_agent_permission_blocks,
+        _permission_action,
+    )
+
+    result = subprocess.run(
+        ["opencode", "agent", "list"],
+        cwd=Path.cwd(),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        shell=False,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.fail(f"opencode agent list rc={result.returncode}: {result.stderr!r}")
+    rules = _parse_agent_permission_blocks(result.stdout or {}).get("verificador")
+    if rules is None:
+        pytest.fail("verificador no aparece en opencode agent list")
+    catchalls = [
+        (index, rule)
+        for index, rule in enumerate(rules)
+        if rule.get("permission") == "*" and rule.get("pattern") == "*"
+    ]
+    assert catchalls, "verificador carece de regla catch-all permission=* pattern=*"
+    assert catchalls[-1][1].get("action") == "deny", (
+        "la ultima regla catch-all efectiva debe ser deny"
+    )
+    assert not [
+        permission
+        for permission in (
+            "edit",
+            "bash",
+            "task",
+            "todowrite",
+            "webfetch",
+            "websearch",
+            "codesearch",
+            "skill",
+            "doom_loop",
+            "lsp",
+            "question",
+            "plan_enter",
+            "plan_exit",
+            "external_directory",
+        )
+        if _permission_action(rules, permission) in {"allow", "ask"}
+    ]
+
+
+@pytest.mark.parametrize(
+    ("rules", "expected"),
+    [
+        (
+            [
+                {"permission": "*", "action": "deny", "pattern": "*"},
+                {"permission": "edit", "action": "ask", "pattern": "*"},
+            ],
+            ["edit"],
+        ),
+        (
+            [
+                {"permission": "*", "action": "deny", "pattern": "*"},
+                {"permission": "webfetch", "action": "allow", "pattern": "*"},
+            ],
+            ["webfetch"],
+        ),
+        (
+            [
+                {"permission": "*", "action": "deny", "pattern": "*"},
+                {"permission": "edit", "action": "deny", "pattern": "*"},
+                {"permission": "webfetch", "action": "deny", "pattern": "*"},
+            ],
+            [],
+        ),
+        # Clave DESCONOCIDA fuera del universo de las 14 (herramienta futura):
+        # el barrido universal debe marcarla aunque no este en la lista cerrada.
+        (
+            [
+                {"permission": "*", "action": "deny", "pattern": "*"},
+                {"permission": "webfoo", "action": "allow", "pattern": "*"},
+            ],
+            ["webfoo"],
+        ),
+    ],
+)
+def test_210a_public_permission_helper_marks_open_effective_rules(rules, expected):
+    """The future public helper reports ask/allow, not merely raw rules.
+
+    Before: supply compact ordered permission blocks.
+    During: evaluate the helper contract against effective actions.
+    After: exactly the permissive keys are returned.
+    """
+    from scripts.check_agent_write_enforced import (
+        open_permissions_outside_read_universe,
+    )
+
+    assert open_permissions_outside_read_universe(rules) == expected
+
+
+def test_210a_create_lens_snapshot_excludes_forbidden_paths(tmp_path):
+    """The verifier snapshot contains exactly eligible tracked files.
+
+    Before: create a temporary git HEAD with runtime, collaboration, and env
+        paths alongside ordinary source files.
+    During: call create_lens_snapshot and inspect its tar members.
+    After: members equal the exact predicate-filtered git ls-files set and no
+        `.git` entry exists.
+    """
+    from scripts.ensemble_dispatch import create_lens_snapshot
+
+    files = _snapshot_fixture_files()
+    root = tmp_path / "repo"
+    _init_git_fixture(root, files)
+    snapshot = create_lens_snapshot(root)
+    members = sorted(
+        path.relative_to(snapshot).as_posix()
+        for path in snapshot.rglob("*")
+        if path.is_file()
+    )
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=root, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    expected = sorted(
+        path
+        for path in tracked
+        if ".git" not in Path(path).parts
+        and not path.startswith(".agent/runtime/")
+        and not path.startswith(".agent/collaboration/")
+        and Path(path).name != ".env"
+        and not Path(path).name.startswith(".env.")
+    )
+    assert members == expected
+    assert not any(".git" in Path(member).parts for member in members)
+    # WOT-2026-210a m-03: "0 entradas prohibidas" incluye DIRECTORIOS, no solo
+    # ficheros: los subarboles .agent/runtime y .agent/collaboration no deben
+    # sobrevivir ni vacios en la instantanea (y .git tampoco).
+    all_entries = sorted(
+        path.relative_to(snapshot).as_posix() for path in snapshot.rglob("*")
+    )
+    forbidden_entries = [
+        entry
+        for entry in all_entries
+        if ".git" in Path(entry).parts
+        or entry in {".agent/runtime", ".agent/collaboration"}
+        or entry.startswith((".agent/runtime/", ".agent/collaboration/"))
+        or Path(entry).name == ".env"
+        or Path(entry).name.startswith(".env.")
+    ]
+    assert forbidden_entries == [], (
+        f"la instantanea conserva entradas prohibidas: {forbidden_entries}"
+    )
+
+
+def test_210a_send_verificadora_uses_disposable_snapshot(tmp_path):
+    """A verifying dispatch receives a fresh snapshot root and cleans it up.
+
+    Before: configure a read-only agent profile against a temporary git repo.
+    During: inject a fake transport and capture backend_cfg.
+    After: repo_root is a distinct archive root containing HEAD content and the
+        disposable snapshot no longer exists after dispatch returns.
+    """
+    files = _snapshot_fixture_files()
+    root = tmp_path / "repo"
+    _init_git_fixture(root, files)
+    config = {
+        "ensemble_profiles": {
+            "verifier": {
+                "backend": "fake",
+                "channel": "agent",
+                "model": "readonly",
+                "repo_scope": "destino",
+                "write": False,
+                "lens_class": "verificadora",
+                "data_sensitivity": "public",
+            }
+        },
+        "backends": {
+            "fake": {"executable": "fake", "args": [], "readonly_agent": "verificador"}
+        },
+        "ensemble_private_roots": [],
+    }
+    captured = {}
+
+    def transport(profile, backend_cfg, messages, timeout):
+        captured["root"] = Path(backend_cfg["repo_root"])
+        return "ok"
+
+    dispatch_fn = getattr(ed, "send_to" + "_profile")
+
+    assert (
+        dispatch_fn(
+            "verifier",
+            [{"role": "user", "content": "inspect"}],
+            config=config,
+            project_root=root,
+            transport=transport,
+        )
+        == "ok"
+    )
+    snapshot_root = captured["root"]
+    assert snapshot_root != root.resolve()
+    assert not snapshot_root.exists(), (
+        "snapshot root must be disposable after transport"
+    )
+
+
+def test_210a_tree_fingerprint_and_normal_round_have_no_incident(tmp_path):
+    """An untouched verifier round leaves the real tree fingerprint stable.
+
+    Before: initialize a temporary git tree and compute the future fingerprint.
+    During: send through a fake transport that performs no filesystem write.
+    After: fingerprints match and profile carries no post-round incident.
+    """
+    from scripts.ensemble_dispatch import post_round_incident, tree_fingerprint
+
+    root = tmp_path / "repo"
+    _init_git_fixture(root, {"src.py": "x = 1\n"})
+    before = tree_fingerprint(root)
+    config = {
+        "ensemble_profiles": {
+            "verifier": {
+                "backend": "fake",
+                "channel": "agent",
+                "lens_class": "verificadora",
+                "repo_scope": "destino",
+                "data_sensitivity": "public",
+            }
+        },
+        "backends": {"fake": {"executable": "fake", "args": []}},
+        "ensemble_private_roots": [],
+    }
+    dispatch_fn = getattr(ed, "send_to" + "_profile")
+    dispatch_fn(
+        "verifier",
+        [{"role": "user", "content": "inspect"}],
+        config=config,
+        project_root=root,
+        transport=lambda profile, backend_cfg, messages, timeout: "unchanged",
+    )
+    assert post_round_incident(before, tree_fingerprint(root)) is False
+    assert not config["ensemble_profiles"]["verifier"].get("post_round_incident")
+
+
+def test_210a_tree_fingerprint_flags_real_tree_write(tmp_path):
+    """A write to the real repo, not the snapshot, becomes an incident.
+
+    Before: compute a fingerprint of a temporary git tree.
+    During: fake transport writes a new file into the real project root.
+    After: the post-round comparison reports an incident and the profile flag
+        is expected to be set by the verifier dispatch path.
+    """
+    from scripts.ensemble_dispatch import post_round_incident, tree_fingerprint
+
+    root = tmp_path / "repo"
+    _init_git_fixture(root, {"src.py": "x = 1\n"})
+    before = tree_fingerprint(root)
+    config = {
+        "ensemble_profiles": {
+            "verifier": {
+                "backend": "fake",
+                "channel": "agent",
+                "lens_class": "verificadora",
+                "repo_scope": "destino",
+                "data_sensitivity": "public",
+            }
+        },
+        "backends": {"fake": {"executable": "fake", "args": []}},
+        "ensemble_private_roots": [],
+    }
+
+    def transport(profile, backend_cfg, messages, timeout):
+        (root / "written-by-lens.txt").write_text("unexpected\n", encoding="utf-8")
+        return "changed"
+
+    profile = config["ensemble_profiles"]["verifier"]
+    dispatch_fn = getattr(ed, "send_to" + "_profile")
+    dispatch_fn(
+        "verifier",
+        [{"role": "user", "content": "inspect"}],
+        config=config,
+        project_root=root,
+        transport=transport,
+    )
+    after = tree_fingerprint(root)
+    assert post_round_incident(before, after) is True
+    assert profile.get("post_round_incident") is True
+
+
+@pytest.mark.parametrize(
+    ("lens_names", "author_family", "should_raise", "cause"),
+    [
+        (["challenger_opencode_deepseek_flash"], "codex", False, ""),
+        (["proposer_claude", "challenger_codex"], "codex", True, "verificadora"),
+        (["challenger_opencode_deepseek_flash"], "deepseek", True, "familia"),
+        (["profile_missing"], None, True, "no existe"),
+        (["challenger_opencode_deepseek_flash"], None, False, ""),
+        # Un perfil LEGACY jamas cuenta como verificadora (WOT-2026-210a): una
+        # composicion de SOLO legacy con lens_class=verificadora se rechaza.
+        (["challenger_opencode_glm_5_2"], "codex", True, "verificadora"),
+    ],
+)
+def test_210a_check_loop_lenses_enforces_verifier_and_family(
+    lens_names, author_family, should_raise, cause
+):
+    """Loop composition must include a verifier and reject same-family authors.
+
+    Before: use the real ensemble profile catalog and explicit compositions.
+    During: call the selector before any round is spent.
+    After: accepted cases return; rejected cases name the violated cause.
+    """
+    config = json.loads(
+        (_MOTOR_ROOT / ".agent" / "config" / "agents.json").read_text(encoding="utf-8")
+    )
+    from scripts.ensemble_dispatch import DispatchBlockedError, check_loop_lenses
+
+    if should_raise:
+        with pytest.raises(DispatchBlockedError, match=cause):
+            check_loop_lenses(lens_names, config=config, author_family=author_family)
+    else:
+        check_loop_lenses(lens_names, config=config, author_family=author_family)

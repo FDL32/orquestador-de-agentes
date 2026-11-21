@@ -126,6 +126,17 @@ def test_c05_existing_backend_entries_are_unchanged():
     # 2026-11-16) las paso a deprecated. Para ellas el status va en el mapa
     # explicito de abajo; para TODAS las demas el asiento completo (status
     # incluido) sigue anclado al baseline pre-161s 8c74f577.
+    #
+    # WOT-2026-210a: lens_class es obligatorio desde este ticket y el baseline
+    # historico (8c74f577) no lo lleva. Se anade al lado de la EXPECTATIVA el
+    # valor que exige la misma regla de migracion (backend == opencode ->
+    # verificadora; BA06 es la unica entrada opencode del baseline, el resto
+    # texto). Las comparaciones de abajo siguen siendo EXACTAS: cualquier
+    # lens_class incoherente con la regla o ausente en el actual sigue rojo.
+    for base_entry in baseline.values():
+        base_entry["lens_class"] = (
+            "verificadora" if base_entry["backend"] == "opencode" else "texto"
+        )
     migrated_status = {
         "BA10": "deprecated",
         "BA11": "deprecated",

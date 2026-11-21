@@ -402,6 +402,39 @@ def _permission_action(rules: list[dict] | None, permission: str) -> str | None:
     return candidates[-1].get("action") if candidates else None
 
 
+def open_permissions_outside_read_universe(
+    rules: list[dict] | None,
+) -> list[str]:
+    """Return effective permissions open outside the read-only universe.
+
+    Before: ``rules`` is the ordered permission listing from OpenCode, or is
+        absent when metadata could not be verified.
+    During: resolve each declared non-reader key with the production
+        last-match-wins semantics, including the catch-all-only rule for
+        ``external_directory``; fail closed for the inherited non-reader set.
+    After: return sorted, duplicate-free permission names whose effective
+        action is ``allow`` or ``ask`` (and every non-reader key when data is
+        missing).
+    """
+    declared = {
+        rule.get("permission")
+        for rule in (rules or [])
+        if rule.get("permission") not in {None, "read", "glob", "grep", "list"}
+    }
+    universe = set(NON_READ_PERMISSION_KEYS)
+    if not rules:
+        return sorted(universe)
+    open_permissions = set()
+    for permission in declared | universe:
+        action = _permission_action(rules, permission)
+        if permission in universe:
+            if action != "deny":
+                open_permissions.add(permission)
+        elif action in {"allow", "ask"}:
+            open_permissions.add(permission)
+    return sorted(open_permissions)
+
+
 def _list_agents(executable: str, cwd: str) -> list[str]:
     """Nombres de agentes que `<executable> agent list` reporta desde `cwd`.
 
@@ -479,7 +512,7 @@ def find_dynamic_unenforced_pairs(
             continue
         backend_name = profile.get("backend")
         backend = backends.get(backend_name) or {}
-        agent = backend.get("readonly_agent")
+        agent = profile.get("readonly_agent") or backend.get("readonly_agent")
         if not agent:
             continue  # sin agente declarado: lo cubre find_unenforced_pairs.
         cwd = project_root if profile.get("repo_scope") == "destino" else motor_root
@@ -534,6 +567,19 @@ def find_dynamic_unenforced_pairs(
                     "missing_agent": None,
                     "permissive_agent": agent,
                     "open_permissions": open_permissions,
+                    "cwd": cwd,
+                }
+            )
+        open_out = open_permissions_outside_read_universe(rules)
+        if open_out and "lens_class" in profile:
+            out.append(
+                {
+                    "profile": name,
+                    "backend": backend_name,
+                    "missing_agent": None,
+                    "permissive_agent": agent,
+                    "open_permissions_out": open_out,
+                    "universe_violation": True,
                     "cwd": cwd,
                 }
             )

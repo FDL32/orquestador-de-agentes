@@ -104,6 +104,17 @@ def has_refutation_section(text: str) -> bool:
     return any(m.upper() in upper for m in REFUTATION_INVARIANT[2])
 
 
+def has_lens_class_section(text: str, clase: str) -> bool:
+    """Detect a declared lens class with case- and whitespace-tolerant syntax.
+
+    Before: ``text`` is a bundle and ``clase`` is the required class token.
+    During: match the canonical ``CLASE DE LENTE: <class>`` declaration.
+    After: return whether the declaration names exactly the requested class.
+    """
+    pattern = rf"CLASE\s+DE\s+LENTE\s*:\s*{re.escape(clase)}\b"
+    return re.search(pattern, text, flags=re.IGNORECASE) is not None
+
+
 # ---------------------------------------------------------------------------
 # WOT-2026-059n: ROL DE LA LENTE, la quinta invariante.
 # Origen: bucle adversarial ad-hoc (Codex BA05, 2026-10-07) sobre una propuesta
@@ -211,7 +222,7 @@ def check_bundle(text: str) -> list[str]:
     return missing
 
 
-def main() -> int:
+def main() -> int:  # noqa: C901
     ap = argparse.ArgumentParser(
         description="Verifica que un bundle de bucle declare su protocolo de suficiencia."
     )
@@ -224,6 +235,12 @@ def main() -> int:
             "seccion REFUTACION-PREVIA: en el bundle (sin el flag, solo WARN)"
         ),
     )
+    ap.add_argument(
+        "--requires-lens-class",
+        choices=("verificadora", "texto"),
+        default=None,
+        help="exige la declaracion CLASE DE LENTE para la clase indicada",
+    )
     args = ap.parse_args()
 
     path = Path(args.bundle)
@@ -233,6 +250,30 @@ def main() -> int:
 
     text = path.read_text(encoding="utf-8", errors="replace")
     missing = check_bundle(text)
+
+    declared_lens_class = bool(
+        re.search(r"CLASE\s+DE\s+LENTE\s*:\s*\S+", text, flags=re.IGNORECASE)
+    )
+    lens_class_ok = args.requires_lens_class is None or has_lens_class_section(
+        text, args.requires_lens_class
+    )
+    if not lens_class_ok:
+        if args.requires_lens_class:
+            print(
+                f"[loop-bundle] BLOQUEA: {path.name} requiere "
+                f"'CLASE DE LENTE: {args.requires_lens_class}'.",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            f"[loop-bundle] WARN: {path.name} no declara lens class (CLASE DE LENTE).",
+            file=sys.stderr,
+        )
+    elif not declared_lens_class:
+        print(
+            f"[loop-bundle] WARN: {path.name} no declara lens class (CLASE DE LENTE).",
+            file=sys.stderr,
+        )
 
     # WOT-2026-035a: la cuarta invariante se evalua SIEMPRE, pero solo BLOQUEA
     # con el flag. Sin el flag avisa, para que la deuda sea visible sin

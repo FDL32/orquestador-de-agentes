@@ -77,6 +77,7 @@ Invoca `scripts/flight/review_level.py` y remite su criterio y parada a `.agent/
 - `codex` es el refuter: cuenta como lente independiente si su ronda es sustantiva y supera los filtros
   del checker (no es el emisor del nonce ni una sustitucion por `BA01`; ver seccion 4).
 - El mismo `backend_key` repetido NO son dos lentes.
+- La composicion de un bucle exige al menos una lente con `lens_class=verificadora` de familia distinta del autor; una lente `texto` nunca puede ser la unica. Verifica esta condicion con `check_loop_lenses` en `scripts/ensemble_dispatch.py` antes de gastar la ronda.
 
 ### 3.3 Preparar el bundle
 
@@ -84,6 +85,7 @@ Invoca `scripts/flight/review_level.py` y remite su criterio y parada a `.agent/
    si faltan): `INVENTARIO DE EVIDENCIA`; un presupuesto de exploracion (`PRESUPUESTO`, "no mas de ...");
    y la instruccion de responder `NO VERIFICABLE` (literal, con espacio) en vez de afirmar lo que no puede
    comprobar.
+1-ter. Todo bundle dirigido a una lente con `lens_class=texto` declara `CLASE DE LENTE: texto` y lleva la evidencia embebida. `check_loop_bundle_protocol.py --requires-lens-class texto` lo exige; `loop-round` avisa si falta.
 1-bis. (WOT-2026-059n) Si el bundle declara `CANAL: agent` (o declara reenvio de su salida a un proceso
    ejecutor), anade tambien `ROL DE LA LENTE: REVISOR/AUDITOR` (o `EJECUTOR`, si es un encargo real de
    implementacion). `check_loop_bundle_protocol.py` BLOQUEA si el canal declarado tiene capacidad ejecutora
@@ -313,6 +315,10 @@ timeout pensado para revision en un encargo de implementacion es de quien lo inv
 Esta verificacion es NORMA documentada, no barrera mecanica: un check automatico (preflight que
 lea `backend_key -> backend -> timeout_s` y avise/bloquee si falta en canal `agent`+`write:true`)
 queda declarado como mejora pendiente, no implementado aqui.
+
+### 3.11 Comprobacion antidistorsion (bundle de texto vs repo real)
+
+ANTIDISTORSION: la lente verificadora (`lens_class=verificadora`) revisa que el bundle de la lente texto represente fielmente el repo mediante una instantanea `git archive` del HEAD en su cwd; si el bundle tergiversa u omite el codigo real, la verificadora lo refuta citando ruta:linea desde su instantanea; el lanzador NO puede curar la evidencia del bundle (una evidencia falsa no se repara reenviandola: la verificacion del repo real es la barrera).
 
 ## 4. Definicion unica de "lente independiente"
 

@@ -467,7 +467,7 @@ def _is_env_var_name(value: object) -> bool:
     return all(c.isalnum() or c == "_" for c in value)
 
 
-def _validate_ensemble(config: dict, config_path: Path) -> None:
+def _validate_ensemble(config: dict, config_path: Path) -> None:  # noqa: C901
     """Validate the ensemble_* sections (schema 1.3+, retrocompatible; WOT-2026-019o).
 
     Before: config es el dict ya parseado de agents.json; las claves
@@ -507,6 +507,7 @@ def _validate_ensemble(config: dict, config_path: Path) -> None:
         )
 
     backends = config.get("backends", {})
+    registry = config.get("ensemble_registry")
     for backend_name, backend in backends.items():
         _validate_ensemble_backend_extras(backend_name, backend)
 
@@ -516,7 +517,30 @@ def _validate_ensemble(config: dict, config_path: Path) -> None:
                 f"Invalid 'ensemble_profiles' in {config_path}: must be an object"
             )
         for prof_name, prof in profiles.items():
-            _validate_ensemble_profile(prof_name, prof, backends)
+            _validate_ensemble_profile(
+                prof_name,
+                prof,
+                backends,
+                require_lens_class=isinstance(registry, dict),
+            )
+
+    backend_keys = registry.get("backend_keys") if isinstance(registry, dict) else None
+    if backend_keys is not None:
+        if not isinstance(backend_keys, dict):
+            raise AgentsConfigError(
+                f"Invalid 'ensemble_registry.backend_keys' in {config_path}: must be an object"
+            )
+        for backend_key, entry in backend_keys.items():
+            if not isinstance(entry, dict):
+                raise AgentsConfigError(
+                    f"Ensemble registry backend_key '{backend_key}': must be an object"
+                )
+            lens_class = entry.get("lens_class")
+            if lens_class not in {"verificadora", "texto"}:
+                raise AgentsConfigError(
+                    f"Ensemble registry backend_key '{backend_key}': lens_class "
+                    f"must be one of ['texto', 'verificadora'], got '{lens_class}'"
+                )
 
     if pipelines is not None:
         if not isinstance(pipelines, dict):
@@ -561,10 +585,22 @@ def _validate_ensemble_backend_extras(backend_name: str, backend: dict) -> None:
             )
 
 
-def _validate_ensemble_profile(prof_name: str, prof: object, backends: dict) -> None:
+def _validate_ensemble_profile(
+    prof_name: str,
+    prof: object,
+    backends: dict,
+    *,
+    require_lens_class: bool = True,
+) -> None:
     """Un perfil de ensemble: backend existente, channel valido, sin credenciales."""
     if not isinstance(prof, dict):
         raise AgentsConfigError(f"Ensemble profile '{prof_name}': must be an object")
+    lens_class = prof.get("lens_class")
+    if require_lens_class and lens_class not in {"verificadora", "texto"}:
+        raise AgentsConfigError(
+            f"Ensemble profile '{prof_name}': lens_class must be one of "
+            f"['texto', 'verificadora'], got '{lens_class}'"
+        )
     leaked = _FORBIDDEN_CREDENTIAL_KEYS.intersection(k.lower() for k in prof)
     if leaked:
         raise AgentsConfigError(

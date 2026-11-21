@@ -229,3 +229,44 @@ class TestRoleFraming059n:
         assert not bundle_has_executor_capability("CANAL: api")
         assert not bundle_has_executor_capability("sin declaracion de canal")
         assert bundle_has_executor_capability("texto libre\nFORWARDS TO EXECUTOR\n")
+
+
+class TestLensClassBundle210a:
+    """WOT-2026-210a: opt-in enforcement for a bundle lens class."""
+
+    def test_bundle_with_text_lens_class_is_accepted(self, tmp_path):
+        """Before: the bundle contains the three native invariants.
+
+        During: run the CLI with the explicit required class.
+        After: the declared text lens and embedded evidence pass with rc 0.
+        """
+        text = _TRES_NATALES + "CLASE DE LENTE: texto\nEVIDENCIA: hallazgo medido\n"
+        assert _run(tmp_path, text, "--requires-lens-class", "texto") == 0
+
+    def test_required_lens_class_missing_blocks(self, tmp_path):
+        """Before: a native bundle omits the requested lens declaration.
+
+        During: invoke the opt-in gate for the text lens.
+        After: the bundle is rejected with rc 1.
+        """
+        assert _run(tmp_path, _TRES_NATALES, "--requires-lens-class", "texto") == 1
+
+    def test_missing_lens_class_without_flag_is_warn_only(self, tmp_path, capsys):
+        """Before: a historical bundle has no lens-class section.
+
+        During: run the compatibility CLI without opt-in enforcement.
+        After: the bundle remains accepted and emits a warning.
+        """
+        assert _run(tmp_path, _TRES_NATALES) == 0
+        assert "lens" in capsys.readouterr().err.lower()
+
+    def test_lens_class_section_matching_is_case_and_space_tolerant(self):
+        """Before: section spelling varies in case and whitespace.
+
+        During: call the public section detector.
+        After: equivalent declarations match and another class does not.
+        """
+        from scripts.check_loop_bundle_protocol import has_lens_class_section
+
+        assert has_lens_class_section("clase   de lente : TEXTO", "texto")
+        assert not has_lens_class_section("CLASE DE LENTE: texto", "verificadora")

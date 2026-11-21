@@ -223,6 +223,7 @@
   "ensemble_profiles": {
     "proposer_claude": {
       "backend": "claude",
+      "lens_class": "texto",
       "channel": "agent",
       "model": null,
       "context": "diff-o-artefacto-publico",
@@ -233,6 +234,7 @@
     },
     "challenger_codex": {
       "backend": "codex",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "gpt-5.6-luna",
       "context": "diff-o-artefacto-publico",
@@ -243,6 +245,7 @@
     },
     "challenger_nan_deepseek_flash": {
       "backend": "nan_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "deepseek-v4-flash",
       "api_base_url": "https://api.nan.builders/v1/chat/completions",
@@ -256,6 +259,7 @@
     },
     "challenger_nan_qwen": {
       "backend": "nan_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "qwen3.6",
       "api_base_url": "https://api.nan.builders/v1/chat/completions",
@@ -269,6 +273,7 @@
     },
     "challenger_nan_gemma": {
       "backend": "nan_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "gemma4",
       "api_base_url": "https://api.nan.builders/v1/chat/completions",
@@ -282,6 +287,8 @@
     },
     "challenger_opencode_glm_5_2": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "opencode-go/glm-5.3-flash",
       "context": "diff-o-artefacto-publico",
@@ -294,6 +301,8 @@
     },
     "challenger_opencode_glm_flash": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "opencode-go/glm-5.3-flash",
       "context": "diff-o-artefacto-publico",
@@ -304,6 +313,8 @@
     },
     "challenger_opencode_deepseek_flash": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "nan/deepseek-v4-flash",
       "context": "diff-o-artefacto-publico",
@@ -314,6 +325,8 @@
     },
     "challenger_opencode_mimo_flash": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "nan/mimo-v2.6-flash",
       "context": "diff-o-artefacto-publico",
@@ -324,6 +337,8 @@
     },
     "challenger_opencode_qwen": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "nan/qwen3.6",
       "context": "diff-o-artefacto-publico",
@@ -334,6 +349,8 @@
     },
     "challenger_opencode_gemma": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "nan/gemma4",
       "context": "diff-o-artefacto-publico",
@@ -344,6 +361,8 @@
     },
     "challenger_opencode_qwen_flash": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "nan/qwen3.8-flash",
       "context": "diff-o-artefacto-publico",
@@ -354,6 +373,8 @@
     },
     "challenger_opencode_deepseek_free": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "opencode/deepseek-v4.1-flash-free",
       "context": "diff-o-artefacto-publico",
@@ -364,6 +385,8 @@
     },
     "challenger_opencode_hy_free": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "opencode/hy4-flash-free",
       "context": "diff-o-artefacto-publico",
@@ -374,6 +397,8 @@
     },
     "challenger_opencode_longcat_free": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "opencode/longcat-2.5-free",
       "context": "diff-o-artefacto-publico",
@@ -384,6 +409,8 @@
     },
     "challenger_opencode_mimo_free": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "opencode/mimo-v2.6-flash-free",
       "context": "diff-o-artefacto-publico",
@@ -394,6 +421,8 @@
     },
     "challenger_opencode_nemotron_lightning_free": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "opencode/nemotron-3.5-lightning-free",
       "context": "diff-o-artefacto-publico",
@@ -404,6 +433,8 @@
     },
     "challenger_opencode_nemotron_super_vl_free": {
       "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
       "channel": "agent",
       "model": "opencode/nemotron-3.5-super-vl-free",
       "context": "diff-o-artefacto-publico",
@@ -414,6 +445,7 @@
     },
     "challenger_kilo_deepseek_flash": {
       "backend": "kilo",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "nan/deepseek-v4-flash",
       "context": "diff-o-artefacto-publico",
@@ -425,6 +457,7 @@
     },
     "challenger_kilo_qwen": {
       "backend": "kilo",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "nan/qwen3.6",
       "context": "diff-o-artefacto-publico",
@@ -436,6 +469,7 @@
     },
     "challenger_kilo_gemma": {
       "backend": "kilo",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "nan/gemma4",
       "context": "diff-o-artefacto-publico",
@@ -447,6 +481,7 @@
     },
     "challenger_kilo_qwen_flash": {
       "backend": "kilo",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "nan/qwen3.8-flash",
       "context": "diff-o-artefacto-publico",
@@ -458,6 +493,7 @@
     },
     "challenger_kilo_glm_flash": {
       "backend": "kilo",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "nan/glm5.3-flash",
       "context": "diff-o-artefacto-publico",
@@ -469,6 +505,7 @@
     },
     "challenger_kilo_glm": {
       "backend": "kilo",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "nan/glm5.3",
       "context": "diff-o-artefacto-publico",
@@ -480,6 +517,7 @@
     },
     "challenger_kilo_mimo_flash": {
       "backend": "kilo",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "nan/mimo-v2.6-flash",
       "context": "diff-o-artefacto-publico",
@@ -491,6 +529,7 @@
     },
     "challenger_nan_qwen_flash": {
       "backend": "nan_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "qwen3.8-flash",
       "api_base_url": "https://api.nan.builders/v1/chat/completions",
@@ -504,6 +543,7 @@
     },
     "challenger_nan_glm_flash": {
       "backend": "nan_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "glm5.3-flash",
       "api_base_url": "https://api.nan.builders/v1/chat/completions",
@@ -517,6 +557,7 @@
     },
     "challenger_nvidia_glm": {
       "backend": "nvidia_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "z-ai/glm-5.3",
       "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
@@ -528,6 +569,7 @@
     },
     "challenger_nvidia_glm_flash": {
       "backend": "nvidia_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "z-ai/glm-5.3-flash",
       "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
@@ -539,6 +581,7 @@
     },
     "challenger_nvidia_deepseek_flash": {
       "backend": "nvidia_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "deepseek-ai/deepseek-v4.1-flash",
       "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
@@ -550,6 +593,7 @@
     },
     "challenger_nvidia_kimi": {
       "backend": "nvidia_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "moonshotai/kimi-k3",
       "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
@@ -561,6 +605,7 @@
     },
     "challenger_nvidia_nemotron": {
       "backend": "nvidia_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "nvidia/nemotron-3-super-120b-a12b",
       "api_base_url": "https://integrate.api.nvidia.com/v1/chat/completions",
@@ -572,6 +617,7 @@
     },
     "challenger_nan_mimo_flash": {
       "backend": "nan_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "mimo-v2.6-flash",
       "api_base_url": "https://api.nan.builders/v1/chat/completions",
@@ -585,6 +631,7 @@
     },
     "challenger_groq_qwen": {
       "backend": "groq_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "qwen/qwen3.8-27b",
       "api_base_url": "https://api.groq.com/openai/v1/chat/completions",
@@ -596,6 +643,7 @@
     },
     "challenger_groq_gptoss": {
       "backend": "groq_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "openai/gpt-oss-120b",
       "api_base_url": "https://api.groq.com/openai/v1/chat/completions",
@@ -607,6 +655,7 @@
     },
     "challenger_openrouter_northcode": {
       "backend": "openrouter_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "cohere/north-mini-code:free",
       "api_base_url": "https://openrouter.ai/api/v1/chat/completions",
@@ -618,6 +667,7 @@
     },
     "challenger_openrouter_nemotron": {
       "backend": "openrouter_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
       "api_base_url": "https://openrouter.ai/api/v1/chat/completions",
@@ -629,6 +679,7 @@
     },
     "challenger_tokenharbor_qwen_flash": {
       "backend": "tokenharbor_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "qwen3.8-flash:free",
       "api_base_url": "https://tokenharbor.ai/v1/chat/completions",
@@ -640,6 +691,7 @@
     },
     "challenger_tokenharbor_deepseek_flash": {
       "backend": "tokenharbor_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "deepseek-v4.1-flash:free",
       "api_base_url": "https://tokenharbor.ai/v1/chat/completions",
@@ -651,6 +703,7 @@
     },
     "challenger_tokenharbor_mimo_flash": {
       "backend": "tokenharbor_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "mimo-v2.6-flash:free",
       "api_base_url": "https://tokenharbor.ai/v1/chat/completions",
@@ -662,6 +715,7 @@
     },
     "challenger_gemini_gemini": {
       "backend": "gemini_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "gemini-3.8-flash",
       "api_base_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
@@ -673,6 +727,7 @@
     },
     "challenger_cohere_command": {
       "backend": "cohere_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "command-a-plus-05-2026",
       "api_base_url": "https://api.cohere.ai/compatibility/v1/chat/completions",
@@ -684,6 +739,7 @@
     },
     "challenger_cohere_northcode": {
       "backend": "cohere_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "north-mini-code-1-0",
       "api_base_url": "https://api.cohere.ai/compatibility/v1/chat/completions",
@@ -695,6 +751,7 @@
     },
     "challenger_mistral": {
       "backend": "mistral_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "mistral-large-2512",
       "api_base_url": "https://api.mistral.ai/v1/chat/completions",
@@ -706,6 +763,7 @@
     },
     "challenger_mistral_codestral": {
       "backend": "mistral_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "codestral-2508",
       "api_base_url": "https://api.mistral.ai/v1/chat/completions",
@@ -717,6 +775,7 @@
     },
     "challenger_llm7_deepseek_flash": {
       "backend": "llm7_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "DeepSeek-V4-Flash-0731",
       "api_base_url": "https://api.llm7.io/v1/chat/completions",
@@ -728,6 +787,7 @@
     },
     "challenger_llm7_glm_flash": {
       "backend": "llm7_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "GLM-5.3-Flash",
       "api_base_url": "https://api.llm7.io/v1/chat/completions",
@@ -739,6 +799,7 @@
     },
     "challenger_llm7_minimax": {
       "backend": "llm7_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "minimax-m2.7",
       "api_base_url": "https://api.llm7.io/v1/chat/completions",
@@ -750,6 +811,7 @@
     },
     "challenger_llm7_nemo": {
       "backend": "llm7_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "mistral-Nemo-Instruct-2407",
       "api_base_url": "https://api.llm7.io/v1/chat/completions",
@@ -761,6 +823,7 @@
     },
     "challenger_llm7_codestral": {
       "backend": "llm7_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "codestral-latest",
       "api_base_url": "https://api.llm7.io/v1/chat/completions",
@@ -772,6 +835,7 @@
     },
     "challenger_kiosapi_deepseek_flash": {
       "backend": "kiosapi_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "deepseek-v4.1-flash-free",
       "api_base_url": "https://kiosapi.com/v1/chat/completions",
@@ -783,6 +847,7 @@
     },
     "challenger_kiosapi_glm_flash": {
       "backend": "kiosapi_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "glm-5.3-flash-free",
       "api_base_url": "https://kiosapi.com/v1/chat/completions",
@@ -794,6 +859,7 @@
     },
     "challenger_claude_haiku_api": {
       "backend": "anthropic_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "claude-haiku-5-5",
       "api_key_env": "ANTHROPIC_API_KEY",
@@ -805,6 +871,7 @@
     },
     "challenger_claude_sonnet_api": {
       "backend": "anthropic_api",
+      "lens_class": "texto",
       "channel": "api",
       "model": "claude-sonnet-5-5",
       "api_key_env": "ANTHROPIC_API_KEY",
@@ -816,6 +883,7 @@
     },
     "challenger_claude_sonnet_cli": {
       "backend": "claude",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "sonnet",
       "context": "diff-o-artefacto-publico",
@@ -826,6 +894,7 @@
     },
     "challenger_claude_opus_cli": {
       "backend": "claude",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "opus",
       "context": "diff-o-artefacto-publico",
@@ -836,6 +905,7 @@
     },
     "challenger_codex_sol_cli": {
       "backend": "codex",
+      "lens_class": "texto",
       "channel": "agent",
       "model": "gpt-6.1-sol",
       "context": "diff-o-artefacto-publico",
@@ -860,6 +930,7 @@
     "backend_keys": {
       "BA01": {
         "backend": "claude",
+        "lens_class": "texto",
         "model": null,
         "backend_version": null,
         "status": "active",
@@ -870,6 +941,7 @@
       },
       "BA02": {
         "backend": "kilo",
+        "lens_class": "texto",
         "model": "nan/qwen3.8-flash",
         "backend_version": null,
         "status": "active",
@@ -880,6 +952,7 @@
       },
       "BA03": {
         "backend": "kilo",
+        "lens_class": "texto",
         "model": "nan/glm5.3-flash",
         "backend_version": null,
         "status": "active",
@@ -890,6 +963,7 @@
       },
       "BA04": {
         "backend": "kilo",
+        "lens_class": "texto",
         "model": "nan/mimo-v2.6-flash",
         "backend_version": null,
         "status": "active",
@@ -900,6 +974,7 @@
       },
       "BA05": {
         "backend": "codex",
+        "lens_class": "texto",
         "model": "gpt-5.6-luna",
         "backend_version": null,
         "status": "active",
@@ -911,6 +986,7 @@
       },
       "BA07": {
         "backend": "kilo",
+        "lens_class": "texto",
         "model": "nan/deepseek-v4-flash",
         "backend_version": null,
         "status": "active",
@@ -921,6 +997,7 @@
       },
       "BA08": {
         "backend": "kilo",
+        "lens_class": "texto",
         "model": "nan/qwen3.6",
         "backend_version": null,
         "status": "active",
@@ -931,6 +1008,7 @@
       },
       "BA09": {
         "backend": "kilo",
+        "lens_class": "texto",
         "model": "nan/gemma4",
         "backend_version": null,
         "status": "active",
@@ -941,6 +1019,7 @@
       },
       "BA10": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "deepseek-v4-flash",
         "backend_version": null,
         "status": "deprecated",
@@ -951,6 +1030,7 @@
       },
       "BA11": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "qwen3.6",
         "backend_version": null,
         "status": "deprecated",
@@ -961,6 +1041,7 @@
       },
       "BA12": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "mimo-v2.5",
         "backend_version": null,
         "status": "archived",
@@ -972,6 +1053,7 @@
       },
       "BA13": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "gemma4",
         "backend_version": null,
         "status": "deprecated",
@@ -982,6 +1064,7 @@
       },
       "BA06": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "opencode-go/glm-5.3-flash",
         "backend_version": null,
         "status": "active",
@@ -992,6 +1075,7 @@
       },
       "BA14": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "deepseek-v4-flash-0731",
         "backend_version": null,
         "status": "deprecated",
@@ -1003,6 +1087,7 @@
       },
       "BA15": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "qwen3.8-flash",
         "backend_version": null,
         "status": "deprecated",
@@ -1013,6 +1098,7 @@
       },
       "BA16": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "glm5.3-flash",
         "backend_version": null,
         "status": "deprecated",
@@ -1023,6 +1109,7 @@
       },
       "BA17": {
         "backend": "nvidia_api",
+        "lens_class": "texto",
         "model": "z-ai/glm-5.3",
         "backend_version": null,
         "status": "deprecated",
@@ -1034,6 +1121,7 @@
       },
       "BA18": {
         "backend": "nvidia_api",
+        "lens_class": "texto",
         "model": "z-ai/glm-5.3-flash",
         "backend_version": null,
         "status": "deprecated",
@@ -1045,6 +1133,7 @@
       },
       "BA19": {
         "backend": "nvidia_api",
+        "lens_class": "texto",
         "model": "deepseek-ai/deepseek-v4.1-flash",
         "backend_version": null,
         "status": "deprecated",
@@ -1056,6 +1145,7 @@
       },
       "BA20": {
         "backend": "nvidia_api",
+        "lens_class": "texto",
         "model": "z-ai/glm-5.3",
         "backend_version": null,
         "status": "active",
@@ -1066,6 +1156,7 @@
       },
       "BA21": {
         "backend": "nvidia_api",
+        "lens_class": "texto",
         "model": "z-ai/glm-5.3-flash",
         "backend_version": null,
         "status": "active",
@@ -1076,6 +1167,7 @@
       },
       "BA22": {
         "backend": "nvidia_api",
+        "lens_class": "texto",
         "model": "deepseek-ai/deepseek-v4.1-flash",
         "backend_version": null,
         "status": "active",
@@ -1086,6 +1178,7 @@
       },
       "BA23": {
         "backend": "nvidia_api",
+        "lens_class": "texto",
         "model": "moonshotai/kimi-k3",
         "backend_version": null,
         "status": "active",
@@ -1096,6 +1189,7 @@
       },
       "BA24": {
         "backend": "nvidia_api",
+        "lens_class": "texto",
         "model": "nvidia/nemotron-3-super-120b-a12b",
         "backend_version": null,
         "status": "active",
@@ -1107,6 +1201,7 @@
       },
       "BA25": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "mimo-v2.6-flash",
         "backend_version": null,
         "status": "deprecated",
@@ -1117,6 +1212,7 @@
       },
       "BA26": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "glm5.3",
         "backend_version": null,
         "status": "deprecated",
@@ -1127,6 +1223,7 @@
       },
       "BA27": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "deepseek-v4-pro",
         "backend_version": null,
         "status": "deprecated",
@@ -1137,6 +1234,7 @@
       },
       "BA28": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "hy4",
         "backend_version": null,
         "status": "deprecated",
@@ -1147,6 +1245,7 @@
       },
       "BA29": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "qwen3.8-max",
         "backend_version": null,
         "status": "deprecated",
@@ -1157,6 +1256,7 @@
       },
       "BA30": {
         "backend": "groq_api",
+        "lens_class": "texto",
         "model": "qwen/qwen3.8-27b",
         "backend_version": null,
         "status": "active",
@@ -1168,6 +1268,7 @@
       },
       "BA31": {
         "backend": "groq_api",
+        "lens_class": "texto",
         "model": "openai/gpt-oss-120b",
         "backend_version": null,
         "status": "active",
@@ -1179,6 +1280,7 @@
       },
       "BA32": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "kimi-k3.1-pro",
         "backend_version": null,
         "status": "deprecated",
@@ -1189,6 +1291,7 @@
       },
       "BA33": {
         "backend": "nan_api",
+        "lens_class": "texto",
         "model": "minimax-h3",
         "backend_version": null,
         "status": "deprecated",
@@ -1199,6 +1302,7 @@
       },
       "BA50": {
         "backend": "openrouter_api",
+        "lens_class": "texto",
         "model": "cohere/north-mini-code:free",
         "backend_version": null,
         "status": "active",
@@ -1210,6 +1314,7 @@
       },
       "BA51": {
         "backend": "openrouter_api",
+        "lens_class": "texto",
         "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
         "backend_version": null,
         "status": "active",
@@ -1221,12 +1326,14 @@
       },
       "BA52": {
         "backend": "openrouter_api",
+        "lens_class": "texto",
         "model": "stealth/space-bunny-alpha",
         "backend_version": null,
         "status": "archived"
       },
       "BA70": {
         "backend": "aihubmix_api",
+        "lens_class": "texto",
         "model": "coding-glm-5.1-free",
         "backend_version": null,
         "status": "archived",
@@ -1237,6 +1344,7 @@
       },
       "BA71": {
         "backend": "aihubmix_api",
+        "lens_class": "texto",
         "model": "xiaomi-mimo-v2.5-free",
         "backend_version": null,
         "status": "archived",
@@ -1247,6 +1355,7 @@
       },
       "BA72": {
         "backend": "aihubmix_api",
+        "lens_class": "texto",
         "model": "coding-minimax-m2.7-free",
         "backend_version": null,
         "status": "archived",
@@ -1257,6 +1366,7 @@
       },
       "BA90": {
         "backend": "tokenharbor_api",
+        "lens_class": "texto",
         "model": "qwen3.8-flash:free",
         "backend_version": null,
         "status": "active",
@@ -1267,6 +1377,7 @@
       },
       "BA91": {
         "backend": "tokenharbor_api",
+        "lens_class": "texto",
         "model": "deepseek-v4.1-flash:free",
         "backend_version": null,
         "status": "active",
@@ -1277,6 +1388,7 @@
       },
       "BA92": {
         "backend": "tokenharbor_api",
+        "lens_class": "texto",
         "model": "mimo-v2.6-flash:free",
         "backend_version": null,
         "status": "active",
@@ -1287,6 +1399,7 @@
       },
       "BA110": {
         "backend": "gemini_api",
+        "lens_class": "texto",
         "model": "gemini-3.8-flash",
         "backend_version": null,
         "status": "active",
@@ -1297,6 +1410,7 @@
       },
       "BA130": {
         "backend": "cohere_api",
+        "lens_class": "texto",
         "model": "command-a-plus-05-2026",
         "backend_version": null,
         "status": "active",
@@ -1307,6 +1421,7 @@
       },
       "BA131": {
         "backend": "cohere_api",
+        "lens_class": "texto",
         "model": "north-mini-code-1-0",
         "backend_version": null,
         "status": "active",
@@ -1318,6 +1433,7 @@
       },
       "BA150": {
         "backend": "mistral_api",
+        "lens_class": "texto",
         "model": "mistral-large-2512",
         "backend_version": null,
         "status": "active",
@@ -1329,6 +1445,7 @@
       },
       "BA151": {
         "backend": "mistral_api",
+        "lens_class": "texto",
         "model": "codestral-2508",
         "backend_version": null,
         "status": "active",
@@ -1340,6 +1457,7 @@
       },
       "BA170": {
         "backend": "llm7_api",
+        "lens_class": "texto",
         "model": "DeepSeek-V4-Flash-0731",
         "backend_version": null,
         "status": "active",
@@ -1351,6 +1469,7 @@
       },
       "BA171": {
         "backend": "llm7_api",
+        "lens_class": "texto",
         "model": "GLM-5.3-Flash",
         "backend_version": null,
         "status": "active",
@@ -1361,6 +1480,7 @@
       },
       "BA172": {
         "backend": "llm7_api",
+        "lens_class": "texto",
         "model": "minimax-m2.7",
         "backend_version": null,
         "status": "active",
@@ -1371,6 +1491,7 @@
       },
       "BA173": {
         "backend": "llm7_api",
+        "lens_class": "texto",
         "model": "mistral-Nemo-Instruct-2407",
         "backend_version": null,
         "status": "active",
@@ -1382,6 +1503,7 @@
       },
       "BA174": {
         "backend": "llm7_api",
+        "lens_class": "texto",
         "model": "codestral-latest",
         "backend_version": null,
         "status": "active",
@@ -1393,6 +1515,7 @@
       },
       "BA190": {
         "backend": "kiosapi_api",
+        "lens_class": "texto",
         "model": "deepseek-v4.1-flash-free",
         "backend_version": null,
         "status": "active",
@@ -1403,6 +1526,7 @@
       },
       "BA191": {
         "backend": "kiosapi_api",
+        "lens_class": "texto",
         "model": "glm-5.3-flash-free",
         "backend_version": null,
         "status": "active",
@@ -1413,6 +1537,7 @@
       },
       "BA250": {
         "backend": "anthropic_api",
+        "lens_class": "texto",
         "model": "claude-haiku-5-5",
         "backend_version": null,
         "status": "active",
@@ -1423,6 +1548,7 @@
       },
       "BA251": {
         "backend": "anthropic_api",
+        "lens_class": "texto",
         "model": "claude-sonnet-5-5",
         "backend_version": null,
         "status": "active",
@@ -1434,6 +1560,7 @@
       },
       "BA252": {
         "backend": "claude",
+        "lens_class": "texto",
         "model": "sonnet",
         "backend_version": null,
         "status": "active",
@@ -1445,6 +1572,7 @@
       },
       "BA253": {
         "backend": "claude",
+        "lens_class": "texto",
         "model": "opus",
         "backend_version": null,
         "status": "active",
@@ -1456,6 +1584,7 @@
       },
       "BA254": {
         "backend": "codex",
+        "lens_class": "texto",
         "model": "gpt-6.1-sol",
         "backend_version": null,
         "status": "active",
@@ -1469,6 +1598,7 @@
       },
       "BA255": {
         "backend": "kilo",
+        "lens_class": "texto",
         "model": "nan/glm5.3",
         "backend_version": null,
         "status": "active",
@@ -1479,6 +1609,7 @@
       },
       "BA256": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "nan/deepseek-v4-flash",
         "backend_version": null,
         "status": "active",
@@ -1489,6 +1620,7 @@
       },
       "BA257": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "nan/mimo-v2.6-flash",
         "backend_version": null,
         "status": "active",
@@ -1499,6 +1631,7 @@
       },
       "BA258": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "nan/qwen3.6",
         "backend_version": null,
         "status": "active",
@@ -1509,6 +1642,7 @@
       },
       "BA259": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "nan/gemma4",
         "backend_version": null,
         "status": "active",
@@ -1519,6 +1653,7 @@
       },
       "BA260": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "nan/qwen3.8-flash",
         "backend_version": null,
         "status": "active",
@@ -1529,6 +1664,7 @@
       },
       "BA261": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "opencode/deepseek-v4.1-flash-free",
         "backend_version": null,
         "status": "active",
@@ -1540,6 +1676,7 @@
       },
       "BA262": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "opencode/hy4-flash-free",
         "backend_version": null,
         "status": "active",
@@ -1551,6 +1688,7 @@
       },
       "BA263": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "opencode/longcat-2.5-free",
         "backend_version": null,
         "status": "active",
@@ -1562,6 +1700,7 @@
       },
       "BA264": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "opencode/mimo-v2.6-flash-free",
         "backend_version": null,
         "status": "active",
@@ -1573,6 +1712,7 @@
       },
       "BA265": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "opencode/nemotron-3.5-lightning-free",
         "backend_version": null,
         "status": "active",
@@ -1584,6 +1724,7 @@
       },
       "BA266": {
         "backend": "opencode",
+        "lens_class": "verificadora",
         "model": "opencode/nemotron-3.5-super-vl-free",
         "backend_version": null,
         "status": "active",
