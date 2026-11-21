@@ -132,8 +132,12 @@ Excepción acotada WOT-2026-205c: si el estado está en FASE C completa
 (`madre_en_refugio=true`, `hija_en_refugio=true`, `agotada="semanal"` y
 `despertar_en` numérico y futuro), la caché de `alvarovans` puede conservar
 `resets` o `weekly_resets` no numéricos y `checked_at` viejo. La decisión de
-espera usa exclusivamente `estado.despertar_en`; no es una tolerancia global.
-En esa rama `brabander`, la cuenta refugio decisora, debe seguir teniendo
+espera usa exclusivamente `estado.despertar_en`; la excepción no se extiende
+al resto de la validación de la caché. En esa rama también se omite la
+comprobación del rango de los resets numéricos de la cuenta preferida (no se
+evalúa la ventana `checked_at - 1 día .. checked_at + 8 días`); fuera de FASE C
+ese rango sigue siendo obligatorio. Esto solo documenta el comportamiento
+vigente y no cambia el código. En esa rama `brabander`, la cuenta refugio decisora, debe seguir teniendo
 datos válidos y un `checked_at` fresco (<= 1200 s); si falta o está vieja el
 guard sigue devolviendo rc 9. Fuera de esos cuatro predicados, la regla
 general de caché vieja o futura = rc 9 permanece intacta.

@@ -1155,3 +1155,136 @@ def test_205c_simulation_state_copy_unchanged(tmp_path):
     assert result.returncode == 0
     assert payload["accion"] == "ESPERAR"
     assert before == after
+
+
+def test_205d_phase_c_madre_en_refugio_control_negativo(tmp_path):
+    """Before: phase C has every predicate except the mother's refuge flag.
+
+    During: run the production CLI with only madre_en_refugio falsified.
+    After: the bounded exception stays disabled and returns NONE with rc 9.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    phase_c = _phase_c_state(now + 3600)
+    phase_c["madre_en_refugio"] = False
+    state_path = _write_state(tmp_path, phase_c)
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 9
+    assert payload["accion"] == "NONE"
+
+
+def test_205d_phase_c_madre_en_refugio_control_positivo(tmp_path):
+    """Before: complete phase C has all four conceptual predicates true.
+
+    During: run the production CLI with the preferred cache's reset fields invalid.
+    After: the bounded exception returns ESPERAR with rc 0 and no executor.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    phase_c = _phase_c_state(now + 3600)
+    state_path = _write_state(tmp_path, phase_c)
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["accion"] == "ESPERAR"
+    assert payload["ejecutor"] is None
+
+
+def test_205d_phase_c_hija_en_refugio_control_negativo(tmp_path):
+    """Before: phase C has every predicate except the daughter's refuge flag.
+
+    During: run the production CLI with only hija_en_refugio falsified.
+    After: the bounded exception stays disabled and returns NONE with rc 9.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    phase_c = _phase_c_state(now + 3600)
+    phase_c["hija_en_refugio"] = False
+    state_path = _write_state(tmp_path, phase_c)
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 9
+    assert payload["accion"] == "NONE"
+
+
+def test_205d_phase_c_hija_en_refugio_control_positivo(tmp_path):
+    """Before: complete phase C has both refuge flags and the other predicates.
+
+    During: run the production CLI with the complete phase-C state.
+    After: the bounded exception returns ESPERAR with rc 0.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    phase_c = _phase_c_state(now + 3600)
+    state_path = _write_state(tmp_path, phase_c)
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["accion"] == "ESPERAR"
+
+
+def test_205d_phase_c_agotada_semanal_control_negativo(tmp_path):
+    """Before: phase C has every predicate except weekly exhaustion.
+
+    During: run the production CLI with agotada set to a non-weekly value.
+    After: the bounded exception stays disabled and returns NONE with rc 9.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    phase_c = _phase_c_state(now + 3600)
+    phase_c["agotada"] = "5h"
+    state_path = _write_state(tmp_path, phase_c)
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 9
+    assert payload["accion"] == "NONE"
+
+
+def test_205d_phase_c_agotada_semanal_control_positivo(tmp_path):
+    """Before: complete phase C declares weekly exhaustion.
+
+    During: run the production CLI with all phase-C predicates true.
+    After: the bounded exception returns ESPERAR with rc 0.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    phase_c = _phase_c_state(now + 3600)
+    state_path = _write_state(tmp_path, phase_c)
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["accion"] == "ESPERAR"
+
+
+def test_205d_phase_c_despertar_en_control_negativo(tmp_path):
+    """Before: phase C has every predicate except a future state wake.
+
+    During: run the production CLI with despertar_en already in the past.
+    After: the bounded exception stays disabled and returns NONE with rc 9.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    phase_c = _phase_c_state(now + 3600)
+    phase_c["despertar_en"] = now - 60
+    state_path = _write_state(tmp_path, phase_c)
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 9
+    assert payload["accion"] == "NONE"
+
+
+def test_205d_phase_c_despertar_en_control_positivo(tmp_path):
+    """Before: phase C has a numeric despertar_en strictly in the future.
+
+    During: run the production CLI with all four phase-C predicates true.
+    After: the bounded exception returns ESPERAR with rc 0.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    phase_c = _phase_c_state(now + 3600)
+    state_path = _write_state(tmp_path, phase_c)
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["accion"] == "ESPERAR"

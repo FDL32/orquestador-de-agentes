@@ -336,10 +336,10 @@ def _read_cache(path, estado=None, ahora=None):  # noqa: C901
     """Read and validate the account cache, with a bounded phase-C exception.
 
     Before: path identifies a JSON usage cache and estado may identify complete phase C.
-    During: validate preferred data normally, or tolerate only its stale/null reset fields
-        when both refuge flags, weekly exhaustion, and a future numeric state wake exist;
-        validate brabander freshness and data independently in that exception. Stale
-        preferred metadata may be tolerated there, but future metadata is never tolerated.
+    During: validate preferred data normally, or in complete phase C (both refuge flags,
+        weekly exhaustion, and a future numeric state wake) tolerate preferred resets that
+        are non-numeric or out of range plus a preferred checked_at that is stale or at
+        most 1200 seconds in the future; brabander freshness and data stay mandatory there.
     After: return validated readings or raise ValueError with a fail-closed cause.
     """
     try:
