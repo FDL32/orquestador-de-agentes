@@ -70,6 +70,13 @@ After (post-condiciones)
 Revision adversarial: Codex (ADOPTAR CON CAMBIOS) exigio los 6 endurecimientos
 aplicados aqui, entre ellos tratar `stop_hook_active` AUSENTE como fail-open por ser
 campo no documentado en code.claude.com/docs/en/hooks.
+
+Rama P9 (WOT-2026-215a)
+-----------------------
+P9 es una rama aditiva y fail-open que solo puede emitir un aviso local por
+stderr; el evento Stop no admite contexto adicional para el modelo. El caso
+positivo queda deshabilitado hasta que se ratifiquen las anclas de
+DECISION_USUARIO.
 """
 
 from __future__ import annotations
@@ -117,6 +124,16 @@ _A_ESTRECHO_RE = re.compile(
     re.IGNORECASE,
 )
 ESPERA_MARKER_RE = re.compile(r"(?m)^[ \t>*_]{0,6}\[ESPERA:(HECHO|NADA):([^\]]*)\]")
+
+# WOT-2026-215a: DECISION_USUARIO pendiente (ficha s.2). El caso positivo
+# permanece deshabilitado por defecto hasta ratificar las anclas.
+P9_ANCHORS_RATIFIED = False
+P9_ANNOUNCE_ANCHORS: tuple[str, ...] = ()
+P9_EXECUTION_ANCHORS: tuple[str, ...] = ()
+_P9_NOTICE = (
+    "P9 (WOT-2026-215a): el cierre anuncia una accion futura sin ejecutar "
+    "y la cola de OPERACION no esta vacia: ejecuta o programa la espera."
+)
 
 #: WOT-2026-044x: edad maxima del centinela antes de tratarlo como inactivo.
 #: Criterio DECLARADO (no hay distribucion empirica de duraciones medida):
@@ -589,6 +606,164 @@ def _decide_espera(root: Path, payload: dict) -> dict:
     return {"continue": True}
 
 
+def p9_announces_without_acting(message: str) -> bool:
+    """Before: mensaje y anclas P9; During: compara anuncio y ejecucion; After: predicado P9."""
+    if not P9_ANCHORS_RATIFIED or not P9_ANNOUNCE_ANCHORS or not P9_EXECUTION_ANCHORS:
+        return False
+    announces = any(re.search(anchor, message) for anchor in P9_ANNOUNCE_ANCHORS)
+    executes = any(re.search(anchor, message) for anchor in P9_EXECUTION_ANCHORS)
+    return announces and not executes
+
+
+def _p9_resolve_co_activa(flight_dir: Path) -> str | None:
+    """Before: directorio de vuelo; During: resuelve una CO activa; After: codigo unico o None."""
+    try:
+        raw = (flight_dir / "flight_roster.json").read_text(encoding="utf-8-sig")
+        data = json.loads(raw)
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or not isinstance(data.get("active_roles"), dict):
+        return None
+    candidates = []
+    for key, value in data["active_roles"].items():
+        if key == "_schema_note" or not isinstance(value, dict):
+            continue
+        if (
+            key == "orquestador"
+            or key.startswith("orquestador")
+            or value.get("role") in ("orquestador", "orquestadora")
+        ):
+            candidates.append(value)
+    if len(candidates) != 1:
+        return None
+    session_code = candidates[0].get("session_code")
+    if not isinstance(session_code, str) or not session_code.strip():
+        return None
+    return session_code.strip()
+
+
+def _p9_cola_no_vacia(flight_dir: Path, co: str) -> bool:
+    """Before: vuelo y CO; During: lee la ultima Entrada; After: indica cola numerada."""
+    target = flight_dir / "diseno" / f"OPERACION_EN_CURSO_{co}.md"
+    try:
+        text = target.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    sections = re.findall(r"(?ms)^## Entrada\b.*?(?=^## Entrada\b|\Z)", text)
+    if not sections:
+        return False
+    section = sections[-1]
+    field = re.search(r"(?m)^\s*- COLA \(orden\):(.*)$", section)
+    if field is None:
+        return False
+    block_lines = [field.group(1)]
+    for line in section.splitlines()[section[: field.end()].count("\n") + 1 :]:
+        if line.startswith("- ") or line.startswith("#"):
+            break
+        block_lines.append(line)
+    block = "\n".join(block_lines)
+    return bool(re.search(r"(?m)^\s*\d{1,3}[.)]?\s+\S", block))
+
+
+def _p9_gitdir_topology(root: Path) -> tuple[list[Path], list[Path]]:
+    """Before: raiz posible de worktree; During: resuelve checkout y link; After: bases y links."""
+    bases: list[Path] = []
+    link_paths: list[Path] = []
+    try:
+        git_marker = root / ".git"
+        if not git_marker.is_file():
+            return bases, link_paths
+        marker = git_marker.read_text(encoding="utf-8").strip()
+        if not marker.startswith("gitdir:"):
+            return bases, link_paths
+        gitdir = Path(marker.split(":", 1)[1].strip())
+        if not gitdir.is_absolute():
+            gitdir = root / gitdir
+        current = gitdir.resolve()
+        for candidate in (current, *current.parents):
+            if candidate.name == ".git":
+                base = candidate.parent
+                bases.append(base)
+                link_paths.append(
+                    base / ".agent" / "config" / "motor_destination_link.json"
+                )
+                break
+    except (OSError, RuntimeError, UnicodeDecodeError, ValueError):
+        return [], []
+    return bases, link_paths
+
+
+def _p9_destination_roots(link_paths: list[Path]) -> list[Path]:
+    """Before: links candidatos; During: lee destinos validos; After: raices destino."""
+    roots: list[Path] = []
+    for link in link_paths:
+        destination = _p9_destination_root(link)
+        if destination is not None:
+            roots.append(destination)
+    return roots
+
+
+def _p9_destination_root(link: Path) -> Path | None:
+    """Before: link JSON; During: extrae destino; After: Path valida o None."""
+    try:
+        data = json.loads(link.read_text(encoding="utf-8-sig"))
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        return None
+    destination = data.get("destination_root") if isinstance(data, dict) else None
+    if isinstance(destination, str) and destination:
+        return Path(destination)
+    return None
+
+
+def _p9_linked_roots(root: Path) -> list[Path]:
+    """Before: raiz activa; During: incorpora topologia y links; After: raices a explorar."""
+    bases, topology_links = _p9_gitdir_topology(root)
+    direct_link = root / ".agent" / "config" / "motor_destination_link.json"
+    links = [direct_link, *topology_links]
+    return [root, *bases, *_p9_destination_roots(links)]
+
+
+def _p9_flight_dir(root: Path) -> Path | None:
+    """Before: raiz activa; During: censa vuelos vinculados; After: vuelo unico o None."""
+    candidates: dict[Path, Path] = {}
+    try:
+        for base in _p9_linked_roots(root):
+            flight_root = base / ".agent" / "runtime" / "flight"
+            for roster in flight_root.glob("*/flight_roster.json"):
+                if not roster.is_file():
+                    continue
+                resolved = roster.resolve()
+                candidates[resolved] = resolved.parent
+    except (OSError, RuntimeError, ValueError):
+        pass
+    if len(candidates) != 1:
+        return None
+    return next(iter(candidates.values()))
+
+
+def _p9_notice(root: Path, payload: dict) -> str | None:
+    """Before: payload Stop; During: aplica compuertas P9; After: aviso o None."""
+    if not _espera_guard_allows(payload):
+        return None
+    message = payload.get("last_assistant_message")
+    if not isinstance(message, str) or not message.strip():
+        return None
+    if not p9_announces_without_acting(message):
+        return None
+    sentinel = read_espera_sentinel(root)
+    if sentinel is None or sentinel.get("mode") not in ("observe", "block"):
+        return None
+    if sentinel_expiry(sentinel):
+        return None
+    flight_dir = _p9_flight_dir(root)
+    if flight_dir is None:
+        return None
+    co = _p9_resolve_co_activa(flight_dir)
+    if co is None or not _p9_cola_no_vacia(flight_dir, co):
+        return None
+    return _P9_NOTICE
+
+
 def needs_classification(payload: dict) -> bool:
     """Decide si el cierre debe bloquearse por falta de marcador.
 
@@ -726,6 +901,13 @@ def _decide(payload: dict) -> dict:
         espera_resultado = _decide_espera(root, payload)
     except Exception:
         espera_resultado = {"continue": True}
+
+    try:
+        p9_notice = _p9_notice(root, payload)
+        if p9_notice:
+            sys.stderr.write(p9_notice + "\n")
+    except Exception:
+        p9_notice = None
 
     if evidencia_bloquea:
         return {"decision": "block", "reason": _REASON[:REASON_MAX_LEN]}
