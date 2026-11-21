@@ -254,7 +254,13 @@ def test_n5_debug_config_desde_raiz_entorno_limpio(tmp_path: Path) -> None:
     """
     config = _debug_json("debug config", tmp_path)
     assert config["lsp"] is False
-    assert set(config["agent"]) == {"nieto", "manager", "builder", "auditor"}
+    assert set(config["agent"]) == {
+        "nieto",
+        "manager",
+        "builder",
+        "auditor",
+        "verificador",
+    }
     nieto = _debug_agent(tmp_path, "nieto")
     builder = _debug_agent(tmp_path, "builder")
     nieto_block = _policy_block(nieto["permission"])

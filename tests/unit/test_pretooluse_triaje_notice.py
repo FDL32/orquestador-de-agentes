@@ -12,6 +12,7 @@ case remains silent and successful.
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -29,7 +30,10 @@ REAL_REGISTRY = (
     / "vuelo-20261026b"
     / "session_registry.json"
 )
-REAL_SESSION_ID = "6e2764c7-e3eb-4aef-b20c-9298ab358452"
+# Active coordinator when the live tests were written (WOT-2026-176e). It goes
+# stale at every relief, so ``REAL_SESSION_ID`` is derived below from the live
+# registry; this literal is only the fallback when derivation is impossible.
+HISTORIC_REAL_SESSION_ID = "6e2764c7-e3eb-4aef-b20c-9298ab358452"
 IM_SESSION_ID = "25b3f440-e83f-4604-bcfc-dc347a473aae"
 # Registered live as IM-208, role=implantacion, status=SETTLED: a negative of
 # the registered-but-not-active-orquestadora kind, NOT an absent session.
@@ -37,11 +41,9 @@ SETTLED_SESSION_ID = "5d4ce451-feb5-4d71-a4f3-321e5e49602d"
 # Live T3 flight state exists only on the operator machine: CI checkouts have
 # no destination registry (link gitignored, flight unversioned) and no
 # provider logs, so tests that read it skip there and run where m-02/m-03
-# are actually measurable (WOT-2026-176e B-1).
-needs_live_state = pytest.mark.skipif(
-    not REAL_REGISTRY.is_file(),
-    reason="live T3 flight state only on the operator machine",
-)
+# are actually measurable (WOT-2026-176e B-1). The marker itself
+# (``needs_live_state``) is defined after ``_load_hook_module`` because its
+# condition also needs the hook's own resolution functions.
 
 
 def _hook_path() -> Path:
@@ -60,21 +62,107 @@ def _hook_path() -> Path:
     )
 
 
-def _load_hook_module():
+def _load_hook_module(path: Path | None = None):
     """Import the hook under a path-unique name for localization assertions.
 
     Before: the hook ships as a standalone script, not an importable module.
-    During: an importlib spec loads ``_hook_path()`` under a name derived from
-        its resolved path so mutation runs never share a stale cache entry.
+    During: an importlib spec loads ``path`` (default ``_hook_path()``) under a
+        name derived from its resolved path so mutation runs never share a
+        stale cache entry.
     After: the freshly executed module is returned for direct function checks.
     """
-    path = _hook_path()
+    path = _hook_path() if path is None else path
     name = f"pretooluse_triaje_notice_{abs(hash(str(path.resolve())))}"
     spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+_UUID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE
+)
+_REPO_HOOK = REPO_ROOT / ".agent" / "hooks" / "pretooluse_triaje_notice.py"
+
+
+def _derive_active_session_id() -> tuple[str | None, str]:
+    """Derive the Claude session id of the ACTIVE coordinator from live state.
+
+    Before: ``REAL_REGISTRY`` names the active orquestadora thread
+        (``orquestador_activo``, role orquestadora, status ACTIVA); the hook
+        resolves a session id to a thread by reading the first 8 KB of the
+        thread's own provider log. The REPOSITORY hook is used here, never the
+        mutation seam, so a mutant cannot change which cases run.
+    During: reads the head of the active thread's log, and returns the first
+        UUID that the hook's own ``_thread_for_session`` maps back to that
+        thread.
+    After: returns ``(session_id, "")`` or ``(None, reason)`` with reason one of
+        ``no-registry``, ``no-active-coordinator``, ``no-log`` or
+        ``log-format-unresolved`` (the log exists but no UUID in its head
+        resolves: the undocumented format changed) or ``derivation-error``
+        (any unexpected exception: reported, never silently skipped).
+    """
+    if not REAL_REGISTRY.is_file():
+        return None, "no-registry"
+    try:
+        hook = _load_hook_module(_REPO_HOOK)
+        registry = json.loads(REAL_REGISTRY.read_text(encoding="utf-8-sig"))
+        active = registry.get("orquestador_activo")
+        threads = [
+            session["threadId"]
+            for session in registry["sessions"]
+            if session.get("code") == active
+            and session.get("role") == "orquestadora"
+            and isinstance(session.get("status"), str)
+            and hook.ACTIVE_PREFIX.match(session["status"])
+            and isinstance(session.get("threadId"), str)
+        ]
+        if not threads:
+            return None, "no-active-coordinator"
+        log_dir = Path.home() / ".t3" / "userdata" / "logs" / "provider"
+        saw_log = False
+        for thread in threads:
+            uuid_ = thread.removeprefix("mcp:")
+            log = log_dir / f"events.mcp-{uuid_}.log"
+            if not log.is_file():
+                continue
+            saw_log = True
+            with log.open("rb") as handle:
+                head = handle.read(8192).decode("utf-8", "ignore")
+            # The thread's own UUID trivially resolves to itself; the hook is
+            # driven by the Claude session id, which is a different UUID.
+            for candidate in dict.fromkeys(_UUID_RE.findall(head)):
+                if candidate.lower() == uuid_.lower():
+                    continue
+                resolved = hook._thread_for_session(candidate)
+                if resolved is not None and hook._same_thread(thread, resolved):
+                    return candidate, ""
+        return None, ("log-format-unresolved" if saw_log else "no-log")
+    except Exception:  # an unexpected failure must stay LOUD, never a skip
+        return None, "derivation-error"
+
+
+_ACTIVE_SESSION_ID, _ACTIVE_SESSION_REASON = _derive_active_session_id()
+REAL_SESSION_ID = _ACTIVE_SESSION_ID or HISTORIC_REAL_SESSION_ID
+
+needs_live_state = pytest.mark.skipif(
+    not REAL_REGISTRY.is_file(),
+    reason="live T3 flight state only on the operator machine",
+)
+
+# Cases whose verdict depends on ``REAL_SESSION_ID`` being the ACTIVE
+# coordinator (fire cases, and silence cases that must reach the later clauses).
+# ``log-format-unresolved`` and ``derivation-error`` are NOT skipped: the cases
+# then run with the historic id and the tripwire fails, so a real defect is loud.
+_SKIPPABLE_REASONS = ("no-registry", "no-active-coordinator", "no-log")
+needs_active_coordinator = pytest.mark.skipif(
+    _ACTIVE_SESSION_ID is None and _ACTIVE_SESSION_REASON in _SKIPPABLE_REASONS,
+    reason=(
+        "cannot derive the active coordinator's session id from live state "
+        f"({_ACTIVE_SESSION_REASON}); the identity-dependent case is not measurable"
+    ),
+)
 
 
 def _env() -> dict[str, str]:
@@ -199,13 +287,35 @@ def test_m02_real_registry_and_outside_project_silence(tmp_path):
 @pytest.mark.parametrize(
     ("session_id", "fixture_name", "fires"),
     [
-        (REAL_SESSION_ID, "incident_prompt.txt", True),
+        pytest.param(
+            REAL_SESSION_ID, "incident_prompt.txt", True, marks=needs_active_coordinator
+        ),
         (IM_SESSION_ID, "incident_prompt.txt", False),
         (SETTLED_SESSION_ID, "incident_prompt.txt", False),
-        (REAL_SESSION_ID, "neg_agent_only_triaje.txt", False),
-        (REAL_SESSION_ID, "neg_delegate_only_tickets.txt", False),
-        (REAL_SESSION_ID, "neg_incident_lens_review.txt", False),
-        (REAL_SESSION_ID, "neg_task_only_backlog.txt", False),
+        pytest.param(
+            REAL_SESSION_ID,
+            "neg_agent_only_triaje.txt",
+            False,
+            marks=needs_active_coordinator,
+        ),
+        pytest.param(
+            REAL_SESSION_ID,
+            "neg_delegate_only_tickets.txt",
+            False,
+            marks=needs_active_coordinator,
+        ),
+        pytest.param(
+            REAL_SESSION_ID,
+            "neg_incident_lens_review.txt",
+            False,
+            marks=needs_active_coordinator,
+        ),
+        pytest.param(
+            REAL_SESSION_ID,
+            "neg_task_only_backlog.txt",
+            False,
+            marks=needs_active_coordinator,
+        ),
     ],
 )
 def test_m03_registry_discriminator_and_fixture_patterns(
@@ -227,12 +337,21 @@ def test_m03_registry_discriminator_and_fixture_patterns(
 
 
 @needs_live_state
+@needs_active_coordinator
 def test_m03_real_session_id_is_the_log_format_tripwire():
     """The measured UUID tripwires the undocumented, fragile provider-log source.
 
     If T3 changes its first-8-KB log format, this test fails even though the
     runtime hook is designed to call silently.
     """
+    assert _ACTIVE_SESSION_REASON not in (
+        "log-format-unresolved",
+        "derivation-error",
+    ), (
+        "cannot derive the active coordinator's session id "
+        f"({_ACTIVE_SESSION_REASON}): the provider-log format the hook relies on "
+        "changed, or the derivation itself failed"
+    )
     result = _run(_event(REAL_SESSION_ID, {"prompt": "triaje del backlog"}))
     assert _output(result)["additionalContext"]
 
@@ -253,6 +372,7 @@ def test_m04_hook_source_has_no_blocking_contract_tokens():
 
 
 @needs_live_state
+@needs_active_coordinator
 def test_m05_settings_has_one_entry_and_literal_command_fires():
     """The literal tracked wrapper must reach the hook end to end."""
     entry = _notice_entry()
@@ -360,6 +480,7 @@ def _active_registry_entry() -> dict:
 
 
 @needs_live_state
+@needs_active_coordinator
 def test_m03_control_registry_without_calling_session_stays_silent(tmp_path):
     """DoD control: a located registry lacking the calling session never notices.
 
@@ -391,9 +512,11 @@ def test_m03_control_registry_without_calling_session_stays_silent(tmp_path):
 @pytest.mark.parametrize(
     ("mutation", "fires"),
     [
-        ({}, True),
-        ({"role": "implantacion"}, False),
-        ({"status": "SETTLED (superseded)"}, False),
+        pytest.param({}, True, marks=needs_active_coordinator),
+        pytest.param({"role": "implantacion"}, False, marks=needs_active_coordinator),
+        pytest.param(
+            {"status": "SETTLED (superseded)"}, False, marks=needs_active_coordinator
+        ),
     ],
 )
 def test_m03_role_and_status_clauses_via_synthetic_registry(tmp_path, mutation, fires):
@@ -427,6 +550,7 @@ def test_m03_role_and_status_clauses_via_synthetic_registry(tmp_path, mutation, 
 
 
 @needs_live_state
+@needs_active_coordinator
 def test_m02_recursive_string_pattern_is_casefolded():
     """The positive pattern may be split across nested keys and values."""
     result = _run(
