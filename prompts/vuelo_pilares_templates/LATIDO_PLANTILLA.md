@@ -34,10 +34,10 @@
 8. En los envíos usa prefijo `mcp:`, modo queue y comprueba la entrega.
 
 9. Contexto y relevo: el relevo SOLO procede si se cumplen LAS TRES
-   condiciones A LA VEZ: P4 (NO RATIFICADA en el canon; este latido la exige:
+   condiciones A LA VEZ: P4 (RATIFICADA, vinculante; este latido la exige:
    objetivo cerrado), P6 (RATIFICADA, vinculante: GO nuevo del usuario por
-   cada salto, re-verificado con `user_msgs.py`) y P23 (NO RATIFICADA en el
-   canon; este latido la exige: ventana de no-relevo abierta). Registra el
+   cada salto, re-verificado con `user_msgs.py`) y P23 (RATIFICADA, vinculante;
+   este latido la exige: ventana de no-relevo abierta). Registra el
    resultado de cada una. No existe condición de contexto mínimo (retirada por P4).
 
 10. Registra cada fallo o fricción en el registro vigente del vuelo.

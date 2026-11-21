@@ -8,8 +8,9 @@
    {{CASCADA_CONTEXTO}}.
 
 1. Ordenes permanentes del usuario: remite a `docs/protocol/flight_supervision.md` seccion 2 "Autoridad". Aplica P1 (RATIFICADA, vinculante), P3
-   (RATIFICADA, vinculante), P7 (RATIFICADA, vinculante), P14 (NO RATIFICADA,
-   no vinculante) y P18 (NO RATIFICADA, no vinculante).
+   (RATIFICADA, vinculante), P7 (RATIFICADA, vinculante), P14 esta RETIRADA a
+   historico, no vinculante (su sustancia esta en P3) y P18 (RATIFICADA,
+   vinculante).
 
 2. Estado a heredar: {{HEAD_SHA}} en {{RAMA_VUELO}}. La deuda heredada y el
    contexto operativo se consultan en {{FLIGHT_DIR}}; las operaciones usan
@@ -36,5 +37,7 @@
 6. Errores a no repetir y lecciones: consulta la referencia vigente del
    vuelo; las lecciones completas viven en el ARRANQUE real derivado, no en
    esta plantilla.
+
+Estilo de cita: en toda respuesta al usuario, cita los documentos con un enlace markdown de ruta absoluta (texto del enlace entre corchetes y la ruta completa entre parentesis).
 
 Reporte final breve: identidad, HEAD heredado y primer resultado medido.

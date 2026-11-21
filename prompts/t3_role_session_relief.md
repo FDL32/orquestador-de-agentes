@@ -446,12 +446,13 @@ que el checkpoint se declare expresamente autoritativo para ese campo.
 
 ### Ventana de no-relevo (relevo planificado o self-hop)
 
-No se releva (relevo planificado o self-hop) en ninguna de estas tres
+No se releva (relevo planificado o self-hop) en ninguna de estas cuatro
 condiciones, todas declarativas y verificables por el sucesor sin script nuevo:
 - **Builder vivo:** el proceso del Builder responde por su PID o su log crece.
 - **CONTRACT_AUDIT abierto:** una ronda lanzada sin veredicto escrito.
 - **Aviso de listo para integrar sin merge:** el ultimo mensaje de tipo
   "LISTO_PARA_INTEGRAR" a la coordinadora sin merge posterior registrado.
+- **Nonce o lente de revision en vuelo:** existe un nonce de ronda emitido sin integrar o una lente de revision lanzada sin veredicto.
 
 Un relevo forzado por fallo (Clase A, no planificado) no espera a la ventana:
 el sucesor hereda el campo de operacion en curso.
