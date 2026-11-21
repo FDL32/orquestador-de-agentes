@@ -20,6 +20,11 @@ ROOT = Path(__file__).parents[2]
 PREDECESSOR = ROOT / "tests/fixtures/render_latido/latido_predecesor.md"
 SUCCESSOR = ROOT / "tests/fixtures/render_latido/latido_sucesor.md"
 ROSTER = ROOT / "tests/fixtures/render_latido/flight_roster.json"
+REAL_CO_143 = Path(
+    "C:/Users/fdl/Proyectos_Python/orquestador_de_agentes_workspace/"
+    ".agent/runtime/flight/vuelo-20261026b/diseno/"
+    "LATIDO_CO-143_v7.1_20261120.md"
+)
 _REAL_STEP9_CO_72 = "Procedimiento: ARRANQUE_CO-72 s.1 y PROTOCOLO_POSTCOMPACTACION_CO-54.md s.2 y PROTOCOLO_POSTCOMPACTACION_CO-55.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-56.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-57.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-58.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-59.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-60.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-61.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-62.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-63.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-64.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-65.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-66.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-67.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-68.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-69.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-70.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-71.md s.3 y s.4 (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-72 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor."
 _REAL_STEP9_CO_67 = "Procedimiento: ARRANQUE_CO-67 s.1 y PROTOCOLO_POSTCOMPACTACION_CO-54.md s.2 y PROTOCOLO_POSTCOMPACTACION_CO-55.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-56.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-57.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-58.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-59.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-60.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-61.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-62.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-63.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-64.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-65.md s.3 y s.4 y PROTOCOLO_POSTCOMPACTACION_CO-66.md s.3 y s.4 (procedimiento de ticket; el ARRANQUE de CO-67 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor. (procedimiento de ticket; el ARRANQUE de CO-67 no tiene s.8) y prompts/t3_role_session_relief.md s.9; el rotador (rotate_coordinator_v2.py) lo ejecuta la SUPERVISORA vigente con --actor."
 
@@ -43,13 +48,276 @@ def _juicios_sucesor() -> dict[str, str]:
     }
 
 
+def _real_co_143_predecessor(tmp_path: Path) -> Path:
+    """Prepare the real CO-143 heartbeat without changing its source file.
+
+    Before: the registered real heartbeat exists and carries the measured
+    cascade, step-9 citations, and postcompaction history.
+    During: apply only the three structural adaptations required by the
+    renderer's current judgement and identity anchors, then write a copy.
+    After: return a temporary predecessor path suitable for render_latido.
+    """
+
+    if not REAL_CO_143.is_file():
+        pytest.skip(f"fixture real ausente: {REAL_CO_143}")
+    lines = REAL_CO_143.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines[1] = lines[1].rstrip("\r\n") + " [nota_derivacion de prueba]" + "\n"
+    lines.insert(2, "(ARRANQUE_CO-143_20261120.md s.2: objetivo de prueba)\n")
+    for index, line in enumerate(lines):
+        if line.startswith("CO-143, sesion coordinadora ACTIVA"):
+            adapted = "Eres " + line
+            adapted = re.sub(
+                r"la cascada es (CO-\d+ \(mcp:[0-9A-Za-z-]+),",
+                r"la cascada es \1),",
+                adapted,
+                count=1,
+            )
+            prefix, separator, suffix = adapted.rpartition("Go_Relevo_88")
+            if separator:
+                adapted = prefix + "Go_Relevo_N" + suffix
+            lines[index] = adapted
+            break
+    else:
+        pytest.fail("no se encontró la identidad CO-143 en el fixture real")
+    for index, line in enumerate(lines):
+        if line.startswith("9. Contexto propio:"):
+            prefix, separator, suffix = line.rpartition("Go_Relevo_88")
+            if separator:
+                lines[index] = prefix + "Go_Relevo_N" + suffix
+            break
+    predecessor = tmp_path / REAL_CO_143.name
+    predecessor.write_text("".join(lines), encoding="utf-8")
+    return predecessor
+
+
+def _real_co_144_roster() -> dict[str, object]:
+    """Return the reduced roster for the CO-143 to CO-144 derivation.
+
+    Before: the real predecessor cites CO-142 as its supervisor.
+    During: provide the exact three consumed identities for the next render.
+    After: return a closed reduced roster with no extra fields.
+    """
+
+    return {
+        "active_roles": {
+            "orquestador": {
+                "threadId": "mcp:c5b34b85-b820-41f2-968d-0583b0f76097",
+                "session_code": "CO-144",
+            },
+            "supervisor": {
+                "threadId": "mcp:19416fe9-fd41-4d52-ba69-fff75ce7e614",
+                "session_code": "CO-143",
+            },
+        },
+        "cadena_contexto": [
+            {
+                "threadId": "mcp:eda3ddb7-7b47-4488-b07c-6d76cd9408ec",
+                "session_code": "CO-142",
+            }
+        ],
+    }
+
+
+def _real_derivation_judgements() -> dict[str, str]:
+    """Return non-empty judgements for the real CO-143 derivation.
+
+    Before: render_latido requires all three named judgement values.
+    During: use valid single-line values that do not add foreign identifiers.
+    After: return the complete judgement mapping for a successful baseline.
+    """
+
+    return {
+        "nota_derivacion": "[nota_derivacion de prueba]",
+        "objetivo_en_curso": "(ARRANQUE_CO-144_20261120.md s.2: objetivo en curso)",
+        "secciones_postcompactacion_nueva": "s.3 y s.4",
+    }
+
+
+def _step9_line(text: str) -> str:
+    """Extract the single step-9 line from a rendered heartbeat.
+
+    Before: ``text`` is a rendered heartbeat with the documented step-9 line.
+    During: find the line by its rule heading.
+    After: return that line or fail with a useful test diagnostic.
+    """
+
+    match = re.search(r"(?m)^9\. Contexto propio:.*$", text)
+    assert match is not None, "m-02: falta el paso 9"
+    return match.group(0)
+
+
+def _cascade_text(text: str) -> str:
+    """Extract the protected cascade span from a rendered heartbeat.
+
+    Before: ``text`` contains one R2 cascade start and one R2b-fin marker.
+    During: slice between those markers.
+    After: return only the cascade content used by the bound assertion.
+    """
+
+    start_marker = render_latido_module._CASCADE_START
+    end_marker = render_latido_module._CASCADE_END
+    start = text.index(start_marker) + len(start_marker)
+    end = text.index(end_marker, start)
+    return text[start:end]
+
+
+def _synthetic_predecessor(tmp_path: Path) -> Path:
+    """Build the synthetic high-cardinality predecessor in ``tmp_path``.
+
+    Before: the repository predecessor fixture supplies the renderer's real
+    anchors, identities, and tick block.
+    During: expand only the protected cascade, step-9 salto citations, and
+    postcompaction span to the measured snapshot sizes, without adding any
+    foreign MCP identifiers outside the frozen cascade.
+    After: return a UTF-8 temporary predecessor with exactly 106 cascade entries,
+    26 salto citations, and 86 postcompaction protocol references.
+    """
+
+    text = PREDECESSOR.read_text(encoding="utf-8")
+    cascade_start = text.index(render_latido_module._CASCADE_START) + len(
+        render_latido_module._CASCADE_START
+    )
+    cascade_end = text.index(render_latido_module._CASCADE_END, cascade_start)
+    cascade = text[cascade_start:cascade_end]
+    cascade_entries = re.findall(r"CO-\d+ \(mcp:", cascade)
+    assert len(cascade_entries) == 18
+    generated_cascade = ", luego ".join(
+        f"CO-{code} (mcp:00000000-0000-4000-8000-{code:012d})"
+        for code in range(200, 200 + (106 - len(cascade_entries)))
+    )
+    text = text[:cascade_end] + ", luego " + generated_cascade + text[cascade_end:]
+
+    step9_match = re.search(r"(?m)^9\. Contexto propio:.*$", text)
+    assert step9_match is not None
+    step9 = step9_match.group(0)
+    citations = " ".join(
+        f"El salto CO-{code} -> CO-{code + 1} usa la linea 'Go_Relevo_{code}' "
+        f"(fila b{code} de diseno/GO_RELEVO_24H_REGISTRO.md)."
+        for code in range(60, 85)
+    )
+    insertion = " " + citations
+    step9 = step9.replace(" El lote NO CADUCA", insertion + " El lote NO CADUCA", 1)
+    text = text[: step9_match.start()] + step9 + text[step9_match.end() :]
+
+    post_anchor = "ARRANQUE_CO-55 s.1"
+    post_start = text.index(post_anchor) + len(post_anchor)
+    if text[post_start : post_start + 3] == " y ":
+        post_start += 1
+    post_end = text.index(" (procedimiento de ticket", post_start)
+    post = text[post_start:post_end]
+    assert len(re.findall(r"PROTOCOLO_POSTCOMPACTACION_CO-\d+\.md", post)) == 1
+    generated_protocols = " y ".join(
+        f"PROTOCOLO_POSTCOMPACTACION_CO-{code}.md s.3 y s.4" for code in range(57, 142)
+    )
+    text = text[:post_end] + " y " + generated_protocols + text[post_end:]
+
+    predecessor = tmp_path / "LATIDO_CO-55_synthetic.md"
+    predecessor.write_text(text, encoding="utf-8", newline="")
+    return predecessor
+
+
+def _synthetic_roster() -> dict[str, object]:
+    """Return the reduced fixture roster consumed by the synthetic render."""
+
+    return json.loads(ROSTER.read_text(encoding="utf-8"))
+
+
+def _synthetic_derivation_judgements() -> dict[str, str]:
+    """Return valid judgements for the CO-55-to-CO-56 synthetic render."""
+
+    return {
+        "nota_derivacion": "[synthetic nota_derivacion]",
+        "objetivo_en_curso": "(ARRANQUE_CO-56_20261108.md s.2: synthetic)",
+        "secciones_postcompactacion_nueva": "s.3 y s.4",
+    }
+
+
+def _synthetic_second_case() -> tuple[dict[str, object], dict[str, str]]:
+    """Return the synthetic CO-57 roster and its own judgement values."""
+
+    return (
+        {
+            "active_roles": {
+                "orquestador": {
+                    "threadId": "mcp:00000000-0000-4000-8000-000000000057",
+                    "session_code": "CO-57",
+                },
+                "supervisor": {
+                    "threadId": "mcp:00000000-0000-4000-8000-000000000002",
+                    "session_code": "CO-56",
+                },
+            },
+            "cadena_contexto": [
+                {
+                    "threadId": "mcp:00000000-0000-4000-8000-000000000002",
+                    "session_code": "CO-55",
+                }
+            ],
+        },
+        {
+            "nota_derivacion": "[segunda synthetic derivacion]",
+            "objetivo_en_curso": "(ARRANQUE_CO-57_20261108.md s.2: synthetic)",
+            "secciones_postcompactacion_nueva": "s.3 y s.4",
+        },
+    )
+
+
+def _bounded_render_cases(tmp_path: Path):
+    """Yield the mandatory synthetic case followed by the optional real one."""
+
+    yield (
+        "synthetic",
+        _synthetic_predecessor(tmp_path),
+        _synthetic_roster(),
+        2,
+        _synthetic_derivation_judgements(),
+    )
+    if REAL_CO_143.is_file():
+        yield (
+            "real",
+            _real_co_143_predecessor(tmp_path),
+            _real_co_144_roster(),
+            89,
+            _real_derivation_judgements(),
+        )
+
+
 def test_golden_render_is_byte_exact() -> None:
+    """Compare the golden outside the three contract-bounded regions.
+
+    Before: the predecessor and successor fixtures differ in the bounded
+    cascade, step-9 citations/remission, and procedure region.
+    During: remove exactly those literal regions from both renderings.
+    After: the remaining text is compared as text and UTF-8 bytes.
+    """
+
+    def comparable(text: str) -> str:
+        cascade_start = text.index(render_latido_module._CASCADE_START) + len(
+            render_latido_module._CASCADE_START
+        )
+        cascade_end = text.index(render_latido_module._CASCADE_END, cascade_start)
+        text = text[:cascade_start] + text[cascade_end:]
+        step9_match = re.search(r"(?m)^9\. Contexto propio:.*$", text)
+        assert step9_match is not None
+        step9 = step9_match.group(0)
+        step9 = render_latido_module._SALTO_CITATION_PATTERN.sub("", step9)
+        step9 = re.sub(
+            r"\(historico de saltos.*?session_registry\.json\)\. ?", "", step9
+        )
+        procedure_start = step9.index("Procedimiento: ")
+        procedure_end = step9.index(" (procedimiento de ticket", procedure_start)
+        step9 = step9[:procedure_start] + step9[procedure_end:]
+        return text[: step9_match.start()] + step9 + text[step9_match.end() :]
+
     roster = json.loads(ROSTER.read_text(encoding="utf-8"))
     rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+    expected_text = comparable(SUCCESSOR.read_text(encoding="utf-8"))
+    expected_bytes = expected_text.encode("utf-8")
+    output = comparable(output)
 
     assert rc == 0
-    assert output == SUCCESSOR.read_text(encoding="utf-8")
-    assert output.encode("utf-8") == SUCCESSOR.read_bytes()
+    assert output == expected_text
+    assert output.encode("utf-8") == expected_bytes
 
 
 def test_missing_judgment_is_rc3_and_named() -> None:
@@ -2173,3 +2441,190 @@ def test_reduce_roster_tolera_ancestro_directo() -> None:
     assert errors == []
     assert reduced is not None
     assert set(reduced["active_roles"]) == {"orquestador", "supervisor"}
+
+
+def test_m01_cascada_derivada_respeta_constante_nominal(tmp_path: Path) -> None:
+    """Require R2 to retain at most the named cascade bound."""
+
+    constant = getattr(render_latido_module, "_CASCADE_MAX_ENTRIES", None)
+    measurements = []
+    for label, predecessor, roster, go_index, judgements in _bounded_render_cases(
+        tmp_path
+    ):
+        rc, output = render_latido(predecessor, roster, go_index, judgements)
+        entries = len(re.findall(r"CO-\d+ \(mcp:", _cascade_text(output)))
+        measurements.append((label, rc, output, entries))
+
+    for label, rc, output, entries in measurements:
+        assert rc == 0, output
+        cascade = _cascade_text(output)
+        assert cascade.rstrip().endswith(")"), (
+            f"m-01[{label}]: cola de cascada sucia: {cascade[-80:]}"
+        )
+        assert constant is not None and entries == constant, (
+            f"m-01[{label}]: entradas={entries} constante={constant}"
+        )
+
+
+def test_m02_citas_go_del_paso9_respetan_constante_nominal(tmp_path: Path) -> None:
+    """Require R3 to retain only the named number of salto citations."""
+
+    constant = getattr(render_latido_module, "_MAX_SALTO_CITATIONS", None)
+    measurements = []
+    for label, predecessor, roster, go_index, judgements in _bounded_render_cases(
+        tmp_path
+    ):
+        rc, output = render_latido(predecessor, roster, go_index, judgements)
+        citations = len(
+            re.findall(
+                r"El salto CO-\d+ -> CO-\d+ usa?o? la linea", _step9_line(output)
+            )
+        )
+        measurements.append((label, rc, output, citations))
+
+    for label, rc, output, citations in measurements:
+        assert rc == 0, output
+        assert constant is not None and citations <= constant, (
+            f"m-02[{label}]: citas={citations} constante={constant}"
+        )
+
+
+def test_m03_postcompactacion_no_conserva_historia_foranea(tmp_path: Path) -> None:
+    """Require R2b to retain no postcompaction reference to another CO."""
+
+    measurements = []
+    for label, predecessor, roster, go_index, judgements in _bounded_render_cases(
+        tmp_path
+    ):
+        rc, output = render_latido(predecessor, roster, go_index, judgements)
+        protocol_codes = re.findall(
+            r"PROTOCOLO_POSTCOMPACTACION_(CO-\d+)\.md", _step9_line(output)
+        )
+        own_code = roster["active_roles"]["orquestador"]["session_code"]
+        foreign = [code for code in protocol_codes if code != own_code]
+        measurements.append((label, rc, output, protocol_codes, foreign, own_code))
+
+    for label, rc, output, protocol_codes, foreign, own_code in measurements:
+        assert rc == 0, output
+        assert not foreign and len(protocol_codes) == 1, (
+            f"m-03[{label}]: referencias_protocolo={len(protocol_codes)} "
+            f"foraneas={len(foreign)} propio={own_code}"
+        )
+
+
+def test_m04_doble_derivacion_no_hace_crecer_cascada_ni_citas(
+    tmp_path: Path,
+) -> None:
+    """Require successive R2/R3 derivations to remain bounded."""
+
+    cascade_constant = getattr(render_latido_module, "_CASCADE_MAX_ENTRIES", None)
+    citations_constant = getattr(render_latido_module, "_MAX_SALTO_CITATIONS", None)
+    cases = list(_bounded_render_cases(tmp_path))
+    measurements = []
+    for label, first_predecessor, roster, go_index, judgements in cases:
+        rc_first, first_output = render_latido(
+            first_predecessor, roster, go_index, judgements
+        )
+        second_predecessor = tmp_path / f"LATIDO_{label}_derivado.md"
+        second_predecessor.write_bytes(first_output.encode("utf-8"))
+        if label == "synthetic":
+            roster2, juicios2 = _synthetic_second_case()
+            second_go_index = 10
+        else:
+            roster2 = {
+                "active_roles": {
+                    "orquestador": {
+                        "threadId": "mcp:bed97f5c-c25c-401c-ab70-e3e4d33452a2",
+                        "session_code": "CO-145",
+                    },
+                    "supervisor": {
+                        "threadId": "mcp:c5b34b85-b820-41f2-968d-0583b0f76097",
+                        "session_code": "CO-144",
+                    },
+                },
+                "cadena_contexto": [
+                    {
+                        "threadId": "mcp:19416fe9-fd41-4d52-ba69-fff75ce7e614",
+                        "session_code": "CO-143",
+                    }
+                ],
+            }
+            juicios2 = {
+                "nota_derivacion": "[segunda derivacion]",
+                "objetivo_en_curso": "(ARRANQUE_CO-145_20261120.md s.2: objetivo en curso)",
+                "secciones_postcompactacion_nueva": "s.3 y s.4",
+            }
+            second_go_index = 90
+        rc_second, second_output = render_latido(
+            second_predecessor, roster2, second_go_index, juicios2
+        )
+        second_entries = len(re.findall(r"CO-\d+ \(mcp:", _cascade_text(second_output)))
+        second_citations = len(
+            re.findall(
+                r"El salto CO-\d+ -> CO-\d+ usa?o? la linea",
+                _step9_line(second_output),
+            )
+        )
+        measurements.append(
+            (
+                label,
+                rc_first,
+                first_output,
+                rc_second,
+                second_output,
+                second_entries,
+                second_citations,
+            )
+        )
+
+    for (
+        label,
+        rc_first,
+        first_output,
+        rc_second,
+        second_output,
+        second_entries,
+        second_citations,
+    ) in measurements:
+        assert rc_first == 0, first_output
+        assert rc_second == 0, second_output
+        step9_second = _step9_line(second_output)
+        assert "  (historico de saltos" not in step9_second, (
+            f"m-04[{label}]: doble espacio en segunda derivacion: {step9_second}"
+        )
+        assert (
+            cascade_constant is not None
+            and citations_constant is not None
+            and second_entries <= cascade_constant
+            and second_citations <= citations_constant
+        ), (
+            f"m-04[{label}]: entradas={second_entries} "
+            f"constante_cascada={cascade_constant}; citas={second_citations} "
+            f"constante_citas={citations_constant}"
+        )
+
+
+def test_m05_hay_una_remision_conjunta_a_fuentes_vivas(tmp_path: Path) -> None:
+    """Require one step-9 sentence naming both live source families."""
+
+    measurements = []
+    for label, predecessor, roster, go_index, judgements in _bounded_render_cases(
+        tmp_path
+    ):
+        rc, output = render_latido(predecessor, roster, go_index, judgements)
+        step9 = _step9_line(output)
+        joint_sentences = [
+            sentence
+            for sentence in re.split(r"(?<=\.)\s+", step9)
+            if "GO_RELEVO_24H_REGISTRO.md" in sentence and "cadena_contexto" in sentence
+        ]
+        remissions = len(joint_sentences)
+        measurements.append(
+            (label, rc, output, remissions, step9.count("cadena_contexto"))
+        )
+
+    for label, rc, output, remissions, context_count in measurements:
+        assert rc == 0, output
+        assert remissions == 1 and context_count == 1, (
+            f"m-05[{label}]: remisiones={remissions} cadena_contexto={context_count}"
+        )

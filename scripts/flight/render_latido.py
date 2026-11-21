@@ -6,14 +6,18 @@ anchors, ``roster`` must contain exactly the three consumed roster objects, and
 
 During: the renderer validates and applies the closed R1-R7 rules. R1
 substitutes identities and thread identifiers; R2 preserves the context
-cascade start and R2b-fin preserves its unique ending; R3 validates the
+   cascade start with at most seven entries and R2b-fin preserves its unique
+   ending; R3 validates the
 step-9 used-line citation in either ``Go relevo 24h N`` or ``Go_Relevo_N``
 format and updates ``Go N+1`` and ``fila bN`` references while preserving
 the cited format; R4 forces ``ESTADO:
 VIGENTE``; R5 detects explicit judgement holes and reports rc 3; R6 keeps the
 single postcompaction anchor; and R7 corrects the ``X -> X`` handoff jump.
 Protected cascade, postcompaction, and judgement spans are preserved while
-the three judgement values are replaced. It can also calculate the
+the three judgement values are replaced. The derived cascade is bounded to
+  the prepended context plus six predecessor entries, the live salto citations
+  are bounded to two, and postcompaction history collapses to the own protocol
+  plus a literal series reference. It can also calculate the
 predecessor path's SHA-256 prefix with :func:`predecessor_sha12` for a
 judgement supplied by a caller.
 
@@ -70,6 +74,14 @@ from typing import Any
 
 _CASCADE_START = "la cascada es "
 _CASCADE_END = " LATIDO DE PROGRESO"
+# Before: a predecessor cascade may contain an unbounded historical chain.
+# During: retain the new context entry and at most six predecessor entries.
+# After: every derived cascade contains no more than seven entries.
+_CASCADE_MAX_ENTRIES = 7
+# Before: step 9 may repeat the same salto citation across predecessors.
+# During: retain the first two matching citations in document order.
+# After: the result has at most two live salto citations.
+_MAX_SALTO_CITATIONS = 2
 _TICK_VERSION_MARKER = "<!-- LATIDO_TICK_BLOCK_VERSION: 2 -->"
 _TICK_BLOCK_END = "<!-- END LATIDO_TICK_BLOCK_VERSION: 2 -->"
 _TICK_REQUIRED_SIGNATURES = (
@@ -488,6 +500,74 @@ def _replace_identity_tokens(
     return "".join(pieces)
 
 
+def _bound_cascade_text(cascade_text: str) -> str:
+    """Bound the predecessor portion of a derived cascade.
+
+    Before: ``cascade_text`` contains the predecessor's ordered cascade entries.
+    During: keep only the first six entries, which become the six entries after
+    the new context entry; remove the dangling separator at the cut.
+    After: return an unchanged short cascade or a cleanly bounded cascade.
+    """
+    entries = list(re.finditer(r"CO-\d+ \(mcp:[0-9A-Za-z-]+", cascade_text))
+    predecessor_limit = _CASCADE_MAX_ENTRIES - 1
+    if len(entries) <= predecessor_limit:
+        return cascade_text
+    bounded = cascade_text[: entries[predecessor_limit].start()]
+    bounded = re.sub(r"(?:\s*,\s*luego|\s*,|\s+y)\s*$", "", bounded)
+    return bounded.rstrip()
+
+
+_SALTO_CITATION_START_PATTERN = re.compile(
+    r"El salto CO-\d+ -> CO-\d+ us(?:a)?(?:o)? la linea"
+)
+# Compatibility alias for focused tests that inspect the citation token.
+_SALTO_CITATION_PATTERN = _SALTO_CITATION_START_PATTERN
+
+
+def _bound_step9_citations(step9: str) -> str:
+    """Bound salto citations and add the single joint live-source remission.
+
+    Before: ``step9`` is the transformed step-9 line with R3 references intact.
+    During: retain the first two citation sentences, remove later sentences,
+    normalize their separators, and insert one sentence naming both live source
+    families immediately before the non-expiring-lot sentence when present.
+    After: return step 9 with at most two citations and exactly one
+    ``cadena_contexto`` remission sentence.
+    """
+    line_ending = "\r" if step9.endswith("\r") else ""
+    content = step9[:-1] if line_ending else step9
+    matches = list(_SALTO_CITATION_START_PATTERN.finditer(content))
+    bounded = content
+    if len(matches) > _MAX_SALTO_CITATIONS:
+        removal_start = matches[_MAX_SALTO_CITATIONS].start()
+        removal_end = content.find(" El lote NO CADUCA", removal_start)
+        if removal_end < 0:
+            removal_end = len(content)
+        bounded = content[:removal_start] + content[removal_end:]
+    remission = (
+        "(historico de saltos y de la cascada: "
+        "diseno/GO_RELEVO_24H_REGISTRO.md, una fila por GO, y la cadena_contexto "
+        "del roster en session_registry.json)."
+    )
+    bounded = bounded.replace(remission, "")
+    bounded = re.sub(r" {2,}", " ", bounded).strip()
+    bounded = re.sub(r"\s+El lote NO CADUCA", " El lote NO CADUCA", bounded)
+    if " El lote NO CADUCA" in bounded:
+        return (
+            bounded.replace(" El lote NO CADUCA", f" {remission} El lote NO CADUCA", 1)
+            + line_ending
+        )
+    if matches:
+        last_kept = list(_SALTO_CITATION_START_PATTERN.finditer(bounded))[-1]
+        return (
+            bounded[: last_kept.end()]
+            + f" {remission}"
+            + bounded[last_kept.end() :]
+            + line_ending
+        )
+    return f"{bounded} {remission}".strip() + line_ending
+
+
 def render_latido(  # noqa: C901
     predecessor: str | Path,
     roster: dict[str, Any],
@@ -635,12 +715,13 @@ def render_latido(  # noqa: C901
 
         cascade_text = text[cascade_start:cascade_end]
         cascade_value = (
-            f"{context['session_code']} ({context['threadId']}), luego {cascade_text}"
+            f"{context['session_code']} ({context['threadId']}), luego "
+            f"{_bound_cascade_text(cascade_text)}"
         )
-        post_text = text[derived["post_span"][0] : derived["post_span"][1]]
         post_value = (
-            f"{post_text} y PROTOCOLO_POSTCOMPACTACION_{supervisor['session_code']}.md "
-            f"{section_value}"
+            f"y PROTOCOLO_POSTCOMPACTACION_{own['session_code']}.md "
+            f"{section_value} (serie PROTOCOLO_POSTCOMPACTACION_CO-N.md del vuelo; "
+            "historico consultable)"
         )
         protected = [
             (cascade_start, cascade_end, cascade_value),
@@ -692,6 +773,8 @@ def render_latido(  # noqa: C901
             return 2, _failure(
                 rendered, ["regla R3: parrafo del paso 9 ausente tras derivacion"]
             )
+        bounded_step9 = _bound_step9_citations(line9.group(0))
+        rendered = rendered[: line9.start()] + bounded_step9 + rendered[line9.end() :]
 
         first_newline = rendered.find("\n")
         line_ending = (
