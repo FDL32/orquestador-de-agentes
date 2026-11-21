@@ -579,7 +579,7 @@ python scripts/memory_context.py --recall --query "<dominio de la tarea>"
 **Mecanismo de carga de memoria:** el mecanismo completo (comandos, regla del
 indice, cuando ejecutar) vive en `prompts/_shared/memory_bootstrap.md`.
 Motivo: una sesion que arranca fria no hereda el hook SessionStart; sin carga
-de memoria, trabaja con 0 lecciones y repite errores ya documentados.
+de memoria, trabaja con 0 lecciones y repite errores ya documentados. Manifiesto frío por rol (CO/TR/IM): la instancia por vuelo `<flight>/diseno/MANIFIESTO_ARRANQUE_ROLES_<fecha>.md`, que se genera desde la plantilla `MANIFIESTO_ARRANQUE_ROLES.md`; mientras esa instancia no exista, abre la plantilla del motor.
 
 **Por que el paso 3 es obligatorio** (WOT-2026-057a, medido 2026-08-17): el
 paso 2 entrega un INDICE. Con mediana de 877 chars por leccion, la regla
