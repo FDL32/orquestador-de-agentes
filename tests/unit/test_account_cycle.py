@@ -882,3 +882,276 @@ def test_m13_control_pareja_valida_tasa_cero_rem5_30():
     )
     assert action_pair(result) == ("NONE", None)
     assert result[0]["tasa_razon"] == "pareja-valida-tasa-no-positiva"
+
+
+FIXTURE_205C = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures"
+    / "cc-usage-cache-weekly-exhausted.json"
+)
+
+
+def _run_cli_files(cache_path, state_path):
+    """Run the account-cycle CLI against already materialized temporary files.
+
+    Before: cache and state paths point inside the test's isolated temporary directory.
+    During: invoke the production script in a subprocess without changing either input.
+    After: return the completed process with its real return code and JSON output.
+    """
+    return subprocess.run(
+        [
+            sys.executable,
+            str(PATH),
+            "--cache",
+            str(cache_path),
+            "--estado",
+            str(state_path),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            key: value
+            for key, value in os.environ.items()
+            if key not in {"PYTHONIOENCODING", "PYTHONUTF8"}
+        },
+    )
+
+
+def _phase_c_state(wake_at):
+    """Build a future-wake phase-C state for the 205c subprocess cases.
+
+    Before: the caller supplies a numeric wake time relative to the real clock.
+    During: compose the complete refuge state without account-cycle side effects.
+    After: return an isolated state dictionary suitable for JSON serialization.
+    """
+    return state(
+        madre_en_refugio=True,
+        hija_en_refugio=True,
+        agotada="semanal",
+        despertar_en=wake_at,
+    )
+
+
+def _materialize_fixture(tmp_path, brabander_checked_at=None):
+    """Copy the controlled weekly-exhaustion fixture into temporary storage.
+
+    Before: the fixture is tracked in the motor and the destination is test-local.
+    During: preserve the fixture's BOM and optionally refresh brabander.checked_at and
+        derive both refuge resets from that same checked time.
+    After: return a cache path whose bytes are isolated from the repository fixture.
+    """
+    cache_path = tmp_path / "cache.json"
+    raw = FIXTURE_205C.read_bytes()
+    if brabander_checked_at is not None:
+        data = json.loads(raw.decode("utf-8-sig"))
+        data["brabander"]["checked_at"] = brabander_checked_at
+        data["brabander"]["resets"] = brabander_checked_at + 1000
+        data["brabander"]["weekly_resets"] = brabander_checked_at + 4 * 86400
+        raw = ("\ufeff" + json.dumps(data)).encode("utf-8")
+    cache_path.write_bytes(raw)
+    return cache_path
+
+
+def _write_state(tmp_path, value):
+    """Write one isolated state snapshot for a subprocess test.
+
+    Before: value is a JSON-serializable state assembled by the test.
+    During: serialize it below pytest's temporary directory without invoking --guardar.
+    After: return the state path for the production CLI invocation.
+    """
+    state_path = tmp_path / "state.json"
+    state_path.write_text(json.dumps(value), encoding="utf-8")
+    return state_path
+
+
+def test_205c_resets_none_phase_c_guard(tmp_path):
+    """Before: weekly exhaustion leaves preferred resets null in complete phase C.
+
+    During: run the production CLI with a fresh refuge account and future state wake.
+    After: the bounded exception returns ESPERAR rather than cache-failure rc 9.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    state_path = _write_state(tmp_path, _phase_c_state(now + 3600))
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["accion"] == "ESPERAR"
+    assert payload["ejecutor"] is None
+    assert not payload["accion"].startswith("MOVE_")
+
+
+def test_205c_phase_c_guard_without_flags_moves(tmp_path):
+    """Before: the same readable fresh cache has no phase-C state flags.
+
+    During: invoke the CLI with valid preferred reset data and no refuge placement.
+    After: the unchanged general rule requests MOVE_MADRE_REFUGE with rc 10.
+    """
+    now = time.time()
+    data = json.loads(FIXTURE_205C.read_text(encoding="utf-8-sig"))
+    data["alvarovans"].update(
+        {
+            "checked_at": now - 60,
+            "resets": now + 1000,
+            "weekly_resets": now + 2000,
+        }
+    )
+    cache_path = tmp_path / "cache.json"
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+    state_path = _write_state(tmp_path, state())
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 10
+    assert payload["accion"] == "MOVE_MADRE_REFUGE"
+    assert payload["ejecutor"] == "hija"
+
+
+def test_205c_preferred_stale_phase_c_waits(tmp_path):
+    """Before: preferred checked_at is stale while the refuge account is fresh.
+
+    During: run complete phase C with a future state-owned wake.
+    After: stale preferred metadata is tolerated only for ESPERAR rc 0.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    state_path = _write_state(tmp_path, _phase_c_state(now + 3600))
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["accion"] == "ESPERAR"
+
+
+def test_205c_preferred_future_fails_closed(tmp_path):
+    """Before: preferred checked_at is far in the future in complete phase C.
+
+    During: run the fixture with fresh refuge metadata and future preferred metadata.
+    After: the future preferred cache fails closed with rc 9 and no action.
+    """
+    now = time.time()
+    data = json.loads(
+        _materialize_fixture(tmp_path, now - 60).read_text(encoding="utf-8-sig")
+    )
+    data["alvarovans"]["checked_at"] = now + 999999
+    cache_path = tmp_path / "cache.json"
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+    state_path = _write_state(tmp_path, _phase_c_state(now + 3600))
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 9
+    assert payload["accion"] == "NONE"
+
+
+def test_205c_weekly_exhausted_real_fixture_waits(tmp_path):
+    """Before: the real controlled fixture has preferred resets null and old metadata.
+
+    During: refresh only brabander and simulate complete phase C without saving.
+    After: one JSON line requests ESPERAR, exposes state despertar_en, and has no wake_at.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    wake_at = now + 3600
+    state_path = _write_state(tmp_path, _phase_c_state(wake_at))
+    result = _run_cli_files(cache_path, state_path)
+    assert len(result.stdout.splitlines()) == 1
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["accion"] == "ESPERAR"
+    assert payload["estado"]["despertar_en"] == wake_at
+    assert payload["wake_at"] is None
+    assert not payload["accion"].startswith("MOVE_")
+
+
+def test_205c_deciding_account_stale_fails_closed(tmp_path):
+    """Before: the preferred exception is eligible but brabander is stale.
+
+    During: invoke the CLI with both refuge flags and a future state wake.
+    After: the deciding refuge account freshness guard returns rc 9 and NONE.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 1500)
+    state_path = _write_state(tmp_path, _phase_c_state(now + 3600))
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 9
+    assert payload["accion"] == "NONE"
+
+
+@pytest.mark.parametrize(
+    "cache_change",
+    [
+        {"resets": None, "checked_at_offset": -60},
+        {"resets": "2026-11-21T18:50:00.2190070+01:00", "checked_at_offset": -1500},
+    ],
+)
+def test_205c_no_exhaustion_state_fails_closed(tmp_path, cache_change):
+    """Before: preferred cache is null-reset or stale without declared exhaustion.
+
+    During: run each cache failure with an otherwise empty state.
+    After: both cases remain fail-closed rc 9 with no movement action.
+    """
+    now = time.time()
+    data = json.loads(FIXTURE_205C.read_text(encoding="utf-8-sig"))
+    data["alvarovans"]["resets"] = cache_change["resets"]
+    data["alvarovans"]["checked_at"] = now + cache_change["checked_at_offset"]
+    data["brabander"]["checked_at"] = now - 60
+    cache_path = tmp_path / "cache.json"
+    cache_path.write_text(json.dumps(data), encoding="utf-8")
+    state_path = _write_state(tmp_path, state())
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 9
+    assert payload["accion"] == "NONE"
+
+
+@pytest.mark.parametrize("wake_at", [None, time.time() - 60])
+def test_205c_missing_or_past_wake_fails_closed(tmp_path, wake_at):
+    """Before: weekly exhaustion and both refuge flags lack a future state wake.
+
+    During: run the fixture with a missing or already-past despertar_en.
+    After: no tolerance is activated and the stale/null preferred cache returns rc 9.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    state_path = _write_state(tmp_path, _phase_c_state(wake_at))
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 9
+    assert payload["accion"] == "NONE"
+
+
+def test_205c_bom_and_state_unchanged(tmp_path):
+    """Before: the weekly-exhaustion fixture is UTF-8-SIG and state is phase C.
+
+    During: invoke the CLI without --guardar through the production cache reader.
+    After: BOM is accepted, ESPERAR is returned, and the state hash is unchanged.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    state_path = _write_state(tmp_path, _phase_c_state(now + 3600))
+    before = hashlib.sha256(state_path.read_bytes()).hexdigest()
+    result = _run_cli_files(cache_path, state_path)
+    after = hashlib.sha256(state_path.read_bytes()).hexdigest()
+    payload = json.loads(result.stdout)
+    assert cache_path.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert result.returncode == 0
+    assert payload["accion"] == "ESPERAR"
+    assert before == after
+
+
+def test_205c_simulation_state_copy_unchanged(tmp_path):
+    """Before: a phase-C state copy is used for a no-save simulation.
+
+    During: run the CLI against the controlled fixture and state copy.
+    After: the state bytes remain identical and no movement is emitted.
+    """
+    now = time.time()
+    cache_path = _materialize_fixture(tmp_path, now - 60)
+    state_path = _write_state(tmp_path, _phase_c_state(now + 3600))
+    before = hashlib.sha256(state_path.read_bytes()).hexdigest()
+    result = _run_cli_files(cache_path, state_path)
+    after = hashlib.sha256(state_path.read_bytes()).hexdigest()
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["accion"] == "ESPERAR"
+    assert before == after

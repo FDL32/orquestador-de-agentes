@@ -332,11 +332,14 @@ def _parse_iso(value):
     return parsed.timestamp()
 
 
-def _read_cache(path):  # noqa: C901
-    """Read and validate the preferred account cache entry.
+def _read_cache(path, estado=None, ahora=None):  # noqa: C901
+    """Read and validate the account cache, with a bounded phase-C exception.
 
-    Before: path identifies a JSON usage cache.
-    During: parse the object, timestamps, numeric percentages, and freshness.
+    Before: path identifies a JSON usage cache and estado may identify complete phase C.
+    During: validate preferred data normally, or tolerate only its stale/null reset fields
+        when both refuge flags, weekly exhaustion, and a future numeric state wake exist;
+        validate brabander freshness and data independently in that exception. Stale
+        preferred metadata may be tolerated there, but future metadata is never tolerated.
     After: return validated readings or raise ValueError with a fail-closed cause.
     """
     try:
@@ -344,6 +347,15 @@ def _read_cache(path):  # noqa: C901
         entry = data[PREFERIDA]
         checked = entry.get("checked_at")
         checked_at = checked if _numeric(checked) else _parse_iso(checked)
+        ahora = time.time() if ahora is None else ahora
+        phase_c_tolerance = (
+            isinstance(estado, dict)
+            and estado.get("madre_en_refugio") is True
+            and estado.get("hija_en_refugio") is True
+            and estado.get("agotada") == "semanal"
+            and _numeric(estado.get("despertar_en"))
+            and ahora < estado["despertar_en"]
+        )
         readings = {
             key: entry.get(key)
             for key in ("pct", "weekly_pct", "resets", "weekly_resets")
@@ -358,10 +370,42 @@ def _read_cache(path):  # noqa: C901
             if isinstance(readings[key], str):
                 readings[key] = _parse_iso(readings[key])
             if not _numeric(readings[key]):
-                raise ValueError(f"{key} no numerico")
-            if not checked_at - 86400 <= readings[key] <= checked_at + 8 * 86400:
+                if not phase_c_tolerance:
+                    raise ValueError(f"{key} no numerico")
+                continue
+            if not phase_c_tolerance and not (
+                checked_at - 86400 <= readings[key] <= checked_at + 8 * 86400
+            ):
                 raise ValueError(f"{key} fuera de rango")
         refuge = data.get(REFUGIO)
+        if phase_c_tolerance:
+            if not isinstance(refuge, dict):
+                raise ValueError("cuenta refugio ausente")
+            refuge_checked = refuge.get("checked_at")
+            refuge_checked_at = (
+                refuge_checked
+                if _numeric(refuge_checked)
+                else _parse_iso(refuge_checked)
+            )
+            for key in ("pct", "weekly_pct"):
+                if not _numeric(refuge.get(key)):
+                    raise ValueError(f"refugio_{key} no numerico")
+                if refuge[key] < 0:
+                    raise ValueError(f"refugio_{key} negativo")
+            for key in ("resets", "weekly_resets"):
+                refuge_reset = refuge.get(key)
+                if isinstance(refuge_reset, str):
+                    refuge_reset = _parse_iso(refuge_reset)
+                if not _numeric(refuge_reset):
+                    raise ValueError(f"refugio_{key} no numerico")
+                if (
+                    not refuge_checked_at - 86400
+                    <= refuge_reset
+                    <= refuge_checked_at + 8 * 86400
+                ):
+                    raise ValueError(f"refugio_{key} fuera de rango")
+            if abs(ahora - refuge_checked_at) > 1200:
+                raise ValueError("cache refugio vieja o futura")
         if isinstance(refuge, dict):
             refuge_pct = refuge.get("pct")
             refuge_weekly = refuge.get("weekly_pct")
@@ -379,7 +423,9 @@ def _read_cache(path):  # noqa: C901
         else:
             readings["refugio_pct"] = None
             readings["refugio_weekly_pct"] = None
-        if abs(time.time() - checked_at) > 1200:
+        if (checked_at - ahora > 1200) or (
+            not phase_c_tolerance and abs(ahora - checked_at) > 1200
+        ):
             raise ValueError("cache vieja o futura")
         return readings
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -482,21 +528,22 @@ def main(argv=None):
         parser.error(f"evento desconocido: {unknown[0]}")
     state_path = Path(args.estado) if args.estado else None
     try:
+        ahora = time.time()
+        current = _read_state(state_path)
         readings = (
-            _read_cache(Path(args.cache))
+            _read_cache(Path(args.cache), current, ahora)
             if args.cache
             else (_ for _ in ()).throw(ValueError("cache no medible: ruta ausente"))
         )
         readings["roster_sha12"] = (
             _roster_sha12(Path(args.roster_path)) if args.roster_path else None
         )
-        current = _read_state(state_path)
         if current.get("roster_sha12") is None and readings["roster_sha12"] is not None:
             current["roster_sha12"] = readings["roster_sha12"]
             current["cycle_id"] = uuid.uuid4().hex
         if args.guardar and state_path is None:
             raise ValueError("estado no resoluble para guardar")
-        updated, action = decide(readings, current, time.time(), args.evento)
+        updated, action = decide(readings, current, ahora, args.evento)
         if action["tipo"] not in ACCIONES_VALIDAS:
             raise ValueError(f"accion desconocida: {action['tipo']}")
         code = 0 if action["tipo"] in {"NONE", "ESPERAR"} else 10

@@ -127,3 +127,13 @@ estado no resoluble al guardar es fail-closed: rc 9, acción `NONE`, y ningún
 movimiento. `ESPERAR` y `NONE` devuelven rc 0; una acción requerida devuelve
 rc 10; un evento desconocido devuelve rc 2. La escritura con `--guardar` es
 atómica.
+
+Excepción acotada WOT-2026-205c: si el estado está en FASE C completa
+(`madre_en_refugio=true`, `hija_en_refugio=true`, `agotada="semanal"` y
+`despertar_en` numérico y futuro), la caché de `alvarovans` puede conservar
+`resets` o `weekly_resets` no numéricos y `checked_at` viejo. La decisión de
+espera usa exclusivamente `estado.despertar_en`; no es una tolerancia global.
+En esa rama `brabander`, la cuenta refugio decisora, debe seguir teniendo
+datos válidos y un `checked_at` fresco (<= 1200 s); si falta o está vieja el
+guard sigue devolviendo rc 9. Fuera de esos cuatro predicados, la regla
+general de caché vieja o futura = rc 9 permanece intacta.

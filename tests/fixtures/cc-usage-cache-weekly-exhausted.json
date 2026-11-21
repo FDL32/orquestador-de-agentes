@@ -1,0 +1,56 @@
+﻿{
+    "brabander":  {
+                      "pct":  32,
+                      "resets":  "2026-11-21T20:30:00.1775200+01:00",
+                      "weekly_pct":  31,
+                      "weekly_resets":  "2026-11-25T08:00:00.1775400+01:00",
+                      "windows":  [
+                                      {
+                                          "id":  "session",
+                                          "label":  "5h",
+                                          "pct":  32,
+                                          "resets":  "2026-11-21T20:30:00.1775200+01:00"
+                                      },
+                                      {
+                                          "id":  "weekly",
+                                          "label":  "semanal",
+                                          "pct":  31,
+                                          "resets":  "2026-11-25T08:00:00.1775400+01:00"
+                                      },
+                                      {
+                                          "id":  "weekly_fable",
+                                          "label":  "semanal Fable",
+                                          "pct":  0,
+                                          "resets":  "2026-11-25T08:00:00.0000000+01:00"
+                                      }
+                                  ],
+                      "checked_at":  "2026-11-21T17:16:20.5837936+01:00"
+                  },
+    "alvarovans":  {
+                       "pct":  6,
+                       "resets":  null,
+                       "weekly_pct":  100,
+                       "weekly_resets":  "2026-11-25T05:00:00.2190260+01:00",
+                       "windows":  [
+                                       {
+                                           "id":  "session",
+                                           "label":  "5h",
+                                           "pct":  6,
+                                           "resets":  "2026-11-21T18:50:00.2190070+01:00"
+                                       },
+                                       {
+                                           "id":  "weekly",
+                                           "label":  "semanal",
+                                           "pct":  100,
+                                           "resets":  "2026-11-25T05:00:00.2190260+01:00"
+                                       },
+                                       {
+                                           "id":  "weekly_fable",
+                                           "label":  "semanal Fable",
+                                           "pct":  0,
+                                           "resets":  "2026-11-25T05:00:00.2192080+01:00"
+                                       }
+                                   ],
+                       "checked_at":  "2026-11-21T13:59:54.2765062+01:00"
+                   }
+}
