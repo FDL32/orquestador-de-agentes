@@ -1959,7 +1959,11 @@
           "BA04",
           "BA06",
           "BA08",
-          "BA09"
+          "BA09",
+          "BA258",
+          "BA259",
+          "BA150",
+          "BA151"
         ],
         "min_distinct": 2,
         "policy": "declared",

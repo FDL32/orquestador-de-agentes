@@ -114,6 +114,10 @@ def test_real_entry_lists_extra_lenses_as_eligible():
         "BA06",
         "BA08",
         "BA09",
+        "BA258",
+        "BA259",
+        "BA150",
+        "BA151",
     ]
 
 
