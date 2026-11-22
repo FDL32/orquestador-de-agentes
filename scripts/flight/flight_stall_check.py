@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: RUF100
 """Detectores deterministas de causas de parada de un vuelo (se ejecuta en CADA tick del latido).
 
 Before: ``comms_alert.py`` y ``notify_user.ps1`` viven junto a este fichero (nunca se
@@ -19,6 +20,7 @@ After: imprime una linea por hallazgo y un resumen. rc 0 = sin hallazgos, rc 1 =
 """
 
 import argparse
+import calendar
 import contextlib
 import datetime as dt
 import glob
@@ -123,6 +125,7 @@ NAN_POOL_CREDITS = 7000.0
 NAN_RESET_AT = "2026-12-07T00:00:00+00:00"
 NAN_UNKNOWN_KEY = "nan_unknown_streak"
 NAN_SOURCE_ENV = ("NAN_OPENCODE_DB", "NAN_KILO_DB")
+NAN_AGENTS_ENV = "NAN_AGENTS_JSON"
 _CELL_CHECKER = None
 FECHA_CIERRE_EXENTAS = "2026-11-16"
 EXENTAS_CELDA_LENTES = {
@@ -1540,19 +1543,20 @@ def _nan_json_records(path):
     return [], "source-schema"
 
 
-def _nan_sqlite_records(path, source):
-    """Read a small, schema-aware sample from an OpenCode or Kilo database.
+def _nan_sqlite_records(path, source):  # noqa: C901
+    """Read a bounded metadata sample and a complete 24-hour credit aggregate.
 
     Before: ``path`` is an existing SQLite database and ``source`` names its producer.
-    During: open URI read-only, inspect ``sqlite_master``/``table_info`` and query at most
-        256 rows from the producer's message tables.
+    During: open URI read-only, inspect ``sqlite_master``/``table_info`` and query the
+        selected credit-bearing table with a 24-hour epoch-millisecond predicate. The
+        bounded query is metadata-only; the aggregate is never silently truncated.
     After: return ``(records, provenance, reason)`` without mutating the database.
     """
     connection = None
     records = []
     schema = []
     try:
-        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+        connection = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=5.0)
         tables = [
             row[0]
             for row in connection.execute(
@@ -1560,10 +1564,17 @@ def _nan_sqlite_records(path, source):
             )
         ]
         preferred = (
-            ("message", "part", "session")
+            ("message", "session")
             if source == "opencode"
-            else ("session_message", "message", "session")
+            else (
+                "session_message",
+                "message",
+                "session",
+            )
         )
+        now_ms = int(time.time() * 1000)
+        since_ms = now_ms - 24 * 60 * 60 * 1000
+        selected_table = None
         for table in preferred:
             if table not in tables:
                 continue
@@ -1573,11 +1584,71 @@ def _nan_sqlite_records(path, source):
             if not columns:
                 continue
             schema.append(f"{table}({','.join(columns)})")
+            credit_columns = [
+                column
+                for column in columns
+                if column.lower()
+                in {"credits", "credit", "cost_credits", "costcredits"}
+            ]
+            if not credit_columns:
+                continue
+            selected_table = table
+            credit_column = credit_columns[0]
+            time_column = next(
+                (
+                    column
+                    for column in ("time_created", "time_updated")
+                    if column in columns
+                ),
+                None,
+            )
+            if time_column is None:
+                return [], [], "source-schema-sin-ventana"
             selected = ",".join(f'"{column}"' for column in columns)
+            metadata_query = (
+                f'SELECT {selected} FROM "{table}" '  # noqa: S608
+                f'WHERE "{time_column}" >= ? AND "{time_column}" <= '
+                f'? ORDER BY "{time_column}" DESC LIMIT 256'  # noqa: S608
+            )
             rows = connection.execute(
-                f'SELECT {selected} FROM "{table}" LIMIT 256'  # noqa: S608
+                metadata_query,
+                (since_ms, now_ms),
             ).fetchall()
-            records.extend(dict(zip(columns, row, strict=True)) for row in rows)
+            metadata = [dict(zip(columns, row, strict=True)) for row in rows]
+            total = connection.execute(
+                f'SELECT SUM("{credit_column}") FROM "{table}" '  # noqa: S608
+                f'WHERE "{time_column}" >= ? AND "{time_column}" <= ?',
+                (since_ms, now_ms),
+            ).fetchone()[0]
+            if total is None:
+                return [], [], "source-no-credits"
+            aggregate = {"credits": total, "__nan_aggregate__": True}
+            for record in metadata:
+                raw_data = record.get("data")
+                try:
+                    payload = (
+                        json.loads(raw_data) if isinstance(raw_data, str) else None
+                    )
+                except (TypeError, ValueError, RecursionError):
+                    payload = None
+                if isinstance(payload, dict):
+                    for key in (
+                        "nivel",
+                        "level",
+                        "autorizacion",
+                        "authorization",
+                        "peticion_usuario",
+                        "user_request",
+                        "ritmo_24h",
+                        "rate_24h",
+                    ):
+                        if key in payload and key not in aggregate:
+                            aggregate[key] = payload[key]
+            records.extend(
+                [aggregate]
+                + [{**record, "__nan_metadata_only__": True} for record in metadata]
+            )
+            break
     except (OSError, sqlite3.Error, ValueError):
         return [], [], "source-corrupt"
     finally:
@@ -1586,6 +1657,8 @@ def _nan_sqlite_records(path, source):
                 connection.close()
     if not schema:
         return [], [], "source-schema"
+    if selected_table is None:
+        return [], [], "sin-campo-de-creditos"
     return records, schema, None
 
 
@@ -1599,12 +1672,14 @@ def _nan_source_records(path, source):
     if path is None:
         return [], [f"{source}:unconfigured"], "source-unconfigured"
     if not path.exists() or not path.is_file():
-        return [], [f"{source}:{path}:absent"], "source-absent"
+        return [], [f"{source}:{path.name}:absent"], "source-absent"
     if path.suffix.lower() == ".json":
         records, reason = _nan_json_records(path)
-        return records, [f"{source}:{path}:json"], reason
+        if reason is None and not _nan_numbers(records):
+            reason = "source-no-credits"
+        return records, [f"{source}:{path.name}:json"], reason
     records, schema, reason = _nan_sqlite_records(path, source)
-    return records, [f"{source}:{path}:" + ";".join(schema)], reason
+    return records, [f"{source}:{path.name}:" + ";".join(schema)], reason
 
 
 def _nan_numbers(value, keys=None):
@@ -1620,10 +1695,11 @@ def _nan_numbers(value, keys=None):
         "cost_credits",
         "costcredits",
         "total_cost",
-        "cost",
     }
     found = []
     if isinstance(value, dict):
+        if value.get("__nan_metadata_only__"):
+            return found
         for key, item in value.items():
             normalized = str(key).lower().replace("-", "_")
             if (
@@ -1641,7 +1717,52 @@ def _nan_numbers(value, keys=None):
     return found
 
 
-def _nan_metadata(records):
+def _nan_has_invalid_credit(value):
+    """Return whether an explicit credit field is negative, non-finite, or malformed."""
+    keys = {"credits", "credit", "cost_credits", "costcredits", "total_cost"}
+    if isinstance(value, dict):
+        if value.get("__nan_metadata_only__"):
+            return False
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in keys:
+                if not isinstance(item, (int, float)) or isinstance(item, bool):
+                    return True
+                try:
+                    if not math.isfinite(float(item)) or float(item) < 0:
+                        return True
+                except (OverflowError, ValueError):
+                    return True
+            elif isinstance(item, (dict, list)) and _nan_has_invalid_credit(item):
+                return True
+    elif isinstance(value, list):
+        return any(_nan_has_invalid_credit(item) for item in value)
+    return False
+
+
+def _nan_agents_registry():
+    """Read the configured per-level ceiling registry without inventing defaults."""
+    raw = os.environ.get(NAN_AGENTS_ENV)
+    path = (
+        Path(raw)
+        if raw
+        else Path(__file__).resolve().parents[2] / ".agent" / "config" / "agents.json"
+    )
+    data = _load_json_dict(path)
+    registry = data.get("ensemble_registry")
+    ceilings = (
+        registry.get("uso_maximo_por_tipo") if isinstance(registry, dict) else None
+    )
+    if not isinstance(ceilings, dict):
+        return {}, "techo-ausente"
+    valid = {}
+    for level, ceiling in ceilings.items():
+        if isinstance(level, str) and level and _is_finite(ceiling) and ceiling >= 0:
+            valid[level] = float(ceiling)
+    return (valid, None) if valid else ({}, "techo-ausente")
+
+
+def _nan_metadata(records, ceilings):
     """Collect level, authorization and session-cap metadata from sampled records.
 
     Before: ``records`` are bounded dictionaries from the two sources.
@@ -1661,8 +1782,8 @@ def _nan_metadata(records):
             levels.append(level)
         if isinstance(authorization, str) and authorization:
             authorizations.append(authorization)
-        candidate = record.get("uso_maximo", record.get("session_cap"))
-        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+        if isinstance(level, str) and level in ceilings:
+            candidate = ceilings[level]
             cap = float(candidate) if cap is None else min(cap, float(candidate))
         user_request = user_request or bool(
             record.get("peticion_usuario", record.get("user_request"))
@@ -1686,11 +1807,39 @@ def _nan_projection(used, rate, now):
         ``agotamiento_proyectado`` and ``nivel`` set to ``None`` when the rate is not positive.
     """
     reset = dt.datetime.fromisoformat(NAN_RESET_AT).astimezone(dt.timezone.utc)
+    reset_rodado = False
+    while reset < now:
+        next_month = reset.month % 12 + 1
+        next_year = reset.year + (reset.month // 12)
+        reset = reset.replace(
+            year=next_year,
+            month=next_month,
+            day=min(reset.day, calendar.monthrange(next_year, next_month)[1]),
+        )
+        reset_rodado = True
     remaining = max(0.0, NAN_POOL_CREDITS - used)
     exhaustion = None
     level = None
-    if rate > 0:
-        exhaustion = now + dt.timedelta(days=remaining / rate)
+    if remaining <= 0:
+        # Pool ya agotado: agotamiento inmediato aunque el ritmo observable sea 0 (m3/H1).
+        exhaustion = now
+    elif rate > 0:
+        try:
+            exhaustion = now + dt.timedelta(hours=remaining / rate)
+        except (OverflowError, ValueError):
+            exhaustion = None
+        if exhaustion is None:
+            return {
+                "pool": NAN_POOL_CREDITS,
+                "periodo": "mensual",
+                "reinicio": reset.isoformat(),
+                "ritmo_observado_24h": rate * 24,
+                "agotamiento_proyectado": None,
+                "nivel": None,
+                "motivo": "sin-agotamiento-observable",
+                "reset_rodado": reset_rodado,
+            }
+    if exhaustion is not None:  # noqa: SIM102 - guard de None; la comparacion estricta de abajo es patron del mutante M2
         if exhaustion < reset:
             level = (
                 "URGENTE" if (exhaustion - now).total_seconds() < 7 * 86400 else "AVISO"
@@ -1699,15 +1848,16 @@ def _nan_projection(used, rate, now):
         "pool": NAN_POOL_CREDITS,
         "periodo": "mensual",
         "reinicio": reset.isoformat(),
-        "ritmo_observado_24h": rate,
+        "ritmo_observado_24h": rate * 24,
         "agotamiento_proyectado": (
             exhaustion.isoformat() if exhaustion is not None else None
         ),
         "nivel": level,
+        "reset_rodado": reset_rodado,
     }
 
 
-def _nan_unknown_findings(values, levels, authorizations, cap, streak):
+def _nan_unknown_findings(values, records, ceilings, streak):
     """Build the fail-closed findings for an UNKNOWN NaN reading.
 
     Before: ``values``/``levels``/``authorizations``/``cap`` reflect only the sources that
@@ -1718,18 +1868,27 @@ def _nan_unknown_findings(values, levels, authorizations, cap, streak):
     """
     found = []
     partial = sum(values)
-    if cap is not None and partial > cap:
-        found.append(
-            (
-                "gasto-tope",
-                "URGENTE",
-                f"Uso parcial {partial:g} supera el tope autorizado {cap:g}",
+    for record, amount in _nan_session_amounts(records):
+        level = record.get("nivel", record.get("level"))
+        cap = ceilings.get(level) if isinstance(level, str) else None
+        authorization = record.get("autorizacion", record.get("authorization"))
+        partial = amount
+        if cap is not None and partial > cap:
+            found.append(
+                (
+                    "gasto-tope",
+                    "URGENTE",
+                    f"Uso parcial {partial:g} supera el tope autorizado {cap:g}",
+                )
             )
-        )
-    if any(nivel == "premium" for nivel in levels) and not authorizations:
-        found.append(
-            ("gasto-premium", "URGENTE", "Gasto premium sin autorizacion registrada")
-        )
+        if level == "premium" and not _valid_authorization(authorization):
+            found.append(
+                (
+                    "gasto-premium",
+                    "URGENTE",
+                    "Gasto premium sin autorizacion registrada",
+                )
+            )
     if streak >= 2:
         found.append(
             (
@@ -1741,7 +1900,28 @@ def _nan_unknown_findings(values, levels, authorizations, cap, streak):
     return found
 
 
-def _nan_measured_findings(projection, user_request, levels, authorizations, cap, used):
+def _valid_authorization(value):
+    """Accept only a non-empty authorization identifier, never a denial marker."""
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and value.strip().upper() != "DENEGADA"
+    )
+
+
+def _nan_session_amounts(records):
+    """Return one finite credit amount and metadata tuple per measured record."""
+    result = []
+    for record in records:
+        if not isinstance(record, dict) or record.get("__nan_metadata_only__"):
+            continue
+        values = _nan_numbers(record)
+        if values:
+            result.append((record, sum(values)))
+    return result
+
+
+def _nan_measured_findings(projection, user_request, records, ceilings, used):
     """Build the findings for a fully measured NaN reading.
 
     Before: ``projection`` comes from ``_nan_projection`` and the metadata from readable sources.
@@ -1756,14 +1936,27 @@ def _nan_measured_findings(projection, user_request, levels, authorizations, cap
         if user_request:
             detail += "; la peticion de usuario eleva el estado a URGENTE"
         found.append(("gasto-presupuesto", elevated, detail))
-    if any(nivel == "premium" for nivel in levels) and not authorizations:
-        found.append(
-            ("gasto-premium", "URGENTE", "Gasto premium sin autorizacion registrada")
-        )
-    if cap is not None and used > cap:
-        found.append(
-            ("gasto-tope", "URGENTE", f"Uso {used:g} supera el tope autorizado {cap:g}")
-        )
+    for record, amount in _nan_session_amounts(records):
+        level = record.get("nivel", record.get("level"))
+        authorization = record.get("autorizacion", record.get("authorization"))
+        cap = ceilings.get(level) if isinstance(level, str) else None
+        used = amount
+        if level == "premium" and not _valid_authorization(authorization):
+            found.append(
+                (
+                    "gasto-premium",
+                    "URGENTE",
+                    "Gasto premium sin autorizacion registrada",
+                )
+            )
+        if cap is not None and used > cap:
+            found.append(
+                (
+                    "gasto-tope",
+                    "URGENTE",
+                    f"Uso {used:g} supera el tope autorizado {cap:g}",
+                )
+            )
     return found
 
 
@@ -1784,10 +1977,28 @@ def check_nan_budget(out, st):
         values, source_provenance, reason = _nan_source_records(path, source)
         records.extend(values)
         provenance.extend(source_provenance)
-        if reason and reason != "source-unconfigured":
+        if reason:
             reasons.append(reason)
-    levels, authorizations, cap, user_request, explicit_rate = _nan_metadata(records)
+    ceilings, ceiling_reason = _nan_agents_registry()
+    if ceiling_reason:
+        reasons.append(ceiling_reason)
+    levels, authorizations, _cap, user_request, explicit_rate = _nan_metadata(
+        records, ceilings
+    )
     values = _nan_numbers(records)
+    if _nan_has_invalid_credit(records):
+        reasons.append("creditos-invalidos")
+    measured_records = _nan_session_amounts(records)
+    if values and any(
+        _amount > 0
+        and (
+            not isinstance(record.get("nivel", record.get("level")), str)
+            or not record.get("nivel", record.get("level"))
+            or record.get("nivel", record.get("level")) not in ceilings
+        )
+        for record, _amount in measured_records
+    ):
+        reasons.append("nivel-o-techo-ausente")
     if not values and not reasons:
         # Sin valores de credito legibles hay UNKNOWN, nunca un cero fabricado,
         # aunque la fuente aporte un ritmo explicito (V1 r2 NIT-8).
@@ -1808,13 +2019,17 @@ def check_nan_budget(out, st):
             "uso_parcial": sum(values) if values else None,
             "autorizacion": authorizations[0] if authorizations else None,
             "procedencia": provenance,
+            "peticion_usuario": user_request,
+            "proyeccion": None,
         }
         st["nan_receipt"] = receipt
         # El tope y el premium NO dependen de la proyeccion ni de que TODAS las
         # fuentes sean legibles (V1 r1 hallazgo 1); UNKNOWN solo calla la proyeccion.
-        return _nan_unknown_findings(values, levels, authorizations, cap, streak)
+        return _nan_unknown_findings(values, records, ceilings, streak)
     used = sum(values)
     st[NAN_UNKNOWN_KEY] = 0
+    if explicit_rate is not None:
+        explicit_rate /= 24.0
     rate = explicit_rate if explicit_rate is not None else used / 24.0
     now = dt.datetime.fromtimestamp(time.time(), tz=dt.timezone.utc)
     projection = _nan_projection(used, rate, now)
@@ -1836,9 +2051,7 @@ def check_nan_budget(out, st):
         "proyeccion": projection,
     }
     st["nan_receipt"] = receipt
-    return _nan_measured_findings(
-        projection, user_request, levels, authorizations, cap, used
-    )
+    return _nan_measured_findings(projection, user_request, records, ceilings, used)
 
 
 def _detect(out, st, only=None):
