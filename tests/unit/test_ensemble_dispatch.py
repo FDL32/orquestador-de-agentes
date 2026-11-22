@@ -7980,20 +7980,35 @@ def test_058y_ratio_is_the_adjudicated_option_b():
     Y verificablemente read-only"; esos son ejes distintos).
 
     AMPLIACION 2026-10-08/09 (decision de producto explicita del usuario):
-    el pool con-arbol crece de 3 a 9, anadiendo 6 perfiles `kilo` con los
+    el pool con-arbol crecio de 3 a 9, anadiendo 6 perfiles `kilo` con los
     modelos `nan/*` REALES (Kilo expone el mismo namespace `nan/` que
-    `nan_api`, pero por `channel: agent` con arbol real). Estos 6 perfiles
-    se declaran `write: true` (HONESTO, no `write: false` sin enforcement):
+    `nan_api`, pero por `channel: agent` con arbol real). Esos 6 perfiles se
+    declaraban `write: true` (HONESTO, no `write: false` sin enforcement):
     Kilo no tiene sandbox nativo ni allowlist de tools verificable en argv
     (`has_native_sandbox`), y un agente creado via `kilo agent create` con
     `permission.edit=deny` en su frontmatter NO se refleja en la regla
     efectiva de `kilo agent list` (sigue siendo `{permission:*,
     action:allow}`) -- mismo patron de riesgo que el incidente historico
-    WOT-2026-086 (DEC-086P10-001). Su unica barrera hoy es la contencion
-    del propio modelo (verificado: un agente con permiso denegado en su
+    WOT-2026-086 (DEC-086P10-001). Su unica barrera era la contencion del
+    propio modelo (verificado: un agente con permiso denegado en su
     frontmatter se nego a escribir en una prueba real, pero por
-    razonamiento, no por permiso tecnico). Pendiente: sandbox de SO para
-    contener Kilo con enforcement tecnico real.
+    razonamiento, no por permiso tecnico), nunca un enforcement tecnico.
+
+    CAMBIO DECLARADO WOT-2026-222a (2026-11-22, FASE 1 de la retirada de
+    Kilo): los 7 perfiles `challenger_kilo_*` reciben `status: legacy`, asi
+    que `selectable_profiles` los excluye y los 7 desaparecen de "con arbol"
+    (24 -> 17). Se dan de alta 2 equivalentes OpenCode `nan/glm5.3*`:
+    `challenger_opencode_glm_flash_nan` (BA267, no premium, `auto_select`
+    ausente = True) SI entra en "con arbol" (+1); `challenger_opencode_glm_nan`
+    (BA268, PREMIUM glm5.3 completo) declara `auto_select: false` y por tanto
+    NO entra (misma exclusion que el legacy, pero sin perder la invocacion
+    explicita por nombre). Resultado neto: 24 - 7 + 1 = 18 "con arbol" (mismo
+    numero que el milestone historico "9->13->18" de 2026-11-16, coincidencia
+    de conteo, NO el mismo conjunto: ese 18 tenia Kilo dentro; este no).
+    Esta actualizacion es la MISMA naturaleza que las anteriores de este test:
+    se actualiza la lista LITERAL por una decision de producto, nunca el
+    criterio (`channel != api AND repo_scope == destino`, invariante). Ver
+    FICHA WOT-2026-222a s.1-2.
     """
     # Solo perfiles SELECCIONABLES: el legacy (mismo BA06) esta fuera de la
     # seleccion automatica y no es una lente mas -- el sustituto ocupa su sitio.
@@ -8008,17 +8023,11 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "challenger_claude_sonnet_cli",
         "challenger_codex",
         "challenger_codex_sol_cli",
-        "challenger_kilo_deepseek_flash",
-        "challenger_kilo_gemma",
-        "challenger_kilo_glm",
-        "challenger_kilo_glm_flash",
-        "challenger_kilo_mimo_flash",
-        "challenger_kilo_qwen",
-        "challenger_kilo_qwen_flash",
         "challenger_opencode_deepseek_flash",
         "challenger_opencode_deepseek_free",
         "challenger_opencode_gemma",
         "challenger_opencode_glm_flash",
+        "challenger_opencode_glm_flash_nan",
         "challenger_opencode_hy_free",
         "challenger_opencode_longcat_free",
         "challenger_opencode_mimo_flash",
@@ -8032,18 +8041,11 @@ def test_058y_ratio_is_the_adjudicated_option_b():
     claves = sorted(profiles[name]["backend_key"] for name in con_arbol)
     assert claves == [
         "BA01",
-        "BA02",
-        "BA03",
-        "BA04",
         "BA05",
         "BA06",
-        "BA07",
-        "BA08",
-        "BA09",
         "BA252",
         "BA253",
         "BA254",
-        "BA255",
         "BA256",
         "BA257",
         "BA258",
@@ -8055,6 +8057,7 @@ def test_058y_ratio_is_the_adjudicated_option_b():
         "BA264",
         "BA265",
         "BA266",
+        "BA267",
     ], "lentes con arbol = backend_key DISTINTAS, no perfiles cualesquiera"
 
 

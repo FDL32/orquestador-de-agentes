@@ -93,6 +93,9 @@ LOT: dict[str, dict[str, object]] = {
 }
 NEW_KEYS = {str(spec["key"]) for spec in LOT.values()}
 NEW_PROFILES = {str(spec["profile"]) for spec in LOT.values()}
+# WOT-2026-222a adds two non-free OpenCode nan registry keys in the same
+# agents.json; they are counted here but remain outside this free-profile LOT.
+ADDITIONAL_TICKET_KEYS = {"BA267", "BA268"}
 # Forma rol_backend_familia[_caracteristica] (ensemble_profile_nomenclature.md):
 # solo minusculas; un digitos en cualquier segmento (version o tamano colado,
 # p.ej. ..._v41 o ..._40b) la rechaza; hasta 3 segmentos tras la familia
@@ -139,14 +142,15 @@ def m02_findings(cfg: dict) -> list[str]:
         return ["m-02: ensemble_registry.backend_keys ausente o no es objeto"]
     baseline = _baseline_keys()
     new = set(backend_keys) - baseline
-    if new != NEW_KEYS:
+    expected_new = NEW_KEYS | ADDITIONAL_TICKET_KEYS
+    if new != expected_new:
         findings.append(
-            f"m-02: claves nuevas {sorted(new)} != lote esperado {sorted(NEW_KEYS)}"
+            f"m-02: claves nuevas {sorted(new)} != lote esperado {sorted(expected_new)}"
         )
     collision = sorted(new & baseline)
     if collision:
         findings.append(f"m-02: claves nuevas reutilizan claves previas: {collision}")
-    expected_total = len(baseline) + len(NEW_KEYS)
+    expected_total = len(baseline) + len(expected_new)
     if len(backend_keys) != expected_total:
         findings.append(
             f"m-02: total de claves {len(backend_keys)} != base+lote "

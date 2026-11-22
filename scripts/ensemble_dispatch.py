@@ -524,6 +524,10 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     ("kilo", "nan/glm5.3-flash"): "glm",
     ("kilo", "nan/glm5.3"): "glm",
     ("kilo", "nan/mimo-v2.6-flash"): "mimo",
+    # WOT-2026-222a: equivalentes OpenCode nan de GLM (sustitutos de los
+    # challenger_kilo_glm* ahora legacy).
+    ("opencode", "nan/glm5.3-flash"): "glm",
+    ("opencode", "nan/glm5.3"): "glm",
     ("nvidia_api", "z-ai/glm-5.3"): "glm",
     ("nvidia_api", "z-ai/glm-5.3-flash"): "glm",
     ("nvidia_api", "deepseek-ai/deepseek-v4.1-flash"): "deepseek",
@@ -627,15 +631,19 @@ def selectable_profiles(config: dict) -> dict[str, dict]:
     """Perfiles ELEGIBLES por seleccion automatica: `ensemble_profiles` sin legacy.
 
     Before: `config` es la config del motor ya cargada.
-    During: filtra por `status`, conservando el orden de insercion (del que
-        depende `resolve_fallback_backend`).
+    During: filtra por `status` (nunca legacy) y por `auto_select` (WOT-2026-222a:
+        un perfil PREMIUM puede declarar `auto_select: false` para quedar fuera
+        de fallback/seleccion automatica sin dejar de ser invocable por nombre
+        explicito via `send_to_profile`; ausencia del campo = True, aditivo).
+        Conserva el orden de insercion (del que depende
+        `resolve_fallback_backend`).
     After: dict nuevo; no muta `config`. Los validadores que auditan TODOS los
         perfiles (incluido el legacy) siguen leyendo `ensemble_profiles`.
     """
     return {
         name: prof
         for name, prof in (config.get("ensemble_profiles") or {}).items()
-        if not is_legacy_profile(prof)
+        if not is_legacy_profile(prof) and prof.get("auto_select", True)
     }
 
 
@@ -2514,6 +2522,80 @@ def check_loop_lenses(
         )
 
 
+def enforce_profile_policy(
+    profile: dict,
+    *,
+    caller: str,
+    backend_cfg: dict | None = None,
+) -> None:
+    """Guard de rol (WOT-2026-222a): rechaza fail-closed ANTES de transportar.
+
+    FASE 1 de la retirada de Kilo. Alcance DELIBERADAMENTE ESTRECHO -- ver
+    AGENTS.md ("Hacer ahora vs aplazar" + "Haz el cambio minimo util") y el
+    hallazgo medido P34 ronda 3 (ds H-01/H-02, sonnet H-01): una version
+    anterior de este guard exigia `readonly_agent` efectivo para TODA lente
+    `channel: agent` dentro de esta misma funcion, y eso rompio 23 tests
+    canonicos de `test_ensemble_dispatch.py` -- no solo los dos que fijan la
+    marca BLANDA de legacy, sino sobre todo los fixtures hermeticos
+    (`channel: agent` + backend sintetico sin `readonly_agent`) que esta
+    funcion comparte con MUCHOS tests sin relacion con escritura (ambito,
+    timeout, backend_key). Esa exigencia universal tambien CONTRADICE una
+    decision ya medida (WOT-2026-048h, docstring de `check_agent_write_enforced`):
+    un fail-closed DENTRO de `send_to_profile` para todo `channel: agent`
+    "tumbaria el ensemble entero". Por eso la comprobacion de si un backend
+    `channel: agent` write:false puede enforcear read-only de verdad sigue
+    viviendo EXCLUSIVAMENTE en el gate externo `check_agent_write_enforced.py`
+    (estatico + `--check-dynamic`), que esta funcion NO duplica.
+
+    Lo que SI es nuevo y NO existia: Kilo (`backend == "kilo"`) queda excluido
+    de la ruta de lentes de forma DURA, exactamente como pedia el contrato
+    original (`C:/Temp/co152/ficha_kilo_congelada/FICHA_KILO_F1.md` s.1:
+    "aunque el perfil se edite a write:false"), sin generalizar el rechazo a
+    TODO perfil legacy (eso rompia los dos tests de la marca BLANDA
+    preexistente, que usan perfiles legacy `write:false` NO kilo).
+
+    Before: `profile` es el dict ya resuelto de `ensemble_profiles`; `caller`
+        es `"lens"` (gobierno: proposer/challenger/smoke, los 5 call-sites
+        productivos VERIFICADOS de `send_to_profile` hoy) o `"builder"`
+        (ruta NO VERIFICADA: ningun caller real de `send_to_profile` declara
+        hoy `caller="builder"` -- el Builder CLI directo queda fuera de este
+        call-site por contrato, ver FICHA s.1). `backend_cfg` es opcional y
+        NO se usa en esta version (se acepta por simetria de firma con otros
+        guards del modulo y para no forzar un cambio de firma si una ronda
+        futura necesita inspeccionarlo).
+    During: puro, sin I/O. `builder` exige `write: true`. `lens` rechaza
+        SIEMPRE `backend == "kilo"` (antes de mirar `write`) y ademas
+        cualquier perfil con `write: true`; NUNCA exige `write: false`
+        presente: un perfil que no declara `write` sigue aceptado (FICHA
+        s.3 -- exigir el campo exacto fue la causa medida de 2 fallos
+        canonicos).
+    After: no retorna nada; lanza `DispatchBlockedError` si el perfil no
+        cumple la politica de su `caller`, o `ValueError` si `caller` no es
+        uno de los dos valores conocidos (defensivo: un call-site nuevo con
+        un typo no debe fallar abierto).
+    """
+    if caller not in ("lens", "builder"):
+        raise ValueError(f"enforce_profile_policy: caller desconocido: {caller!r}")
+    if caller == "builder":
+        if profile.get("write") is not True:
+            raise DispatchBlockedError(
+                "el Builder exige write:true; el perfil declara write:false "
+                "o no lo declara"
+            )
+        return
+    if profile.get("backend") == "kilo":
+        raise DispatchBlockedError(
+            "Kilo no aporta contencion verificable (sin sandbox nativo ni "
+            "allowlist de tools fiable en argv, WOT-2026-222a): ningun "
+            "perfil kilo puede despacharse como lente, aunque declare "
+            "write:false o no sea legacy"
+        )
+    if profile.get("write") is True:
+        raise DispatchBlockedError(
+            "la lente exige NO declarar write:true; el perfil declara write:true"
+        )
+
+
 def send_to_profile(
     profile_name: str,
     messages: list[dict],
@@ -2533,6 +2615,13 @@ def send_to_profile(
     # dispatch abortaba y el mensaje "backend CLI sin respuesta" atribuia mal
     # la causa -> reviews decorativas.
     timeout: int = 300,
+    # WOT-2026-222a: rol del llamador para `enforce_profile_policy`. Default
+    # "lens" porque los 5 call-sites productivos de hoy (proposer/challenger
+    # de gobierno + smoke_profile) son SIEMPRE gobierno/lente -- verificado,
+    # no supuesto. "builder" queda declarado para cuando exista un caller
+    # real; hoy es ruta NO VERIFICADA (ningun test la ejercita contra un
+    # Builder real, ver FICHA s.1).
+    caller: str = "lens",
 ) -> str:
     """Camino de salida POR PERFIL hacia un backend; el preflight corre AQUI.
 
@@ -2568,6 +2657,7 @@ def send_to_profile(
             file=sys.stderr,
         )
     backend_cfg = config["backends"][profile["backend"]]
+    enforce_profile_policy(profile, caller=caller, backend_cfg=backend_cfg)
     # WOT-2026-042v: el ambito se resuelve AQUI porque esta es la salida
     # POR PERFIL hacia un backend (lo declara el docstring, y el canary de
     # WOT-2026-042k midio que 9 de 9 `dispatch.py` de gobierno llaman a esta

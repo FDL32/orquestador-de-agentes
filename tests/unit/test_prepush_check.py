@@ -1712,3 +1712,149 @@ def test_059r_dod_helper_non_utf8_link_is_unreadable_fail_closed_without_mock(
     assert "link ilegible" in result.output
     assert "fail-closed" in result.output
     assert "violaciones=" not in result.output
+
+
+# ============================================================================
+# WOT-2026-222a v5, codex H-01 y gamsgo H-02: visibilidad del WARN de
+# catalogo y cableado operativo de run_ensemble_profile_catalog_check dentro
+# de run_preflight_check (no solo censo estatico AST).
+# ============================================================================
+
+
+def test_222a_catalog_check_absent_snapshot_is_passed_false_warn(tmp_path, monkeypatch):
+    """codex H-01: ausencia de snapshot debe ser WARN VISIBLE, no SKIP mudo.
+
+    `_print_preflight_report` solo imprime `result.output` cuando
+    `not result.passed`: `passed=True` para "no hay snapshot todavia" dejaba
+    la deuda fuera de cada informe de push. MUTACION: volver a `passed=True`
+    en la rama de ausencia hace caer este assert.
+    """
+    monkeypatch.setattr(pc_module, "_MOTOR_ROOT", tmp_path)
+    result = pc_module.run_ensemble_profile_catalog_check(tmp_path)
+    assert result.passed is False
+    assert result.is_blocking is False
+    assert "WARN" in result.output
+    assert "no existe" in result.output
+
+
+def test_222a_catalog_check_import_error_is_passed_false_warn(tmp_path, monkeypatch):
+    """codex H-01: checker no importable tambien debe ser WARN VISIBLE."""
+    snapshot_dir = tmp_path / ".agent" / "runtime" / "ensemble"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "model_catalog_snapshot.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(pc_module, "_MOTOR_ROOT", tmp_path)
+    monkeypatch.setitem(sys.modules, "scripts.check_ensemble_profile_catalog", None)
+    result = pc_module.run_ensemble_profile_catalog_check(tmp_path)
+    assert result.passed is False
+    assert result.is_blocking is False
+    assert "no importable" in result.output
+
+
+def test_222a_catalog_check_invalid_snapshot_is_passed_false_warn(
+    tmp_path, monkeypatch
+):
+    """gamsgo H-02: snapshot presente pero INVALIDO (sin metadata) es WARN
+    VISIBLE con el motivo, distinto del SKIP/ausente y del divergente."""
+    snapshot_dir = tmp_path / ".agent" / "runtime" / "ensemble"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "model_catalog_snapshot.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(pc_module, "_MOTOR_ROOT", tmp_path)
+    result = pc_module.run_ensemble_profile_catalog_check(tmp_path)
+    assert result.passed is False
+    assert result.is_blocking is False
+    assert "no utilizable" in result.output
+
+
+def test_222a_catalog_check_valid_snapshot_is_passed_true(tmp_path, monkeypatch):
+    """Control positivo: con el snapshot real/coherente, SI debe ser passed=True."""
+    real_fixture = (
+        Path(pc_module.__file__).resolve().parent.parent
+        / "tests"
+        / "fixtures"
+        / "ensemble_model_catalog_snapshot.json"
+    )
+    snapshot_dir = tmp_path / ".agent" / "runtime" / "ensemble"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "model_catalog_snapshot.json").write_text(
+        real_fixture.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    monkeypatch.setattr(pc_module, "_MOTOR_ROOT", tmp_path)
+    result = pc_module.run_ensemble_profile_catalog_check(tmp_path)
+    assert result.passed is True
+    assert result.is_blocking is False
+
+
+def test_222a_catalog_check_divergent_snapshot_is_passed_false_warn(
+    tmp_path, monkeypatch
+):
+    """Control negativo: snapshot vigente pero con un par divergente -> WARN."""
+    now_catalog = {
+        "captured_at": "2026-01-01T00:00:00+00:00",
+        "expires_at": "2099-01-01T00:00:00+00:00",
+        "sources": [
+            {
+                "command": "opencode models",
+                "backend": "opencode",
+                "captured_at": "2026-01-01T00:00:00+00:00",
+                "sha256": "a" * 64,
+                "generator_version": "1",
+            }
+        ],
+        "entries": [{"backend": "opencode", "model": "nan/no-existe-en-agents-json"}],
+    }
+    snapshot_dir = tmp_path / ".agent" / "runtime" / "ensemble"
+    snapshot_dir.mkdir(parents=True)
+    (snapshot_dir / "model_catalog_snapshot.json").write_text(
+        json.dumps(now_catalog), encoding="utf-8"
+    )
+    monkeypatch.setattr(pc_module, "_MOTOR_ROOT", tmp_path)
+    result = pc_module.run_ensemble_profile_catalog_check(tmp_path)
+    assert result.passed is False
+    assert result.is_blocking is False
+    assert "WARN" in result.output
+
+
+def _stub_all_checks_except(monkeypatch, keep):
+    ok = pc_module.CheckResult(name="stub", passed=True, output="", is_blocking=False)
+    for attr_name in dir(pc_module):
+        if attr_name.startswith("run_") and attr_name not in keep:
+            monkeypatch.setattr(pc_module, attr_name, lambda *a, **k: ok)
+
+
+def test_222a_catalog_check_is_wired_into_closeout_not_base(tmp_path, monkeypatch):
+    """CABLEADO (gamsgo H-02): `run_preflight_check` invoca
+    `run_ensemble_profile_catalog_check` SOLO en closeout_mode. Distinto del
+    censo estatico AST de `test_check_guard_wiring.py` (que solo prueba
+    presencia del import/llamada en el fichero, nunca que este DENTRO de la
+    secuencia que corre sola). MUTACION: retirar la linea
+    `results.append(run_ensemble_profile_catalog_check(project_root))` de
+    `run_preflight_check` deja el spy sin llamar y este test cae; el censo
+    AST de guard_wiring NO lo detecta (sigue viendo el import y la
+    definicion de la funcion, intactos).
+    """
+    _stub_all_checks_except(
+        monkeypatch, {"run_preflight_check", "run_ensemble_profile_catalog_check"}
+    )
+    calls = {"closeout": 0, "base": 0}
+
+    def _spy_closeout(*a, **k):
+        calls["closeout"] += 1
+        return pc_module.CheckResult(
+            name="spy", passed=True, output="", is_blocking=False
+        )
+
+    monkeypatch.setattr(pc_module, "run_ensemble_profile_catalog_check", _spy_closeout)
+    pc_module.run_preflight_check(tmp_path, closeout_mode=True)
+    assert calls["closeout"] == 1, (
+        "el check existe pero el closeout no lo invoca -> es una NORMA, no una barrera"
+    )
+
+    def _spy_base(*a, **k):
+        calls["base"] += 1
+        return pc_module.CheckResult(
+            name="spy", passed=True, output="", is_blocking=False
+        )
+
+    monkeypatch.setattr(pc_module, "run_ensemble_profile_catalog_check", _spy_base)
+    pc_module.run_preflight_check(tmp_path, closeout_mode=False)
+    assert calls["base"] == 0, "el preflight base no debe pagar este WARN"

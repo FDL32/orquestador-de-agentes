@@ -97,4 +97,6 @@ def test_challenger_kilo_glm_and_flash_signatures_are_independent():
         # WOT-2026-210a: el campo es OBLIGATORIO y la comparacion sigue siendo
         # EXACTA; "texto" es el valor que exige la regla backend != opencode.
         "lens_class": "texto",
+        "status": "legacy",
+        "replaced_by": "challenger_opencode_glm_flash_nan",
     }

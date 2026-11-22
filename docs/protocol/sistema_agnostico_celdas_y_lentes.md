@@ -43,3 +43,6 @@ Ratificar este diseno, decidir U1/U3, abrir ficha (DISENO_PRIMERO) y despues imp
 - Control positivo: remite a `OPERACION_EN_CURSO_CO-114.md` l.80-82.
 - Caducidad: 2026-11-21 si no hay al menos 3 secciones medidas por brazo con un verificador CIEGO AL BRAZO (el verificador no sabe de que cadena procede la seccion). Ampliada por el usuario el 2026-11-13, mensajes f57d6ff6-fee4-483f-9da5-bd6f3feb7009 (peticion) y 2a6dc27f-8c54-4ef8-b24b-5f605b72102d (confirmacion de 7 dias; antes: 2026-11-14).
 - Ratificacion: SOLO con decision explicita del usuario sobre la medicion acumulada.
+
+## 7. Retirada de Kilo y catalogo de dos fuentes (WOT-2026-222a)
+El guard de rol de `send_to_profile` (`enforce_profile_policy` en scripts/ensemble_dispatch.py) y el checker de catalogo `scripts/check_ensemble_profile_catalog.py` (dos fuentes: `.agent/config/agents.json` del motor y un snapshot de `opencode models` / `kilo models` via `scripts/refresh_ensemble_model_catalog.py`) son la fuente de verdad operativa de esa politica; este documento solo apunta a ellos y no repite su contrato (X-09).

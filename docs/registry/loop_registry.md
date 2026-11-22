@@ -94,6 +94,8 @@ Y como cualquier `status` distinto de `active` puede sacar al backend de los buc
 | BA264 | opencode | opencode/mimo-v2.6-flash-free | active |
 | BA265 | opencode | opencode/nemotron-3.5-lightning-free | active |
 | BA266 | opencode | opencode/nemotron-3.5-super-vl-free | active |
+| BA267 | opencode | nan/glm5.3-flash | active |
+| BA268 | opencode | nan/glm5.3 | active |
 | BA27 | nan_api | deepseek-v4-pro | deprecated |
 | BA28 | nan_api | hy4 | deprecated |
 | BA29 | nan_api | qwen3.8-max | deprecated |

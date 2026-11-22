@@ -206,6 +206,13 @@ guards:
       marcador: SKIP EXPLICITO
       flujo: both
       timeout_s: 60
+  scripts/check_ensemble_profile_catalog.py:
+    clase: fixed_denominator
+    skip_explicito: 'no'
+    nota: 'WOT-2026-222a: universo fijo en el camino automatico (.agent/config/agents.json
+      + .agent/runtime/ensemble/model_catalog_snapshot.json); la CLI -m --catalog
+      del llamador es el otro modo; nunca publica SKIP (ausencia de snapshot =
+      rc 2 / WARN)'
   scripts/check_ensemble_registry_classification.py:
     clase: fixed_denominator
     skip_explicito: 'no'

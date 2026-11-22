@@ -114,7 +114,7 @@
       "trusted": true
     },
     "nan_api": {
-      "_legacy_note": "LEGACY (orden del usuario 2026-11-16): los modelos nan solo se lanzan por opencode (primero) o kilo (respaldo). Los perfiles challenger_nan_* y las claves nan_api del registro quedan por historico (scorecard) y NO deben usarse para lentes. Sustitutos: challenger_opencode_* y challenger_kilo_*.",
+      "_legacy_note": "LEGACY (orden del usuario 2026-11-16, endurecido por WOT-2026-222a 2026-11-22): los modelos nan solo se lanzan por opencode (primero) o kilo (respaldo HISTORICO, el propio backend kilo quedo legacy para lentes en WOT-2026-222a: no aporta contencion verificable). Los perfiles challenger_nan_*, challenger_kilo_* y las claves nan_api del registro quedan por historico (scorecard) y NO deben usarse para lentes. Sustitutos: challenger_opencode_* exclusivamente.",
       "executable": "",
       "args": [],
       "discovery": {
@@ -311,6 +311,35 @@
       "backend_key": "BA06",
       "repo_scope": "destino"
     },
+    "challenger_opencode_glm_flash_nan": {
+      "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
+      "channel": "agent",
+      "model": "nan/glm5.3-flash",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA267",
+      "tier": "flash",
+      "status": "active",
+      "repo_scope": "destino"
+    },
+    "challenger_opencode_glm_nan": {
+      "backend": "opencode",
+      "lens_class": "verificadora",
+      "readonly_agent": "verificador",
+      "channel": "agent",
+      "model": "nan/glm5.3",
+      "context": "diff-o-artefacto-publico",
+      "write": false,
+      "data_sensitivity": "public",
+      "backend_key": "BA268",
+      "tier": "full",
+      "status": "active",
+      "repo_scope": "destino",
+      "auto_select": false
+    },
     "challenger_opencode_deepseek_flash": {
       "backend": "opencode",
       "lens_class": "verificadora",
@@ -453,7 +482,9 @@
       "write_enforcement_note": "Kilo no ofrece sandbox nativo ni allowlist de tools verificable en argv (has_native_sandbox); un agente creado via 'kilo agent create' con permission.edit=deny en su frontmatter no se refleja en la regla efectiva de 'kilo agent list' (sigue siendo permission:* action:allow). Prueba real 2026-10-09: el agente se nego a escribir, pero por razonamiento del propio modelo, no por un permiso tecnico bloqueante -- mismo patron de riesgo que WOT-2026-086 (DEC-086P10-001). Declarado write:true a proposito para no mentirle a check_agent_write_enforced.py. Pendiente: sandbox de SO para contener Kilo.",
       "data_sensitivity": "public",
       "backend_key": "BA07",
-      "repo_scope": "destino"
+      "repo_scope": "destino",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_deepseek_flash"
     },
     "challenger_kilo_qwen": {
       "backend": "kilo",
@@ -465,7 +496,9 @@
       "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
       "data_sensitivity": "public",
       "backend_key": "BA08",
-      "repo_scope": "destino"
+      "repo_scope": "destino",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_qwen"
     },
     "challenger_kilo_gemma": {
       "backend": "kilo",
@@ -477,7 +510,9 @@
       "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
       "data_sensitivity": "public",
       "backend_key": "BA09",
-      "repo_scope": "destino"
+      "repo_scope": "destino",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_gemma"
     },
     "challenger_kilo_qwen_flash": {
       "backend": "kilo",
@@ -489,7 +524,9 @@
       "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
       "data_sensitivity": "public",
       "backend_key": "BA02",
-      "repo_scope": "destino"
+      "repo_scope": "destino",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_qwen_flash"
     },
     "challenger_kilo_glm_flash": {
       "backend": "kilo",
@@ -501,7 +538,9 @@
       "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
       "data_sensitivity": "public",
       "backend_key": "BA03",
-      "repo_scope": "destino"
+      "repo_scope": "destino",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_glm_flash_nan"
     },
     "challenger_kilo_glm": {
       "backend": "kilo",
@@ -513,7 +552,9 @@
       "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
       "data_sensitivity": "public",
       "backend_key": "BA255",
-      "repo_scope": "destino"
+      "repo_scope": "destino",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_glm_nan"
     },
     "challenger_kilo_mimo_flash": {
       "backend": "kilo",
@@ -525,7 +566,9 @@
       "write_enforcement_note": "Ver nota identica en challenger_kilo_deepseek_flash.",
       "data_sensitivity": "public",
       "backend_key": "BA04",
-      "repo_scope": "destino"
+      "repo_scope": "destino",
+      "status": "legacy",
+      "replaced_by": "challenger_opencode_mimo_flash"
     },
     "challenger_nan_qwen_flash": {
       "backend": "nan_api",
@@ -1733,6 +1776,28 @@
         "tier": "full",
         "generation": 2,
         "source": "https://openrouter.ai/nvidia/nemotron-3.5-super-vl"
+      },
+      "BA267": {
+        "backend": "opencode",
+        "lens_class": "verificadora",
+        "model": "nan/glm5.3-flash",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "flash",
+        "generation": 1
+      },
+      "BA268": {
+        "backend": "opencode",
+        "lens_class": "verificadora",
+        "model": "nan/glm5.3",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Zhipu",
+        "family": "glm",
+        "tier": "full",
+        "generation": 1
       }
     },
     "loop_shapes": {

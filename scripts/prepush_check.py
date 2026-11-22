@@ -2851,6 +2851,88 @@ def run_loop_execution_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_ensemble_profile_catalog_check(project_root: Path) -> CheckResult:
+    """WOT-2026-222a: catalogo de dos fuentes (agents.json + snapshot opencode/kilo).
+
+    Cablea check_ensemble_profile_catalog en el camino que corre solo (prepush),
+    cumpliendo el punto f1-d08 de la ficha: citarlo solo en un prompt seria una
+    norma, no una barrera. Nace WARN (igual patron que run_agent_write_enforced_check
+    arriba): no existe todavia una captura programada de 'opencode models' /
+    'kilo models' (scripts/refresh_ensemble_model_catalog.py existe pero su
+    cadencia de refresco es decision pendiente del Builder, ficha s.4); bloquear
+    el push por la AUSENCIA de un snapshot que nadie genera aun seria el mismo
+    atajo que 042x evito. Endurecer a bloqueante cuando exista una captura
+    programada y un TTL decidido.
+
+    Before: snapshot esperado en .agent/runtime/ensemble/model_catalog_snapshot.json
+        (runtime del MOTOR, no del destino).
+    During: read-only; delega en check_catalog, que es puro salvo la lectura de
+        los dos ficheros.
+    After: passed=True SOLO si las dos fuentes son coherentes; passed=False +
+        is_blocking=False (WARN VISIBLE, nunca SKIP silencioso) en cualquier
+        otro caso -- snapshot ausente, checker no importable, snapshot no
+        utilizable o pares divergentes -- nombrando el motivo exacto. codex
+        H-01 (ronda P34 posterior a esta misma ficha): la version anterior
+        devolvia passed=True para snapshot ausente e ImportError, lo que el
+        propio contrato de este runner (ver run_preflight_check, 'imprime
+        result.output SOLO si not result.passed') hace INVISIBLE -- la deuda
+        de catalogo sin capturar quedaba fuera del informe de cada push,
+        exactamente la deuda-invisible que estos gates combaten.
+    """
+    name = "Ensemble Profile Catalog (WOT-2026-222a, WARN)"
+    snapshot_path = (
+        _MOTOR_ROOT / ".agent" / "runtime" / "ensemble" / "model_catalog_snapshot.json"
+    )
+    if not snapshot_path.exists():
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=(
+                f"WARN: no existe {snapshot_path} todavia -- deuda declarada "
+                "(WOT-2026-222a s.4); genera uno con "
+                "scripts/refresh_ensemble_model_catalog.py"
+            ),
+            is_blocking=False,
+        )
+    try:
+        from scripts.check_ensemble_profile_catalog import (
+            CatalogSnapshotError,
+            check_catalog,
+        )
+    except ImportError:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output="WARN: check_ensemble_profile_catalog no importable",
+            is_blocking=False,
+        )
+    try:
+        errors = check_catalog(None, snapshot_path)
+    except CatalogSnapshotError as exc:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"WARN: snapshot no utilizable: {exc}",
+            is_blocking=False,
+        )
+    if errors:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output="WARN ("
+            + str(len(errors))
+            + " par/es divergentes): "
+            + "; ".join(errors),
+            is_blocking=False,
+        )
+    return CheckResult(
+        name=name,
+        passed=True,
+        output="OK: agents.json y el snapshot de catalogo coinciden.",
+        is_blocking=False,
+    )
+
+
 def run_flight_plan_collision_check(project_root: Path) -> CheckResult:
     """WOT-2026-027h: colision INTER-plan en queued/ (check HERMANO de validate_batch_dag).
 
@@ -4982,6 +5064,9 @@ def run_preflight_check(
         # colisiona antes de la barrera (deuda historica); endurecer a bloqueante
         # en WOT-2026-040r cuando queued/ este limpio. El CHECK en si (exit!=0) es
         # fiel a 'colision SIEMPRE falla, sin allowlist'; el CABLEADO nace WARN.)
+        # 6l-quad. Ensemble Profile Catalog (WOT-2026-222a; WARN -- sin captura
+        # programada de opencode/kilo models todavia, ver docstring.)
+        results.append(run_ensemble_profile_catalog_check(project_root))
         results.append(run_flight_plan_collision_check(project_root))
         # 6m-bis. Launch Prompt Paths (WOT-2026-067n; WARN -- 2 de 3 prompts vivos
         # ya violan la regla antes de la barrera (deuda medida: 6 hallazgos).

@@ -1,0 +1,106 @@
+{
+  "captured_at": "2026-11-22T00:00:00+00:00",
+  "expires_at": "2099-01-01T00:00:00+00:00",
+  "sources": [
+    {
+      "command": "opencode models",
+      "backend": "opencode",
+      "captured_at": "2026-11-22T00:00:00+00:00",
+      "sha256": "4327af65434838fd5fbef2b4d449cdcc6bd5d4fa5e8a282c78921217e0c01b44",
+      "generator_version": "1"
+    },
+    {
+      "command": "kilo models",
+      "backend": "kilo",
+      "captured_at": "2026-11-22T00:00:00+00:00",
+      "sha256": "c3ab3686e6697a5f4d172770827110a29e096b4d48d23d65a31caa425703ca20",
+      "generator_version": "1"
+    }
+  ],
+  "entries": [
+    {
+      "backend": "kilo",
+      "model": "nan/deepseek-v4-flash"
+    },
+    {
+      "backend": "kilo",
+      "model": "nan/gemma4"
+    },
+    {
+      "backend": "kilo",
+      "model": "nan/glm5.3"
+    },
+    {
+      "backend": "kilo",
+      "model": "nan/glm5.3-flash"
+    },
+    {
+      "backend": "kilo",
+      "model": "nan/mimo-v2.6-flash"
+    },
+    {
+      "backend": "kilo",
+      "model": "nan/qwen3.6"
+    },
+    {
+      "backend": "kilo",
+      "model": "nan/qwen3.8-flash"
+    },
+    {
+      "backend": "opencode",
+      "model": "nan/deepseek-v4-flash"
+    },
+    {
+      "backend": "opencode",
+      "model": "nan/gemma4"
+    },
+    {
+      "backend": "opencode",
+      "model": "nan/glm5.3"
+    },
+    {
+      "backend": "opencode",
+      "model": "nan/glm5.3-flash"
+    },
+    {
+      "backend": "opencode",
+      "model": "nan/mimo-v2.6-flash"
+    },
+    {
+      "backend": "opencode",
+      "model": "nan/qwen3.6"
+    },
+    {
+      "backend": "opencode",
+      "model": "nan/qwen3.8-flash"
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode-go/glm-5.3-flash"
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode/deepseek-v4.1-flash-free"
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode/hy4-flash-free"
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode/longcat-2.5-free"
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode/mimo-v2.6-flash-free"
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode/nemotron-3.5-lightning-free"
+    },
+    {
+      "backend": "opencode",
+      "model": "opencode/nemotron-3.5-super-vl-free"
+    }
+  ]
+}
