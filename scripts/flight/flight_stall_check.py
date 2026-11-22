@@ -99,6 +99,7 @@ OWNED_PREFIXES = (
     "detector-",
     "celda-",
     "huerfano-",
+    "gasto-",
 )
 GIT_MARKERS = ("index.lock", "MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD")
 
@@ -117,6 +118,11 @@ DETECTOR_NAMES = (
     "celda",
     "huerfano",
 )
+DETECTOR_NAMES += ("presupuesto-nan",)
+NAN_POOL_CREDITS = 7000.0
+NAN_RESET_AT = "2026-12-07T00:00:00+00:00"
+NAN_UNKNOWN_KEY = "nan_unknown_streak"
+NAN_SOURCE_ENV = ("NAN_OPENCODE_DB", "NAN_KILO_DB")
 _CELL_CHECKER = None
 FECHA_CIERRE_EXENTAS = "2026-11-16"
 EXENTAS_CELDA_LENTES = {
@@ -912,7 +918,15 @@ def _resolve_paths(a, ops):  # noqa: C901
         store=Path(
             env.get("T3_STATE_DB", Path.home() / ".t3" / "userdata" / "statev2.sqlite")
         ),
+        nan_sources={},
     )
+    default_nan = {
+        "opencode": Path.home() / ".local" / "share" / "opencode" / "opencode.db",
+        "kilo": Path.home() / ".local" / "share" / "kilo" / "kilo.db",
+    }
+    for name, variable in zip(("opencode", "kilo"), NAN_SOURCE_ENV, strict=True):
+        raw_source = env.get(variable, str(default_nan[name]))
+        cfg.nan_sources[name] = Path(raw_source) if raw_source else None
     cfg.wt_globs, cfg.free_gb_min, cfg.disk_anchor = [], FREE_GB_DEFAULT, Path("/")
     if ops is not None:
         cfg.state = ops / STATE_NAME
@@ -1504,6 +1518,329 @@ def check_huerfano(out, st):  # noqa: C901 - explicit fail-closed branches are c
     return found
 
 
+def _nan_json_records(path):
+    """Read a bounded JSON fixture/source used by the NaN detector.
+
+    Before: ``path`` identifies a readable JSON source.
+    During: read at most one megabyte and accept a list or one mapping.
+    After: return ``(records, reason)``; malformed or oversized input is UNKNOWN.
+    """
+    try:
+        with path.open("rb") as handle:
+            raw = handle.read(1024 * 1024 + 1)
+        if len(raw) > 1024 * 1024:
+            return [], "source-too-large"
+        value = json.loads(raw.decode("utf-8-sig"))
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return [], "source-corrupt"
+    if isinstance(value, list) and all(isinstance(item, dict) for item in value):
+        return value, None
+    if isinstance(value, dict):
+        return [value], None
+    return [], "source-schema"
+
+
+def _nan_sqlite_records(path, source):
+    """Read a small, schema-aware sample from an OpenCode or Kilo database.
+
+    Before: ``path`` is an existing SQLite database and ``source`` names its producer.
+    During: open URI read-only, inspect ``sqlite_master``/``table_info`` and query at most
+        256 rows from the producer's message tables.
+    After: return ``(records, provenance, reason)`` without mutating the database.
+    """
+    connection = None
+    records = []
+    schema = []
+    try:
+        connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5.0)
+        tables = [
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name LIMIT 100"
+            )
+        ]
+        preferred = (
+            ("message", "part", "session")
+            if source == "opencode"
+            else ("session_message", "message", "session")
+        )
+        for table in preferred:
+            if table not in tables:
+                continue
+            columns = [
+                row[1] for row in connection.execute(f'PRAGMA table_info("{table}")')
+            ]
+            if not columns:
+                continue
+            schema.append(f"{table}({','.join(columns)})")
+            selected = ",".join(f'"{column}"' for column in columns)
+            rows = connection.execute(
+                f'SELECT {selected} FROM "{table}" LIMIT 256'  # noqa: S608
+            ).fetchall()
+            records.extend(dict(zip(columns, row, strict=True)) for row in rows)
+    except (OSError, sqlite3.Error, ValueError):
+        return [], [], "source-corrupt"
+    finally:
+        if connection is not None:
+            with contextlib.suppress(sqlite3.Error):
+                connection.close()
+    if not schema:
+        return [], [], "source-schema"
+    return records, schema, None
+
+
+def _nan_source_records(path, source):
+    """Load one configured NaN source while preserving UNKNOWN semantics.
+
+    Before: ``path`` is optional and may point to JSON test data or SQLite production data.
+    During: choose the bounded reader and attach source/schema provenance.
+    After: return ``(records, provenance, reason)``; absence is never reported as zero.
+    """
+    if path is None:
+        return [], [f"{source}:unconfigured"], "source-unconfigured"
+    if not path.exists() or not path.is_file():
+        return [], [f"{source}:{path}:absent"], "source-absent"
+    if path.suffix.lower() == ".json":
+        records, reason = _nan_json_records(path)
+        return records, [f"{source}:{path}:json"], reason
+    records, schema, reason = _nan_sqlite_records(path, source)
+    return records, [f"{source}:{path}:" + ";".join(schema)], reason
+
+
+def _nan_numbers(value, keys=None):
+    """Extract bounded credit values from a source record.
+
+    Before: ``value`` is decoded source data.
+    During: recursively inspect mappings/lists and recognize explicit credit/cost keys only.
+    After: return finite numeric credit amounts, never token counts or arbitrary numbers.
+    """
+    keys = keys or {
+        "credits",
+        "credit",
+        "cost_credits",
+        "costcredits",
+        "total_cost",
+        "cost",
+    }
+    found = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if (
+                normalized in keys
+                and isinstance(item, (int, float))
+                and not isinstance(item, bool)
+            ):
+                if math.isfinite(float(item)) and float(item) >= 0:
+                    found.append(float(item))
+            elif isinstance(item, (dict, list)):
+                found.extend(_nan_numbers(item, keys))
+    elif isinstance(value, list):
+        for item in value[:256]:
+            found.extend(_nan_numbers(item, keys))
+    return found
+
+
+def _nan_metadata(records):
+    """Collect level, authorization and session-cap metadata from sampled records.
+
+    Before: ``records`` are bounded dictionaries from the two sources.
+    During: inspect only explicit T2/T3 field names and preserve missing values as ``None``.
+    After: return ``(levels, authorizations, cap, user_request, rate_24h)``.
+    """
+    levels, authorizations = [], []
+    cap = None
+    user_request = False
+    rate = None
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        level = record.get("nivel", record.get("level"))
+        authorization = record.get("autorizacion", record.get("authorization"))
+        if isinstance(level, str) and level:
+            levels.append(level)
+        if isinstance(authorization, str) and authorization:
+            authorizations.append(authorization)
+        candidate = record.get("uso_maximo", record.get("session_cap"))
+        if isinstance(candidate, (int, float)) and not isinstance(candidate, bool):
+            cap = float(candidate) if cap is None else min(cap, float(candidate))
+        user_request = user_request or bool(
+            record.get("peticion_usuario", record.get("user_request"))
+        )
+        candidate_rate = record.get("ritmo_24h", record.get("rate_24h"))
+        if isinstance(candidate_rate, (int, float)) and math.isfinite(
+            float(candidate_rate)
+        ):
+            rate = float(candidate_rate)
+    return levels, authorizations, cap, user_request, rate
+
+
+def _nan_projection(used, rate, now):
+    """Project pool exhaustion using the mandatory reset and seven-day thresholds.
+
+    Before: ``used`` and ``rate`` are measured finite credits and ``now`` is UTC-aware.
+    During: with a positive rate calculate exhaustion from the remaining pool and compare it
+        to reset and now; a non-positive rate means no observable spending, so there is no
+        projected exhaustion to warn about (never an instant URGENTE).
+    After: return projection metadata including pool, reset, period, rate and level, with
+        ``agotamiento_proyectado`` and ``nivel`` set to ``None`` when the rate is not positive.
+    """
+    reset = dt.datetime.fromisoformat(NAN_RESET_AT).astimezone(dt.timezone.utc)
+    remaining = max(0.0, NAN_POOL_CREDITS - used)
+    exhaustion = None
+    level = None
+    if rate > 0:
+        exhaustion = now + dt.timedelta(days=remaining / rate)
+        if exhaustion < reset:
+            level = (
+                "URGENTE" if (exhaustion - now).total_seconds() < 7 * 86400 else "AVISO"
+            )
+    return {
+        "pool": NAN_POOL_CREDITS,
+        "periodo": "mensual",
+        "reinicio": reset.isoformat(),
+        "ritmo_observado_24h": rate,
+        "agotamiento_proyectado": (
+            exhaustion.isoformat() if exhaustion is not None else None
+        ),
+        "nivel": level,
+    }
+
+
+def _nan_unknown_findings(values, levels, authorizations, cap, streak):
+    """Build the fail-closed findings for an UNKNOWN NaN reading.
+
+    Before: ``values``/``levels``/``authorizations``/``cap`` reflect only the sources that
+        were readable and ``streak`` counts consecutive UNKNOWN readings.
+    During: deny the cap and the unauthorized premium from the readable partial sum
+        (monotone: adding sources can only raise it) and escalate once at two readings.
+    After: return the ordered ``gasto-*`` findings; the projection is never evaluated here.
+    """
+    found = []
+    partial = sum(values)
+    if cap is not None and partial > cap:
+        found.append(
+            (
+                "gasto-tope",
+                "URGENTE",
+                f"Uso parcial {partial:g} supera el tope autorizado {cap:g}",
+            )
+        )
+    if any(nivel == "premium" for nivel in levels) and not authorizations:
+        found.append(
+            ("gasto-premium", "URGENTE", "Gasto premium sin autorizacion registrada")
+        )
+    if streak >= 2:
+        found.append(
+            (
+                "gasto-unknown",
+                "AVISO",
+                "Fuentes NaN ausentes, corruptas o ambiguas tras dos lecturas",
+            )
+        )
+    return found
+
+
+def _nan_measured_findings(projection, user_request, levels, authorizations, cap, used):
+    """Build the findings for a fully measured NaN reading.
+
+    Before: ``projection`` comes from ``_nan_projection`` and the metadata from readable sources.
+    During: a user request never suppresses a finding and elevates the projection to
+        URGENTE (DISENO s.7 / FICHA s.1); premium and cap denials stay unconditional.
+    After: return the ordered ``gasto-*`` findings for the tick.
+    """
+    found = []
+    if projection["nivel"]:
+        elevated = "URGENTE" if user_request else projection["nivel"]
+        detail = "El pool NaN se agotara antes del reinicio"
+        if user_request:
+            detail += "; la peticion de usuario eleva el estado a URGENTE"
+        found.append(("gasto-presupuesto", elevated, detail))
+    if any(nivel == "premium" for nivel in levels) and not authorizations:
+        found.append(
+            ("gasto-premium", "URGENTE", "Gasto premium sin autorizacion registrada")
+        )
+    if cap is not None and used > cap:
+        found.append(
+            ("gasto-tope", "URGENTE", f"Uso {used:g} supera el tope autorizado {cap:g}")
+        )
+    return found
+
+
+def check_nan_budget(out, st):
+    """Measure NaN budget, premium authorization, projection and session cap.
+
+    Before: ``CFG`` resolves optional source paths and ``st`` is the mutable stall state.
+    During: read sources read-only, retain UNKNOWN, update the atomic receipt payload and
+        emit only the contractual ``gasto-*`` findings.
+    After: return findings; only the later production ``_save_state`` can persist ``st``.
+    """
+    paths = getattr(CFG, "nan_sources", {})
+    if not any(paths.values()):
+        out["nan_sources_unconfigured"] = True
+        return []
+    records, provenance, reasons = [], [], []
+    for source, path in paths.items():
+        values, source_provenance, reason = _nan_source_records(path, source)
+        records.extend(values)
+        provenance.extend(source_provenance)
+        if reason and reason != "source-unconfigured":
+            reasons.append(reason)
+    levels, authorizations, cap, user_request, explicit_rate = _nan_metadata(records)
+    values = _nan_numbers(records)
+    if not values and not reasons:
+        # Sin valores de credito legibles hay UNKNOWN, nunca un cero fabricado,
+        # aunque la fuente aporte un ritmo explicito (V1 r2 NIT-8).
+        reasons = ["source-no-credits"]
+    if reasons:
+        streak = _count(st.get(NAN_UNKNOWN_KEY)) + 1
+        st[NAN_UNKNOWN_KEY] = streak
+        out.update(
+            {
+                "nan_status": "UNKNOWN",
+                "nan_unknown_reason": reasons,
+                "nan_provenance": provenance,
+            }
+        )
+        receipt = {
+            "nivel": levels[0] if levels else None,
+            "uso": None,
+            "uso_parcial": sum(values) if values else None,
+            "autorizacion": authorizations[0] if authorizations else None,
+            "procedencia": provenance,
+        }
+        st["nan_receipt"] = receipt
+        # El tope y el premium NO dependen de la proyeccion ni de que TODAS las
+        # fuentes sean legibles (V1 r1 hallazgo 1); UNKNOWN solo calla la proyeccion.
+        return _nan_unknown_findings(values, levels, authorizations, cap, streak)
+    used = sum(values)
+    st[NAN_UNKNOWN_KEY] = 0
+    rate = explicit_rate if explicit_rate is not None else used / 24.0
+    now = dt.datetime.fromtimestamp(time.time(), tz=dt.timezone.utc)
+    projection = _nan_projection(used, rate, now)
+    out.update(
+        {
+            "nan_status": "MEASURED",
+            "nan_used": used,
+            "nan_provenance": provenance,
+            "nan_projection_level": projection["nivel"],
+            "nan_projection": projection,
+        }
+    )
+    receipt = {
+        "nivel": levels[0] if levels else None,
+        "uso": used,
+        "autorizacion": authorizations[0] if authorizations else None,
+        "procedencia": provenance,
+        "peticion_usuario": user_request,
+        "proyeccion": projection,
+    }
+    st["nan_receipt"] = receipt
+    return _nan_measured_findings(
+        projection, user_request, levels, authorizations, cap, used
+    )
+
+
 def _detect(out, st, only=None):
     """Ejecuta todos los detectores aislando el fallo de cada uno.
 
@@ -1525,6 +1862,7 @@ def _detect(out, st, only=None):
         "cola-despachable": lambda: check_cola_despachable(out, st),
         "celda": lambda: check_celda(out, st),
         "huerfano": lambda: check_huerfano(out, st),
+        "presupuesto-nan": lambda: check_nan_budget(out, st),
     }
     selected = [only] if only else list(DETECTOR_NAMES)
     for name in selected:
@@ -1593,6 +1931,10 @@ def _reconcile(ca, out, found, a):
         "hook-": out.get("ciego_hook"),
         "celda-": out.get("ciego_celda"),
         "huerfano-": out.get("huerfano_ciego"),
+        # Un tick NaN en UNKNOWN (o con las fuentes sin configurar) no puede ver la
+        # causa de sus claves gasto-*: no las reconcilia mientras este ciego.
+        "gasto-": out.get("nan_status") == "UNKNOWN"
+        or bool(out.get("nan_sources_unconfigured")),
     }
     if out.get("ocio_con_cola_ciego"):
         blind["ocio-con-cola"] = True
@@ -1660,6 +2002,9 @@ def run(a):  # noqa: C901 - detector legacy mas el modo heartbeat aislado
         if broke:
             print("STALL_CHECK_BROKEN: detector de prueba fallo")
             return 2
+        if a.test_detector == "presupuesto-nan" and not a.dry_run:
+            _save_state(st)
+        print("resumen:", json.dumps(out, ensure_ascii=False))
         print("test-detector:", a.test_detector, "hallazgos=", len(found))
         return 0 if a.test_detector == "todos" else 1 if found else 0
     if causes:

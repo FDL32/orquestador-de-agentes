@@ -387,6 +387,7 @@ extra_guards:
   builder_agent: scripts/builder_agent.py
   pretooluse_bash_wait_guard: .agent/hooks/pretooluse_bash_wait_guard.py
   review_level: scripts/flight/review_level.py
+  flight_stall_check: scripts/flight/flight_stall_check.py
 
 wired_via:
   # WOT-2026-161l: el detector de latido invoca el comprobador por ruta
@@ -449,6 +450,11 @@ wired_via:
     _run([sys.executable, "scripts/check_motor_pristine.py", "--snapshot", ...])).
     Probe: grep -n "check_motor_pristine.py" scripts/collect_system_health.py
     -> :452; el recolector corre en cada system-health audit del cierre.
+  flight_stall_check: >-
+    scripts/flight/register_stall_task.ps1:276-304 (la tarea genera y valida el
+    XML que ejecuta scripts/flight/flight_stall_check.py). Probe: powershell
+    -File scripts/flight/register_stall_task.ps1 -WhatIf -OpsDir <dir> -FlightDir <dir>
+    -> REGISTER_STALL_WHATIF.
 
 # WOT-2026-049g: los 3 casos documentados de la ficha (barreras reales sin
 # prefijo), registrados POR CLASE en el registro known_hooks del censo de

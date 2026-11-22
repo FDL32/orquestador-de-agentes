@@ -115,8 +115,13 @@ class Box:
             "FLIGHT_DIR",
             "STALL_MOTOR_WT",
             "STALL_QUOTA_FILE",
+            "NAN_OPENCODE_DB",
+            "NAN_KILO_DB",
+            "NAN_RECEIPTS_LEDGER",
         ):
             monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("NAN_OPENCODE_DB", "")
+        monkeypatch.setenv("NAN_KILO_DB", "")
         monkeypatch.setenv("STALL_WT_GLOB", str(root / "nada-*"))
         monkeypatch.setenv("STALL_FREE_GB_MIN", "0")
         monkeypatch.setenv("T3_STATE_DB", str(self.harness_store))
@@ -3735,3 +3740,313 @@ def test_huerfano_cap_y_resumen(box, case):
     third = box.tick()
     assert "huerfano-resumen" not in _orphan_summary(third)["huerfano_activos"]
     assert "event:huerfano-resumen" not in box.ca_state()
+
+
+# ------------------------------------------------------------------ WOT-2026-221a: presupuesto NaN y tope de sesion
+def _nan_source(path, rows):
+    path.write_text(json.dumps(rows), encoding="utf-8")
+
+
+def _enable_nan_sources(box, monkeypatch, opencode, kilo, ledger=None):
+    monkeypatch.setenv("NAN_OPENCODE_DB", str(opencode))
+    monkeypatch.setenv("NAN_KILO_DB", str(kilo))
+    if ledger is not None:
+        monkeypatch.setenv("NAN_RECEIPTS_LEDGER", str(ledger))
+
+
+def test_nan_unknown_fuentes_ausentes_o_corruptas_no_cero_y_valida_conserva_procedencia(
+    box, monkeypatch, tmp_path
+):
+    """221a d01: una fuente ilegible es UNKNOWN; una fuente valida conserva su valor."""
+    missing = tmp_path / "missing.json"
+    valid = tmp_path / "valid.json"
+    _nan_source(valid, [{"credits": 12.5, "nivel": "medio", "autorizacion": "m1"}])
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [{"credits": 0}])
+    _enable_nan_sources(box, monkeypatch, missing, kilo)
+    first = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_status": "UNKNOWN"' in first.out
+    assert "gasto-unknown" not in first.keys
+    _enable_nan_sources(box, monkeypatch, valid, kilo)
+    controlled = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_used": 12.5' in controlled.out
+    assert '"nan_provenance"' in controlled.out
+    assert '"nan_used": 0' not in controlled.out
+
+
+def test_nan_unknown_fuentes_ausentes_no_se_convierte_en_cero_ni_escalada_en_primera_lectura(
+    box, monkeypatch, tmp_path
+):
+    """221a d01: la primera lectura UNKNOWN no abre un despacho permisivo."""
+    missing = tmp_path / "missing.json"
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, missing, kilo)
+    result = box.tick("--test-detector", "presupuesto-nan")
+    assert result.rc == 0
+    assert "gasto-unknown" not in result.keys
+    assert '"nan_status": "UNKNOWN"' in result.out
+
+
+def test_nan_unknown_consecutive_escala_en_segunda_lectura(box, monkeypatch, tmp_path):
+    """221a d02: dos UNKNOWN consecutivas emiten gasto-unknown con owner stall."""
+    missing = tmp_path / "missing.json"
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, missing, kilo)
+    assert box.tick("--test-detector", "presupuesto-nan").rc == 0
+    result = box.tick("--test-detector", "presupuesto-nan")
+    assert result.rc == 1
+    assert "hallazgos= 1" in result.out
+
+
+def test_nan_projected_exhaustion_aviso_antes_del_reinicio_y_urgente_bajo_siete_dias(
+    box, monkeypatch, tmp_path
+):
+    """221a d03: la fecha proyectada aplica AVISO y URGENTE según s.7."""
+    source = tmp_path / "source.json"
+    _nan_source(
+        source,
+        [{"credits": 6000, "rate_24h": 100, "nivel": "medio", "autorizacion": "m1"}],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+    box.m.NAN_RESET_AT = (
+        dt.datetime.fromtimestamp(box.clock.now, dt.timezone.utc)
+        + dt.timedelta(days=30)
+    ).isoformat()
+    aviso = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_projection_level": "AVISO"' in aviso.out
+    _nan_source(
+        source,
+        [{"credits": 6000, "rate_24h": 200, "nivel": "medio", "autorizacion": "m1"}],
+    )
+    urgente = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_projection_level": "URGENTE"' in urgente.out
+
+
+def test_nan_projected_exhaustion_posterior_al_reinicio_no_aviso(
+    box, monkeypatch, tmp_path
+):
+    """221a d03 control: agotamiento después del reinicio no avisa."""
+    source = tmp_path / "source.json"
+    _nan_source(source, [{"credits": 1, "nivel": "medio", "autorizacion": "m1"}])
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+    box.m.NAN_RESET_AT = "2000-01-01T00:00:00+00:00"
+    result = box.tick("--test-detector", "presupuesto-nan")
+    assert "gasto-presupuesto" not in result.keys
+
+
+def test_nan_user_request_se_permite_y_conserva_recibo(box, monkeypatch, tmp_path):
+    """221a d04: la solicitud del usuario no bloquea, conserva el recibo y eleva a URGENTE."""
+    source = tmp_path / "source.json"
+    _nan_source(
+        source,
+        [
+            {
+                "credits": 6000,
+                "rate_24h": 50,
+                "nivel": "medio",
+                "autorizacion": "user-msg-1",
+                "peticion_usuario": True,
+            }
+        ],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+    box.m.NAN_RESET_AT = (
+        dt.datetime.fromtimestamp(box.clock.now, dt.timezone.utc)
+        + dt.timedelta(days=30)
+    ).isoformat()
+    result = box.tick()
+    # La proyeccion cruda es AVISO (agotamiento a 20 dias, reinicio a 30); con peticion
+    # de usuario el hallazgo NO se suprime y el estado se eleva a URGENTE (s.7).
+    assert ("gasto-presupuesto", "URGENTE", "stall") in result.events
+    assert result.rc == 1
+    receipt = box.stall_state()["nan_receipt"]
+    assert receipt["peticion_usuario"] is True
+    assert receipt["proyeccion"]["nivel"] == "AVISO"
+
+
+def test_nan_receipt_atomico_contiene_nivel_uso_autorizacion_procedencia_y_consumible(
+    box, monkeypatch, tmp_path
+):
+    """221a d05: el recibo atómico contiene los campos que consume T3."""
+    source = tmp_path / "source.json"
+    _nan_source(
+        source,
+        [
+            {
+                "credits": 7100,
+                "uso_maximo": 7000,
+                "nivel": "alto",
+                "autorizacion": "auth-1",
+            }
+        ],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+    result = box.tick()
+    assert result.rc == 1 and "gasto-tope" in result.keys
+    receipt = box.stall_state()["nan_receipt"]
+    assert receipt["nivel"] == "alto"
+    assert receipt["uso"] == 7100
+    assert receipt["autorizacion"] == "auth-1"
+    assert receipt["procedencia"]
+    # Sustitucion atomica real: el recibo vive solo en stall_state.json y no
+    # quedan temporales stall_state.<pid>.tmp del patron _save_state.
+    assert (box.ops / "stall_state.json").is_file()
+    assert not list(box.ops.glob("stall_state.*.tmp"))
+
+
+def test_nan_mutation_lectura_fuente_valida_conserva_valor_y_procedencia(
+    box, monkeypatch, tmp_path
+):
+    """221a d07 lectura: la ruta productiva mide la fuente valida y conserva la procedencia."""
+    source = tmp_path / "source.json"
+    _nan_source(source, [{"credits": 7.5, "nivel": "medio", "autorizacion": "m1"}])
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+    result = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_status": "MEASURED"' in result.out
+    assert '"nan_used": 7.5' in result.out
+    assert '"nan_provenance": []' not in result.out
+    assert "source.json" in result.out  # la procedencia nombra la fuente medida
+
+
+def test_nan_mutation_escalacion_sin_cero_tras_dos_lecturas(box, monkeypatch, tmp_path):
+    """221a d07 escalacion: la primera lectura ilegible informa sin cero, la segunda
+    escala a gasto-unknown con owner stall y la ceguera UNKNOWN conserva sus claves."""
+    missing = tmp_path / "missing.json"
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, missing, kilo)
+    first = box.tick()
+    assert first.rc == 0
+    assert '"nan_status": "UNKNOWN"' in first.out
+    assert "gasto-unknown" not in first.keys
+    box.ca.mark_seen("gasto-tope", "URGENTE", "stall")
+    second = box.tick()
+    assert (
+        "event:gasto-tope" in box.ca_state()
+    )  # un ciego UNKNOWN no borra claves gasto-*
+    assert ("gasto-unknown", "AVISO", "stall") in second.events
+
+
+def test_nan_mutation_fecha_de_agotamiento_aplica_umbrales(box, monkeypatch, tmp_path):
+    """221a d07 fecha: AVISO antes del reinicio, URGENTE bajo siete dias y sin ritmo
+    observable no hay agotamiento proyectado."""
+    source = tmp_path / "source.json"
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+    box.m.NAN_RESET_AT = (
+        dt.datetime.fromtimestamp(box.clock.now, dt.timezone.utc)
+        + dt.timedelta(days=30)
+    ).isoformat()
+    _nan_source(
+        source,
+        [{"credits": 6000, "rate_24h": 100, "nivel": "medio", "autorizacion": "m1"}],
+    )
+    aviso = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_projection_level": "AVISO"' in aviso.out
+    _nan_source(
+        source,
+        [{"credits": 6000, "rate_24h": 200, "nivel": "medio", "autorizacion": "m1"}],
+    )
+    urgente = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_projection_level": "URGENTE"' in urgente.out
+    _nan_source(
+        source,
+        [{"credits": 6000, "rate_24h": 0, "nivel": "medio", "autorizacion": "m1"}],
+    )
+    sin_ritmo = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_projection_level": null' in sin_ritmo.out
+    assert "gasto-presupuesto" not in sin_ritmo.keys
+
+
+def test_nan_mutation_autorizacion_premium_registrada_no_alarma(
+    box, monkeypatch, tmp_path
+):
+    """221a d07 autorizacion: el gasto premium con autorizacion registrada no alarma
+    y sin ella escala a URGENTE con owner stall."""
+    source = tmp_path / "source.json"
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+    _nan_source(source, [{"credits": 10, "nivel": "premium", "autorizacion": "auth-1"}])
+    con = box.tick()
+    assert "gasto-premium" not in con.keys
+    _nan_source(source, [{"credits": 10, "nivel": "premium"}])
+    sin = box.tick()
+    assert ("gasto-premium", "URGENTE", "stall") in sin.events
+
+
+def test_nan_tope_parcial_con_fuente_ilegible_sigue_emitido(box, monkeypatch, tmp_path):
+    """221a V1-1: con una fuente ilegible el tope y el premium siguen emitiendose
+    desde los datos legibles; UNKNOWN solo calla la proyeccion y la escalada sigue."""
+    source = tmp_path / "source.json"
+    _nan_source(
+        source,
+        [{"credits": 7100, "uso_maximo": 7000, "nivel": "premium"}],
+    )
+    kilo = tmp_path / "kilo_ausente.json"  # no se crea: fuente ilegible
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+    first = box.tick()
+    assert '"nan_status": "UNKNOWN"' in first.out
+    assert ("gasto-tope", "URGENTE", "stall") in first.events
+    assert ("gasto-premium", "URGENTE", "stall") in first.events
+    assert "gasto-presupuesto" not in first.keys
+    second = box.tick()
+    assert ("gasto-unknown", "AVISO", "stall") in second.events
+
+
+def test_nan_ruta_sqlite_productiva_mide_y_no_muta(box, monkeypatch, tmp_path):
+    """221a V1-2: la ruta sqlite (URI ro) conserva UNKNOWN sin claves de credito,
+    mide cuando el esquema aporta creditos y no muta las bases."""
+    import sqlite3
+
+    kilo = tmp_path / "kilo.db"
+    connection = sqlite3.connect(kilo)
+    connection.execute(
+        "CREATE TABLE session_message ("
+        "id TEXT, session_id TEXT, type TEXT, seq INTEGER, data TEXT)"
+    )
+    connection.commit()
+    connection.close()
+    source = tmp_path / "opencode.db"
+    connection = sqlite3.connect(source)
+    connection.execute(
+        "CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT)"
+    )
+    connection.execute(
+        "INSERT INTO message VALUES ('m1','s1',1,?)",
+        (json.dumps({"agent": "a", "model": "m", "role": "user"}),),
+    )
+    connection.commit()
+    connection.close()
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+    before = source.read_bytes()
+    first = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_status": "UNKNOWN"' in first.out
+    assert '"nan_used"' not in first.out  # UNKNOWN nunca es cero
+    assert source.read_bytes() == before  # modo URI ro: la base no se muta
+    connection = sqlite3.connect(source)
+    connection.execute("ALTER TABLE message ADD COLUMN credits REAL")
+    connection.execute("UPDATE message SET credits = 3.25")
+    connection.commit()
+    connection.close()
+    before = source.read_bytes()
+    second = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_status": "MEASURED"' in second.out
+    assert '"nan_used": 3.25' in second.out
+    assert "message(" in second.out  # la procedencia conserva el esquema
+    assert source.read_bytes() == before
+    assert not list(tmp_path.glob("*.db-wal"))
+    assert not list(tmp_path.glob("*.db-shm"))
