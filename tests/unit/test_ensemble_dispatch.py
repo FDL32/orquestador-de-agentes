@@ -3726,6 +3726,11 @@ def test_089n_scorecard_row_records_the_declared_channel(tmp_path):
     transport = _FakeTransport(replies=["ok"])
     config = _config()
     config["ensemble_profiles"]["p_chal"]["channel"] = "agent"
+    # WOT-2026-221e: lente temporal propia con .git; sin depender del arbol
+    # real ni del orden de ejecucion con test_126b.
+    cwd_lente = tmp_path / "lente_repo"
+    _init_git_fixture(cwd_lente, {"README.md": "089n\n"})
+    config["backends"]["fake"]["repo_root"] = str(cwd_lente)
     destino = tmp_path / "repo_destino"
     destino.mkdir()
 
@@ -12084,6 +12089,47 @@ def test_210a_tree_fingerprint_flags_real_tree_write(tmp_path):
     after = tree_fingerprint(root)
     assert post_round_incident(before, after) is True
     assert profile.get("post_round_incident") is True
+
+
+def test_221e_tree_fingerprint_tolerates_dangling_junction(tmp_path):
+    """WOT-2026-221e reproduce el enlace roto y conserva deteccion de cambios.
+
+    Before: preparar un repositorio con un fichero ignorado y dos enlaces de
+        directorio cuyo destino aun existe.
+    During: eliminar el destino y medir dos veces, despues cambiar el fichero
+        ignorado para aislar la deteccion de contenido del estado de Git.
+    After: la huella tolera ambos enlaces rotos, es estable y detecta el cambio.
+    """
+    root = tmp_path / "repo"
+    _init_git_fixture(root, {"README.md": "base\n", ".gitignore": "scratch.log\n"})
+    (root / "scratch.log").write_text("v1\n", encoding="utf-8")
+    target = tmp_path / "gone"
+    target.mkdir()
+    marker = root / "d" / "motor" / ".git"
+    second_marker = root / "d" / "motor" / "marca_rota"
+    marker.parent.mkdir(parents=True)
+    if sys.platform == "win32":
+        for link in (marker, second_marker):
+            command = ["cmd", "/c", "mklink", "/J", str(link), str(target)]
+            result = subprocess.run(
+                command, capture_output=True, text=True, check=False
+            )
+            assert result.returncode == 0, result.stderr
+    else:
+        try:
+            marker.symlink_to(target, target_is_directory=True)
+            second_marker.symlink_to(target, target_is_directory=True)
+        except OSError as exc:
+            pytest.skip(f"symlink no disponible sin privilegio: {exc}")
+    target.rmdir()
+    assert not marker.exists()
+    assert os.path.lexists(marker)
+
+    before = ed.tree_fingerprint(root)
+    assert ed.tree_fingerprint(root) == before
+    (root / "scratch.log").write_text("v2\n", encoding="utf-8")
+    after = ed.tree_fingerprint(root)
+    assert ed.post_round_incident(before, after) is True
 
 
 @pytest.mark.parametrize(

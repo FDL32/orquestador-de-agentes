@@ -2671,21 +2671,79 @@ def create_lens_snapshot(repo_root: Path) -> Path:
         raise
 
 
-def tree_fingerprint(root: Path) -> str:
-    """Return a stable content fingerprint plus git-status observation.
+def tree_fingerprint(root: Path) -> str:  # noqa: C901
+    """Mide el arbol real aunque contenga entradas ilegibles o enlaces rotos.
 
-    Before: ``root`` is the real repository tree to monitor around a round.
-    During: hash sorted relative file names and file contents, skipping ``.git``;
-        append the exact porcelain status or an explicit command-failure mark.
-    After: return a deterministic SHA-256 digest for the measured observation.
+    Before: ``root`` es el arbol real monitorizado alrededor de una ronda de
+        verificacion; puede contener entradas ilegibles o enlaces que no deben
+        seguirse, como junctions Windows con destino borrado. WOT-2026-221e:
+        el ``root.rglob("*")`` anterior abortaba ante un junction colgante.
+    During: recorre con ``os.walk`` topdown sin seguir enlaces; registra cada
+        symlink o junction resuelto por ``os.readlink`` como enlace determinista
+        sin descender ni leer su objetivo, excluye ``.git``, hashea ficheros
+        regulares legibles y registra entradas ilegibles mediante ``OSError``.
+        Anade la observacion exacta de ``git status --porcelain`` o su fallo.
+    After: devuelve el SHA-256 determinista de las entradas ordenadas y del
+        estado observado, estable ante enlaces rotos y sensible a cambios de
+        contenido legible sin abortar por entradas ilegibles.
     """
     root = Path(root).resolve()
-    entries = []
-    for path in sorted(root.rglob("*")):
-        if not path.is_file() or ".git" in path.relative_to(root).parts:
-            continue
-        relative = path.relative_to(root).as_posix()
-        entries.append(f"{relative}\0{hashlib.sha256(path.read_bytes()).hexdigest()}")
+    entries: list[str] = []
+
+    def _skip(relative: str, detail: str) -> None:
+        entries.append(f"{relative}\0{detail}")
+
+    def _on_walk_error(err: OSError) -> None:
+        raw = getattr(err, "filename", None)
+        if raw:
+            try:
+                relative = Path(raw).relative_to(root).as_posix()
+            except ValueError:
+                relative = str(raw)
+        else:
+            relative = "<directorio>"
+        _skip(relative, f"<ilegible:{type(err).__name__}>")
+
+    for dirpath, dirnames, filenames in os.walk(
+        root, topdown=True, onerror=_on_walk_error, followlinks=False
+    ):
+        dirnames.sort()
+        filenames.sort()
+        for name in list(dirnames):
+            full = Path(dirpath) / name
+            if name == ".git":
+                dirnames.remove(name)
+                continue
+            try:
+                target = os.readlink(full)
+            except OSError:
+                continue
+            dirnames.remove(name)
+            _skip(full.relative_to(root).as_posix(), f"<enlace:{target}>")
+        for name in filenames:
+            full = Path(dirpath) / name
+            relative = full.relative_to(root).as_posix()
+            if ".git" in Path(relative).parts:
+                continue
+            try:
+                target = os.readlink(full)
+            except OSError:
+                pass
+            else:
+                _skip(relative, f"<enlace:{target}>")
+                continue
+            try:
+                if not full.is_file():
+                    continue
+            except OSError:
+                _skip(relative, "<ilegible:OSError>")
+                continue
+            try:
+                digest = hashlib.sha256(full.read_bytes()).hexdigest()
+            except OSError as err:
+                _skip(relative, f"<ilegible:{type(err).__name__}>")
+                continue
+            entries.append(f"{relative}\0{digest}")
     status = subprocess.run(
         ["git", "status", "--porcelain"],  # noqa: S607
         cwd=root,

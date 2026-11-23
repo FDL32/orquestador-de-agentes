@@ -46,11 +46,31 @@ def _config(*, filter_on: bool) -> dict:
             "fake": {"type": "api", "base_url": "http://x", "api_key_env": "NONE"}
         },
         "ensemble_profiles": {
-            "p": {"backend": "fake", "channel": "api", "data_sensitivity": "public"},
-            "c": {"backend": "fake", "channel": "api", "data_sensitivity": "public"},
+            "p": {
+                "backend": "fake",
+                "channel": "api",
+                "data_sensitivity": "public",
+                "backend_key": "BA01",
+            },
+            "c": {
+                "backend": "fake",
+                "channel": "api",
+                "data_sensitivity": "public",
+                "backend_key": "BA11",
+            },
         },
         "ensemble_pipelines": {"pipe": pipe},
         "ensemble_private_roots": [],
+        # WOT-2026-221e: registro minimo veraz para que el gate fail-closed de
+        # 221c recorra la ruta PRODUCTIVA; el gate sigue intacto y sin registro rechaza.
+        "ensemble_registry": {
+            "backend_keys": {
+                "BA01": {"status": "active", "nivel": "medio", "niveles": ["medio"]},
+                "BA11": {"status": "active", "nivel": "medio", "niveles": ["medio"]},
+            },
+            "roles": {"U4": {"nivel": "medio"}},
+            "uso_maximo_por_tipo": {"medio": 7000},
+        },
     }
 
 
