@@ -53,6 +53,25 @@ cuarentena solo filtra a los SUSTITUTOS (`resolve_fallback_backend`, `resolve_si
 
 ## 3. Procedimiento
 
+### Fuente única de niveles y techos de uso (WOT-2026-221b)
+
+La clasificación v2 y la tabla plana de techos viven en
+`.agent/config/agents.json`, bajo `ensemble_registry`: `nivel`, `esfuerzo`,
+`acceso`, `presupuesto`, `limite`, `uso_maximo` y `nivel_decidido_por` se leen
+desde ese registro. La única tabla de techos es
+`ensemble_registry.uso_maximo_por_tipo`, indexada por `base`, `medio`, `alto` y
+`premium`; este prompt remite a la fuente y no re-declara sus valores.
+
+Ejemplos de referencia (la verdad es `agents.json`; el test de coherencia
+`tests/test_loop_registry_coherence.py` compara cada celda contra el registro y
+la pone en rojo si divergen):
+
+| Referencia | Nivel declarado |
+|---|---|
+| `nan/glm5.3` (BA255/BA268) | `premium` |
+| REVISOR del IM/TR (`nan/mimo-v2.6-flash`, BA257) | `medio` |
+| `gpt-5.6-luna` (BA05, `niveles` `[medio, alto]`) | `alto` |
+
 ### 3.1 Estado de los proveedores (antes de elegir lentes)
 
     python scripts/ensemble_dispatch.py quarantine --sync --project-root <destino>

@@ -980,7 +980,18 @@
         "lab": "Anthropic",
         "family": "claude",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "medio",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "suscripcion_claude",
+        "limite": null,
+        "uso_maximo": "medio",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "medio"
+        ],
+        "nivel_max": "medio"
       },
       "BA02": {
         "backend": "kilo",
@@ -991,7 +1002,18 @@
         "lab": "Alibaba",
         "family": "qwen",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "alto",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "alto"
+        ],
+        "nivel_max": "alto"
       },
       "BA03": {
         "backend": "kilo",
@@ -1002,7 +1024,18 @@
         "lab": "Zhipu",
         "family": "glm",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "alto",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: glm5.3-flash alto)",
+        "niveles": [
+          "alto"
+        ],
+        "nivel_max": "alto"
       },
       "BA04": {
         "backend": "kilo",
@@ -1013,7 +1046,18 @@
         "lab": "Xiaomi",
         "family": "mimo",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "medio",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "medio",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "medio"
+        ],
+        "nivel_max": "medio"
       },
       "BA05": {
         "backend": "codex",
@@ -1025,7 +1069,19 @@
         "family": "codex",
         "tier": "full",
         "generation": 1,
-        "variant": "luna"
+        "variant": "luna",
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "suscripcion_codex",
+        "limite": null,
+        "uso_maximo": "alto",
+        "nivel_decidido_por": "decision explicita del usuario 2026-11-22",
+        "niveles": [
+          "medio",
+          "alto"
+        ],
+        "nivel_max": "alto"
       },
       "BA07": {
         "backend": "kilo",
@@ -1036,7 +1092,18 @@
         "lab": "DeepSeek",
         "family": "deepseek",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "medio",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "medio",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "medio"
+        ],
+        "nivel_max": "medio"
       },
       "BA08": {
         "backend": "kilo",
@@ -1047,7 +1114,18 @@
         "lab": "Alibaba",
         "family": "qwen",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA09": {
         "backend": "kilo",
@@ -1058,7 +1136,18 @@
         "lab": "Google",
         "family": "gemma",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA10": {
         "backend": "nan_api",
@@ -1114,7 +1203,18 @@
         "lab": "Zhipu",
         "family": "glm",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "alto",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: glm5.3-flash alto)",
+        "niveles": [
+          "alto"
+        ],
+        "nivel_max": "alto"
       },
       "BA14": {
         "backend": "nan_api",
@@ -1195,7 +1295,18 @@
         "lab": "Zhipu",
         "family": "glm",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA21": {
         "backend": "nvidia_api",
@@ -1206,7 +1317,18 @@
         "lab": "Zhipu",
         "family": "glm",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA22": {
         "backend": "nvidia_api",
@@ -1217,7 +1339,18 @@
         "lab": "DeepSeek",
         "family": "deepseek",
         "tier": "flash",
-        "generation": 2
+        "generation": 2,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA23": {
         "backend": "nvidia_api",
@@ -1228,7 +1361,18 @@
         "lab": "Moonshot",
         "family": "kimi",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA24": {
         "backend": "nvidia_api",
@@ -1240,7 +1384,18 @@
         "family": "nemotron",
         "tier": "full",
         "generation": 1,
-        "variant": "super-120b"
+        "variant": "super-120b",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA25": {
         "backend": "nan_api",
@@ -1307,7 +1462,18 @@
         "family": "qwen",
         "tier": "full",
         "generation": 2,
-        "variant": "27b"
+        "variant": "27b",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA31": {
         "backend": "groq_api",
@@ -1319,7 +1485,18 @@
         "family": "gptoss",
         "tier": "full",
         "generation": 1,
-        "variant": "120b"
+        "variant": "120b",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA32": {
         "backend": "nan_api",
@@ -1353,7 +1530,18 @@
         "family": "northcode",
         "tier": "flash",
         "generation": 1,
-        "variant": "code"
+        "variant": "code",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA51": {
         "backend": "openrouter_api",
@@ -1365,7 +1553,18 @@
         "family": "nemotron",
         "tier": "full",
         "generation": 1,
-        "variant": "ultra-550b"
+        "variant": "ultra-550b",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA52": {
         "backend": "openrouter_api",
@@ -1416,7 +1615,18 @@
         "lab": "Alibaba",
         "family": "qwen",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA91": {
         "backend": "tokenharbor_api",
@@ -1427,7 +1637,18 @@
         "lab": "DeepSeek",
         "family": "deepseek",
         "tier": "flash",
-        "generation": 2
+        "generation": 2,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA92": {
         "backend": "tokenharbor_api",
@@ -1438,7 +1659,18 @@
         "lab": "Xiaomi",
         "family": "mimo",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA110": {
         "backend": "gemini_api",
@@ -1449,7 +1681,18 @@
         "lab": "Google",
         "family": "gemini",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA130": {
         "backend": "cohere_api",
@@ -1460,7 +1703,18 @@
         "lab": "Cohere",
         "family": "command",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA131": {
         "backend": "cohere_api",
@@ -1472,7 +1726,18 @@
         "family": "northcode",
         "tier": "flash",
         "generation": 1,
-        "variant": "code"
+        "variant": "code",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA150": {
         "backend": "mistral_api",
@@ -1484,7 +1749,18 @@
         "family": "mistral",
         "tier": "full",
         "generation": 1,
-        "variant": "large"
+        "variant": "large",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA151": {
         "backend": "mistral_api",
@@ -1496,7 +1772,18 @@
         "family": "codestral",
         "tier": "full",
         "generation": 1,
-        "variant": "code"
+        "variant": "code",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA170": {
         "backend": "llm7_api",
@@ -1508,7 +1795,18 @@
         "family": "deepseek",
         "tier": "flash",
         "generation": 1,
-        "variant": "0731"
+        "variant": "0731",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA171": {
         "backend": "llm7_api",
@@ -1519,7 +1817,18 @@
         "lab": "Zhipu",
         "family": "glm",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA172": {
         "backend": "llm7_api",
@@ -1530,7 +1839,18 @@
         "lab": "MiniMax",
         "family": "minimax",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA173": {
         "backend": "llm7_api",
@@ -1542,7 +1862,18 @@
         "family": "nemo",
         "tier": "full",
         "generation": 1,
-        "variant": "nemo-instruct"
+        "variant": "nemo-instruct",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA174": {
         "backend": "llm7_api",
@@ -1554,7 +1885,18 @@
         "family": "codestral",
         "tier": "full",
         "generation": 1,
-        "variant": "code"
+        "variant": "code",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA190": {
         "backend": "kiosapi_api",
@@ -1565,7 +1907,18 @@
         "lab": "DeepSeek",
         "family": "deepseek",
         "tier": "flash",
-        "generation": 2
+        "generation": 2,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA191": {
         "backend": "kiosapi_api",
@@ -1576,7 +1929,18 @@
         "lab": "Zhipu",
         "family": "glm",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA250": {
         "backend": "anthropic_api",
@@ -1587,7 +1951,18 @@
         "lab": "Anthropic",
         "family": "claude",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "medio",
+        "esfuerzo": "alto",
+        "acceso": "externo_pago",
+        "presupuesto": "externo_pago",
+        "limite": null,
+        "uso_maximo": "medio",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.4: haiku 5.5 medio)",
+        "niveles": [
+          "medio"
+        ],
+        "nivel_max": "medio"
       },
       "BA251": {
         "backend": "anthropic_api",
@@ -1599,7 +1974,18 @@
         "family": "claude",
         "tier": "full",
         "generation": 1,
-        "variant": "sonnet-5-5"
+        "variant": "sonnet-5-5",
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "acceso": "externo_pago",
+        "presupuesto": "externo_pago",
+        "limite": null,
+        "uso_maximo": "alto",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: sonnet 5.5 alto)",
+        "niveles": [
+          "alto"
+        ],
+        "nivel_max": "alto"
       },
       "BA252": {
         "backend": "claude",
@@ -1611,7 +1997,18 @@
         "family": "claude",
         "tier": "full",
         "generation": 1,
-        "variant": "sonnet"
+        "variant": "sonnet",
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "suscripcion_claude",
+        "limite": null,
+        "uso_maximo": "alto",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: sonnet 5.5 alto)",
+        "niveles": [
+          "alto"
+        ],
+        "nivel_max": "alto"
       },
       "BA253": {
         "backend": "claude",
@@ -1623,7 +2020,18 @@
         "family": "claude",
         "tier": "full",
         "generation": 1,
-        "variant": "opus"
+        "variant": "opus",
+        "nivel": "premium",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "suscripcion_claude",
+        "limite": null,
+        "uso_maximo": "premium",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "premium"
+        ],
+        "nivel_max": "premium"
       },
       "BA254": {
         "backend": "codex",
@@ -1637,7 +2045,18 @@
         "generation": 2,
         "variant": "sol",
         "uso_restringido": true,
-        "uso_restringido_nota": "WOT-2026-161s: uso restringido (gpt-6.1-sol consume mucho); no veto"
+        "uso_restringido_nota": "WOT-2026-161s: uso restringido (gpt-6.1-sol consume mucho); no veto",
+        "nivel": "premium",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "suscripcion_codex",
+        "limite": null,
+        "uso_maximo": "premium",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "premium"
+        ],
+        "nivel_max": "premium"
       },
       "BA255": {
         "backend": "kilo",
@@ -1648,7 +2067,18 @@
         "lab": "Zhipu",
         "family": "glm",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "premium",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "premium",
+        "nivel_decidido_por": "decision del usuario 2026-11-21 (DISENO s.8: glm5.3 completo premium)",
+        "niveles": [
+          "premium"
+        ],
+        "nivel_max": "premium"
       },
       "BA256": {
         "backend": "opencode",
@@ -1659,7 +2089,18 @@
         "lab": "DeepSeek",
         "family": "deepseek",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "medio",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "medio",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "medio"
+        ],
+        "nivel_max": "medio"
       },
       "BA257": {
         "backend": "opencode",
@@ -1670,7 +2111,18 @@
         "lab": "Xiaomi",
         "family": "mimo",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "medio",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "medio",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "medio"
+        ],
+        "nivel_max": "medio"
       },
       "BA258": {
         "backend": "opencode",
@@ -1681,7 +2133,18 @@
         "lab": "Alibaba",
         "family": "qwen",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA259": {
         "backend": "opencode",
@@ -1692,7 +2155,18 @@
         "lab": "Google",
         "family": "gemma",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA260": {
         "backend": "opencode",
@@ -1703,7 +2177,18 @@
         "lab": "Alibaba",
         "family": "qwen",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "alto",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "alto"
+        ],
+        "nivel_max": "alto"
       },
       "BA261": {
         "backend": "opencode",
@@ -1715,7 +2200,18 @@
         "family": "deepseek",
         "tier": "flash",
         "generation": 2,
-        "source": "https://openrouter.ai/deepseek/deepseek-v4.1-flash"
+        "source": "https://openrouter.ai/deepseek/deepseek-v4.1-flash",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA262": {
         "backend": "opencode",
@@ -1727,7 +2223,18 @@
         "family": "hy",
         "tier": "flash",
         "generation": 1,
-        "source": "https://openrouter.ai/tencent/hy4-flash"
+        "source": "https://openrouter.ai/tencent/hy4-flash",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA263": {
         "backend": "opencode",
@@ -1739,7 +2246,18 @@
         "family": "longcat",
         "tier": "full",
         "generation": 1,
-        "source": "familia LongCat (Meituan): https://openrouter.ai/meituan/longcat-2.0"
+        "source": "familia LongCat (Meituan): https://openrouter.ai/meituan/longcat-2.0",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA264": {
         "backend": "opencode",
@@ -1751,7 +2269,18 @@
         "family": "mimo",
         "tier": "flash",
         "generation": 1,
-        "source": "https://openrouter.ai/xiaomi/mimo-v2.6-flash"
+        "source": "https://openrouter.ai/xiaomi/mimo-v2.6-flash",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA265": {
         "backend": "opencode",
@@ -1763,7 +2292,18 @@
         "family": "nemotron",
         "tier": "full",
         "generation": 2,
-        "source": "https://openrouter.ai/nvidia/nemotron-3.5-lightning"
+        "source": "https://openrouter.ai/nvidia/nemotron-3.5-lightning",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA266": {
         "backend": "opencode",
@@ -1775,7 +2315,18 @@
         "family": "nemotron",
         "tier": "full",
         "generation": 2,
-        "source": "https://openrouter.ai/nvidia/nemotron-3.5-super-vl"
+        "source": "https://openrouter.ai/nvidia/nemotron-3.5-super-vl",
+        "nivel": "base",
+        "esfuerzo": "maximo",
+        "acceso": "gratuito",
+        "presupuesto": "gratuito_limite",
+        "limite": 1000,
+        "uso_maximo": "base",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "niveles": [
+          "base"
+        ],
+        "nivel_max": "base"
       },
       "BA267": {
         "backend": "opencode",
@@ -1786,7 +2337,18 @@
         "lab": "Zhipu",
         "family": "glm",
         "tier": "flash",
-        "generation": 1
+        "generation": 1,
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "alto",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: glm5.3-flash alto)",
+        "niveles": [
+          "alto"
+        ],
+        "nivel_max": "alto"
       },
       "BA268": {
         "backend": "opencode",
@@ -1797,7 +2359,41 @@
         "lab": "Zhipu",
         "family": "glm",
         "tier": "full",
-        "generation": 1
+        "generation": 1,
+        "nivel": "premium",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "nan_creditos",
+        "limite": 7000,
+        "uso_maximo": "premium",
+        "nivel_decidido_por": "decision del usuario 2026-11-21 (DISENO s.8: glm5.3 completo premium)",
+        "niveles": [
+          "premium"
+        ],
+        "nivel_max": "premium"
+      },
+      "BA269": {
+        "backend": "claude",
+        "lens_class": "texto",
+        "model": "claude-sonnet-5",
+        "backend_version": null,
+        "status": "active",
+        "lab": "Anthropic",
+        "family": "claude",
+        "tier": "full",
+        "generation": 1,
+        "variant": "sonnet-5",
+        "nivel": "medio",
+        "esfuerzo": "alto",
+        "acceso": "cuenta_propia",
+        "presupuesto": "suscripcion_claude",
+        "limite": null,
+        "uso_maximo": "medio",
+        "nivel_decidido_por": "decision explicita de version del usuario 2026-11-22",
+        "niveles": [
+          "medio"
+        ],
+        "nivel_max": "medio"
       }
     },
     "loop_shapes": {
@@ -1917,13 +2513,20 @@
       "archived"
     ],
     "classification": {
-      "schema_version": "1",
+      "schema_version": "2",
       "_note": "Esquema congelado (WOT-2026-089h-1). Dependientes lo citan como 'classification schema v<N> @ <SHA del commit>'. Un cambio incompatible exige schema_version nueva. Validador: scripts/check_ensemble_registry_classification.py",
       "required_fields": [
         "lab",
         "family",
         "tier",
-        "generation"
+        "generation",
+        "nivel",
+        "esfuerzo",
+        "acceso",
+        "presupuesto",
+        "limite",
+        "uso_maximo",
+        "nivel_decidido_por"
       ],
       "tiers": [
         "full",
@@ -1947,6 +2550,28 @@
         "Tencent",
         "Xiaomi",
         "Zhipu"
+      ],
+      "levels": [
+        "base",
+        "medio",
+        "alto",
+        "premium"
+      ],
+      "efforts": [
+        "alto",
+        "maximo"
+      ],
+      "access": [
+        "cuenta_propia",
+        "gratuito",
+        "externo_pago"
+      ],
+      "budgets": [
+        "nan_creditos",
+        "gratuito_limite",
+        "suscripcion_claude",
+        "suscripcion_codex",
+        "externo_pago"
       ]
     },
     "eligible_coverage": {
@@ -1975,6 +2600,378 @@
         ],
         "note": "WOT-2026-129y: cobertura elegible copiada de la verdad del roster del vuelo (session_types.implantacion.lenses.MANAGER_REVIEW=[BA03] + revisor_repo_motor_interino=BA07). BA05 excluida por WOT-2026-129r (no puede revisar repo_motor via loop-round). WOT-2026-129d exento: esta entrada NO re-adjudica su evidencia (DoD 5). 2026-11-01 CO-17 (orden del usuario, H130/H131): BA254 (Codex gpt-6.1-sol, challenger_codex_sol_cli) se anade como TERCERA elegible por sustitucion de facto de BA07, que da timeouts/colgados repetidos; min_distinct sigue en 2, asi que BA07 pasa a ser opcional. Si el roster del vuelo declara nuevas claves para esta fase, este campo se actualiza por ticket (D1 del work_plan: fuente unica versionada; la deriva es fail-safe). 2026-11-10 CO-68 (WOT-2026-161q, rediseno v3): BA02 (kilo, nan/qwen3.8-flash, familia qwen) se anade COMO ELEGIBLE al final de backend_keys; snapshot fechado del sandbox (BA02 n=122, 84 % de entrega, mediana 203 s; datos fechados, NO son umbral). BA07 sigue elegible pero OPCIONAL: con min_distinct 2, BA03 mas BA02 cubren sin esperar a BA07 (que acumula timeouts de 900 s en 161l). NO se declara reserva (reserve_* sigue ausente: el mecanismo de WOT-2026-152t queda APAGADO, una reserva solo cuenta tras 2 colgados de la primaria en la misma instancia). El registro del USO RESTRINGIDO (no veto) de BA254 se difiere a T1. 2026-11-11 WOT-2026-161t: BA04, BA06, BA08 y BA09 quedan elegibles. La independencia por familia la aplica la coordinadora, no el codigo. BA05/129r sigue sin tocar."
       }
+    },
+    "uso_maximo_por_tipo": {
+      "base": 7000,
+      "medio": 7000,
+      "alto": 7000,
+      "premium": 7000
+    },
+    "precios": {
+      "BA01": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA02": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 7.5,
+          "cache": 0.8,
+          "salida": 23.5
+        }
+      },
+      "BA03": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: glm5.3-flash alto)",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 5.25,
+          "cache": 1.05,
+          "salida": 17.5
+        }
+      },
+      "BA04": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 7,
+          "cache": 0.14,
+          "salida": 14
+        }
+      },
+      "BA05": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "decision explicita del usuario 2026-11-22"
+      },
+      "BA07": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 10.5,
+          "cache": 0.21,
+          "salida": 42
+        }
+      },
+      "BA08": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA09": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA06": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: glm5.3-flash alto)"
+      },
+      "BA20": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA21": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA22": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA23": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA24": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA30": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA31": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA50": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA51": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA90": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA91": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA92": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA110": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA130": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA131": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA150": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA151": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA170": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA171": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA172": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA173": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA174": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA190": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA191": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA250": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.4: haiku 5.5 medio)"
+      },
+      "BA251": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: sonnet 5.5 alto)"
+      },
+      "BA252": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: sonnet 5.5 alto)"
+      },
+      "BA253": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA254": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA255": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "decision del usuario 2026-11-21 (DISENO s.8: glm5.3 completo premium)",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 49,
+          "cache": 1.05,
+          "salida": 154
+        }
+      },
+      "BA256": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 10.5,
+          "cache": 0.21,
+          "salida": 42
+        }
+      },
+      "BA257": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 7,
+          "cache": 0.14,
+          "salida": 14
+        }
+      },
+      "BA258": {
+        "procedencia": "medido 2026-11-15 coste 0 en opencode (DISENO_NIVELES s.0)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 0,
+          "cache": 0,
+          "salida": 0
+        }
+      },
+      "BA259": {
+        "procedencia": "medido 2026-11-15 coste 0 en opencode (DISENO_NIVELES s.0)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 0,
+          "cache": 0,
+          "salida": 0
+        }
+      },
+      "BA260": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 7.5,
+          "cache": 0.8,
+          "salida": 23.5
+        }
+      },
+      "BA261": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA262": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA263": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA264": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA265": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA266": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
+      },
+      "BA267": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "decision del usuario 2026-11-15 (DISENO s.1: glm5.3-flash alto)",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 5.25,
+          "cache": 1.05,
+          "salida": 17.5
+        }
+      },
+      "BA268": {
+        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
+        "fecha": "2026-11-15",
+        "nivel_decidido_por": "decision del usuario 2026-11-21 (DISENO s.8: glm5.3 completo premium)",
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 49,
+          "cache": 1.05,
+          "salida": 154
+        }
+      },
+      "BA269": {
+        "procedencia": "registro v2; informativo",
+        "fecha": "2026-11-22",
+        "nivel_decidido_por": "decision explicita de version del usuario 2026-11-22"
+      }
+    },
+    "roles": {
+      "BUILDER": {
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "usos": [
+          "U5"
+        ]
+      },
+      "MANAGER": {
+        "nivel": "alto",
+        "esfuerzo": "alto",
+        "usos": [
+          "U7_coordinadora"
+        ]
+      },
+      "REVISOR": {
+        "nivel": "medio",
+        "esfuerzo": "alto",
+        "usos": [
+          "U4"
+        ]
+      },
+      "U4": {
+        "nivel": "medio",
+        "esfuerzo": "alto"
+      },
+      "U5": {
+        "nivel": "alto",
+        "esfuerzo": "alto"
+      },
+      "U7": {
+        "nivel": "alto",
+        "esfuerzo": "alto"
+      },
+      "U8": {
+        "nivel": "alto",
+        "esfuerzo": "alto"
+      }
     }
   },
   "ensemble_private_roots": [],
@@ -1989,7 +2986,7 @@
     },
     "revisor": {
       "backend": "opencode",
-      "model": "nan/glm5.3-flash"
+      "model": "nan/mimo-v2.6-flash"
     },
     "builder": {
       "backend": "opencode"
@@ -2016,9 +3013,9 @@
     "SUPERVISOR": "default"
   },
   "role_models": {
-    "BUILDER": "opencode-go/deepseek-v4-flash",
+    "BUILDER": "gpt-5.6-luna",
     "MANAGER": null,
-    "REVISOR": "nan/glm5.3-flash"
+    "REVISOR": "nan/mimo-v2.6-flash"
   },
   "manager_review": {
     "timeout_seconds": 180,

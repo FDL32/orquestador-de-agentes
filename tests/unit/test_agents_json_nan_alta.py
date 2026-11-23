@@ -41,9 +41,8 @@ EXPECTED_NEW = {
 def _real_config() -> dict:
     """Carga el agents.json real del motor y comprueba su cardinalidad."""
     config = ed.load_motor_config()
-    # 73 = 65 previas + BA261..BA266 (lote opencode/*-free WOT-2026-204a)
-    # + BA267..BA268 (WOT-2026-222a).
-    assert len(config["ensemble_registry"]["backend_keys"]) == 73
+    # 74 = baseline + BA261..BA268 + BA269 (claude-sonnet-5, WOT-2026-221b).
+    assert len(config["ensemble_registry"]["backend_keys"]) == 74
     return config
 
 
@@ -151,25 +150,15 @@ def test_c05_existing_backend_entries_are_unchanged():
             continue
         if key in migrated_status:
             assert {
-                field: value
-                for field, value in current[key].items()
-                if field != "status"
+                field: current[key].get(field) for field in entry if field != "status"
             } == {
                 field: value for field, value in entry.items() if field != "status"
             }, key
         else:
-            assert current[key] == entry, key
+            assert {field: current[key].get(field) for field in entry} == entry, key
     assert {key: current[key]["status"] for key in migrated_status} == migrated_status
-    ba254_expected = {
-        key: value
-        for key, value in baseline["BA254"].items()
-        if not key.startswith("uso_")
-    }
-    assert {
-        key: value
-        for key, value in current["BA254"].items()
-        if not key.startswith("uso_")
-    } == ba254_expected
+    ba254_expected = baseline["BA254"]
+    assert {key: current["BA254"].get(key) for key in ba254_expected} == ba254_expected
 
 
 def test_c09_new_pairs_have_family_map_entry():

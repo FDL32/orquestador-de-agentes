@@ -44,6 +44,7 @@ HISTORIC_MAP_ONLY = {
 }
 # Par con endpoint en el registro pero SIN clasificar: lab desconocido (stealth).
 REGISTRY_UNCLASSIFIED_PAIRS = {("openrouter_api", "stealth/space-bunny-alpha")}
+REGISTRY_V2_ONLY_PAIRS = {("claude", "claude-sonnet-5")}
 
 
 def _real() -> dict:
@@ -106,7 +107,7 @@ def family_map_findings(cfg: dict, mapping: dict) -> list[str]:
     findings = [
         f"{pair}: registro={fam!r} mapa={mapping.get(pair)!r}"
         for pair, fam in sorted(derived.items(), key=str)
-        if mapping.get(pair) != fam
+        if mapping.get(pair) != fam and pair not in REGISTRY_V2_ONLY_PAIRS
     ]
     map_only = set(mapping) - set(derived)
     expected = HISTORIC_MAP_ONLY | REGISTRY_UNCLASSIFIED_PAIRS
@@ -153,7 +154,10 @@ def test_a_paso0_new_active_endpoint_without_fields_is_red():
         "status": "active",
     }
     errors = cec.lint_registry(cfg)
-    assert sum(1 for e in errors if e.startswith("BA999:")) == 4, errors
+    assert all(
+        any(f"campo '{field}' ausente" in error for error in errors)
+        for field in cec.FROZEN["2"]["required_fields"]
+    ), errors
 
 
 def test_a_non_active_may_be_unclassified_but_not_partially_classified():
@@ -238,14 +242,12 @@ def test_tier_rule_is_token_based(model, tier):
     assert cec.tier_by_rule(model) == tier
 
 
-def test_tier_rule_violation_is_red_and_tokens_not_substrings():
+def test_tier_is_historical_and_does_not_decide_v2():
     cfg = _good()
     cfg["ensemble_registry"]["backend_keys"]["BA01"]["tier"] = "full"  # *-flash
     cfg["ensemble_registry"]["backend_keys"]["BA02"]["tier"] = "full"
     errors = cec.lint_registry(cfg)
-    assert any(
-        "BA01: campo 'tier' = 'full' contradice la regla de tier" in e for e in errors
-    )
+    assert not any("contradice la regla de tier" in e for e in errors)
     cfg = _good()
     for key in ("BA01", "BA02"):
         cfg["ensemble_registry"]["backend_keys"][key].update(
@@ -331,7 +333,7 @@ def test_schema_v1_is_frozen_literal():
     }  # fmt: skip
     assert cec.OPTIONAL_FIELDS == ("variant",)
     assert {"flash", "mini", "haiku", "lite", "nano"} == cec.TIER_FLASH_MARKERS
-    assert _real()["ensemble_registry"]["classification"]["schema_version"] == "1"
+    assert _real()["ensemble_registry"]["classification"]["schema_version"] == "2"
 
 
 def test_changing_required_fields_without_bumping_schema_version_is_red():
@@ -350,7 +352,7 @@ def test_changing_tiers_or_dropping_a_floor_lab_is_red():
     cfg = _real()
     cfg["ensemble_registry"]["classification"]["labs"].remove("Zhipu")
     errors = cec.lint_registry(cfg)
-    assert any("perdio laboratorios del suelo v1: ['Zhipu']" in e for e in errors), (
+    assert any("perdio laboratorios del suelo v2: ['Zhipu']" in e for e in errors), (
         errors
     )
 
@@ -363,8 +365,8 @@ def test_extending_the_lab_table_is_allowed_without_bumping_the_version():
 
 def test_unknown_or_missing_schema_version_is_red():
     cfg = _real()
-    cfg["ensemble_registry"]["classification"]["schema_version"] = "2"
-    assert any("schema_version '2' desconocida" in e for e in cec.lint_registry(cfg))
+    cfg["ensemble_registry"]["classification"]["schema_version"] = "3"
+    assert any("schema_version '3' desconocida" in e for e in cec.lint_registry(cfg))
     del cfg["ensemble_registry"]["classification"]
     assert any("classification ausente" in e for e in cec.lint_registry(cfg))
 

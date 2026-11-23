@@ -159,8 +159,8 @@ def validate_ensemble_registry_classification() -> list[str]:
     Before: MOTOR_ROOT/.agent/config/agents.json existe (misma resolucion
         motor-explicita que `validate_motor_agents_config`).
     During: delega en `check_ensemble_registry_classification.lint_config_file`,
-        que es la UNICA capa del esquema (lab/family/tier/generation); aqui no
-        se redeclara ninguna regla. Solo lectura.
+    que es la UNICA capa del esquema (identidad historica y campos v2); aqui no
+    se redeclara ninguna regla. Solo lectura.
     After: lista de hallazgos (vacia = coherente); el llamador imprime y sale 1.
     """
     return lint_config_file(MOTOR_ROOT / ".agent" / "config" / "agents.json")

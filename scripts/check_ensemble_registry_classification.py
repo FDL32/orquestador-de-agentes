@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
-"""Lint de clasificacion de endpoints de ensemble (WOT-2026-089h-1, fase F0).
+"""Lint de clasificacion de endpoints de ensemble (WOT-2026-221b, schema v2).
 
 Cada endpoint `active` de `.agent/config/agents.json::ensemble_registry.
-backend_keys` declara `lab`, `family`, `tier` y `generation` (y `variant`
-opcional). Este modulo es la UNICA capa que valida esa clasificacion.
+backend_keys` declara identidad historica y los siete campos v2. Este modulo es
+la UNICA capa que valida esa clasificacion.
 
 Esquema CONGELADO Y VERSIONADO (`ensemble_registry.classification.schema_version`):
-la version 1 fija los campos requeridos, los tiers y un suelo de laboratorios
-(ver `FROZEN`). Un cambio incompatible exige una version nueva y su migracion.
+la version 2 fija los campos requeridos, los tiers historicos, los niveles y un
+suelo de laboratorios (ver `FROZEN`). La version 1 se conserva para fixtures y
+lectores historicos, pero el registro real debe estar en v2.
 Los dependientes (089i, 089j, 089k) lo citan como
 `classification schema v<N> @ <SHA del commit 089h-1>`.
 
-Reglas de campo (v1):
+Reglas de identidad historica:
   - `lab`: quien entreno los pesos (no quien los sirve), de la tabla cerrada
     `classification.labs`. Un laboratorio nuevo = ampliar la tabla = decision
     humana.
   - `family`: una palabra en minusculas, sin version ni tamano.
-  - `tier`: clase operativa por la nomenclatura del proveedor: `flash` si el id
-    lleva flash/mini/haiku/lite/nano, `full` en otro caso. Tamano y especialidad
-    van a `variant`, nunca a `tier`.
+  - `tier`: etiqueta historica conservada; no decide ningun gate v2.
   - `generation`: entero >= 1, ordinal dentro de (family, tier); lo asigna una
     persona y no se recalcula al leer. Sin version comparable (alias) = 1.
   - `variant`: cadena libre no vacia, opcional.
@@ -61,11 +60,51 @@ FROZEN: dict[str, dict[str, tuple[str, ...]]] = {
             "Xiaomi",
             "Zhipu",
         ),
-    }
+    },
+    "2": {
+        "required_fields": (
+            "lab",
+            "family",
+            "tier",
+            "generation",
+            "nivel",
+            "esfuerzo",
+            "acceso",
+            "presupuesto",
+            "limite",
+            "uso_maximo",
+            "nivel_decidido_por",
+        ),
+        "tiers": ("full", "flash"),
+        "labs_floor": (
+            "Alibaba",
+            "Anthropic",
+            "Cohere",
+            "DeepSeek",
+            "Google",
+            "MiniMax",
+            "Mistral AI",
+            "Moonshot",
+            "NVIDIA",
+            "OpenAI",
+            "Xiaomi",
+            "Zhipu",
+        ),
+    },
 }
 OPTIONAL_FIELDS = ("variant",)
 _FAMILY_RE = re.compile(r"^[a-z][a-z0-9]*$")
 TIER_FLASH_MARKERS = frozenset({"flash", "mini", "haiku", "lite", "nano"})
+LEVELS = ("base", "medio", "alto", "premium")
+EFFORTS = ("alto", "maximo")
+ACCESS = ("cuenta_propia", "gratuito", "externo_pago")
+BUDGETS = (
+    "nan_creditos",
+    "gratuito_limite",
+    "suscripcion_claude",
+    "suscripcion_codex",
+    "externo_pago",
+)
 
 
 def tier_by_rule(model: object) -> str:
@@ -125,15 +164,39 @@ def _lint_block(block: object) -> tuple[dict | None, list[str]]:
     return block, errors
 
 
-def _lint_endpoint(key: str, ent: dict, block: dict) -> list[str]:
-    """Valida los campos de UN endpoint contra el bloque; mensajes por campo."""
-    required = block["required_fields"]
-    status = ent.get("status")
-    present = [f for f in required if f in ent]
-    must = status in block["required_for_status"]
+def _lint_usage_table(registry: dict) -> list[str]:
+    """Valida la tabla plana de techos consumida por T1.
+
+    Before: `registry` es el bloque `ensemble_registry` del registro v2.
+    During: comprueba que cada nivel tenga un techo numérico, finito y no negativo.
+    After: devuelve hallazgos explicables sin modificar el registro.
+    """
+    import math
+
+    table = registry.get("uso_maximo_por_tipo")
+    if not isinstance(table, dict):
+        return ["ensemble_registry.uso_maximo_por_tipo ausente o no es un objeto"]
     errors: list[str] = []
-    if not must and not present:
-        return errors
+    for level in LEVELS:
+        value = table.get(level)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            or value < 0
+        ):
+            errors.append(f"uso_maximo_por_tipo.{level} debe ser un numero finito >= 0")
+    return errors
+
+
+def _lint_endpoint(key: str, ent: dict, block: dict) -> list[str]:  # noqa: C901
+    """Valida los campos de UN endpoint contra el bloque; mensajes por campo."""
+    status = ent.get("status")
+    must = status in block["required_for_status"]
+    present = [field for field in block["required_fields"] if field in ent]
+    legacy_partial = block.get("schema_version") == "1" and not must and bool(present)
+    required = block["required_fields"] if must or legacy_partial else ()
+    errors: list[str] = []
     for field in required:
         if field not in ent:
             why = f"status={status}" if must else "clasificacion parcial"
@@ -153,12 +216,6 @@ def _lint_endpoint(key: str, ent: dict, block: dict) -> list[str]:
         errors.append(
             f"{key}: campo 'tier' = {ent.get('tier')!r} fuera de {block['tiers']}"
         )
-    elif "tier" in ent and ent["tier"] != tier_by_rule(ent.get("model")):
-        errors.append(
-            f"{key}: campo 'tier' = {ent['tier']!r} contradice la regla de tier "
-            f"para el modelo {ent.get('model')!r} (la regla da "
-            f"{tier_by_rule(ent.get('model'))!r}); tamano o especialidad van a 'variant'"
-        )
     gen = ent.get("generation")
     if "generation" in ent and (
         isinstance(gen, bool) or not isinstance(gen, int) or gen < 1
@@ -168,6 +225,44 @@ def _lint_endpoint(key: str, ent: dict, block: dict) -> list[str]:
         isinstance(ent["variant"], str) and ent["variant"].strip()
     ):
         errors.append(f"{key}: campo 'variant' debe ser una cadena no vacia")
+    if block.get("schema_version") == "2" and must:
+        if ent.get("nivel") not in LEVELS:
+            errors.append(f"{key}: campo 'nivel' fuera de {list(LEVELS)}")
+        levels = ent.get("niveles", [ent.get("nivel")])
+        if (
+            not isinstance(levels, list)
+            or not levels
+            or any(level not in LEVELS for level in levels)
+        ):
+            errors.append(
+                f"{key}: campo 'niveles' debe ser una lista de niveles validos"
+            )
+        if ent.get("nivel_max") not in LEVELS or ent.get("nivel_max") not in levels:
+            errors.append(f"{key}: campo 'nivel_max' no pertenece a 'niveles'")
+        if ent.get("esfuerzo") not in EFFORTS:
+            errors.append(f"{key}: campo 'esfuerzo' fuera de {list(EFFORTS)}")
+        if ent.get("acceso") not in ACCESS:
+            errors.append(f"{key}: campo 'acceso' fuera de {list(ACCESS)}")
+        if ent.get("presupuesto") not in BUDGETS:
+            errors.append(f"{key}: campo 'presupuesto' fuera del enum v2")
+        limit = ent.get("limite")
+        import math
+
+        if limit is not None and (
+            isinstance(limit, bool)
+            or not isinstance(limit, (int, float))
+            or not math.isfinite(limit)
+            or limit < 0
+        ):
+            errors.append(f"{key}: campo 'limite' debe ser null o numero finito >= 0")
+        usage = ent.get("uso_maximo")
+        if not isinstance(usage, str) or usage not in LEVELS:
+            errors.append(f"{key}: campo 'uso_maximo' debe referenciar un nivel valido")
+        decision = ent.get("nivel_decidido_por")
+        if not isinstance(decision, str) or not decision.strip():
+            errors.append(
+                f"{key}: campo 'nivel_decidido_por' debe documentar la decision"
+            )
     return errors
 
 
@@ -194,6 +289,8 @@ def lint_registry(config: dict) -> list[str]:
     if block is None:
         return errors
     frozen = FROZEN[block["schema_version"]]
+    if block["schema_version"] == "2":
+        errors.extend(_lint_usage_table(registry))
     labs = block.get("labs")
     status_rule = block.get("required_for_status")
     # Un bloque mal formado ya dio su hallazgo: los endpoints se miden contra el
@@ -206,27 +303,37 @@ def lint_registry(config: dict) -> list[str]:
         if isinstance(status_rule, list)
         else ["active"],
     }
+    effective["schema_version"] = block["schema_version"]
     return errors + _lint_endpoints(registry, effective)
 
 
 def _lint_endpoints(registry: dict, block: dict) -> list[str]:
     errors: list[str] = []
-    by_pair: dict[tuple, tuple[str, tuple]] = {}
+    by_pair: dict[tuple, tuple[str, dict]] = {}
     lab_of_family: dict[str, tuple[str, str]] = {}
     for key, ent in registry["backend_keys"].items():
         if not isinstance(ent, dict):
             errors.append(f"{key}: la entrada del registro no es un objeto")
             continue
         errors.extend(_lint_endpoint(key, ent, block))
-        if not all(f in ent for f in block["required_fields"]):
+        if ent.get("status") in block["required_for_status"] and not all(
+            f in ent for f in block["required_fields"]
+        ):
             continue
-        sig = tuple(ent.get(f) for f in (*block["required_fields"], "variant"))
+        signature_fields = {
+            field for field in (*block["required_fields"], "variant") if field in ent
+        }
+        sig = {field: ent.get(field) for field in signature_fields}
         pair = (ent.get("backend"), ent.get("model"))
-        if pair in by_pair and by_pair[pair][1] != sig:
-            errors.append(
-                f"{key}: clasificacion distinta de {by_pair[pair][0]} para el "
-                f"mismo par (backend, model) = {pair}"
-            )
+        previous = by_pair.get(pair)
+        if previous is not None:
+            previous_sig = previous[1]
+            common = set(previous_sig) & set(sig)
+            if any(previous_sig[field] != sig[field] for field in common):
+                errors.append(
+                    f"{key}: clasificacion distinta de {previous[0]} para el "
+                    f"mismo par (backend, model) = {pair}"
+                )
         by_pair.setdefault(pair, (key, sig))
         fam, lab = ent.get("family"), ent.get("lab")
         if fam in lab_of_family and lab_of_family[fam][0] != lab:

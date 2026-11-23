@@ -141,7 +141,8 @@ def m02_findings(cfg: dict) -> list[str]:
     if not isinstance(backend_keys, dict):
         return ["m-02: ensemble_registry.backend_keys ausente o no es objeto"]
     baseline = _baseline_keys()
-    new = set(backend_keys) - baseline
+    # BA269 pertenece a WOT-2026-221b y no al lote opencode/*-free.
+    new = set(backend_keys) - baseline - {"BA269"}
     expected_new = NEW_KEYS | ADDITIONAL_TICKET_KEYS
     if new != expected_new:
         findings.append(
@@ -150,7 +151,7 @@ def m02_findings(cfg: dict) -> list[str]:
     collision = sorted(new & baseline)
     if collision:
         findings.append(f"m-02: claves nuevas reutilizan claves previas: {collision}")
-    expected_total = len(baseline) + len(expected_new)
+    expected_total = len(baseline) + len(expected_new) + 1  # BA269, WOT-2026-221b
     if len(backend_keys) != expected_total:
         findings.append(
             f"m-02: total de claves {len(backend_keys)} != base+lote "
