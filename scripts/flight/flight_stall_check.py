@@ -75,6 +75,12 @@ GRACIA_MIN = 15
 EXPOSICION_H = 24
 ILEGIBLES_MAX_FRAC = 0.5
 HUERFANO_CAP_TICK = 10
+CO_TOPE = 3
+CO_GRACIA_MIN = 15
+CO_TITLE_RE = re.compile(r"^CO-\d{1,4}(?:\s|$)")
+CO_TERMINAL_RUNS = frozenset(
+    {"completed", "failed", "interrupted", "cancelled", "canceled"}
+)
 QUEUE_MOTIVES = {
     "NO_DECLARADO",
     "CADUCADO",
@@ -102,6 +108,7 @@ OWNED_PREFIXES = (
     "celda-",
     "huerfano-",
     "gasto-",
+    "co-sin-asentar",
 )
 GIT_MARKERS = ("index.lock", "MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD")
 
@@ -121,6 +128,7 @@ DETECTOR_NAMES = (
     "huerfano",
 )
 DETECTOR_NAMES += ("presupuesto-nan",)
+DETECTOR_NAMES += ("co-sin-asentar",)
 NAN_POOL_CREDITS = 7000.0
 NAN_RESET_AT = "2026-12-07T00:00:00+00:00"
 NAN_UNKNOWN_KEY = "nan_unknown_streak"
@@ -2054,6 +2062,203 @@ def check_nan_budget(out, st):
     return _nan_measured_findings(projection, user_request, records, ceilings, used)
 
 
+def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrato
+    """Detect first-level unsettled coordinator threads outside the active triad.
+
+    Before: ``CFG.store`` points to the selected T3 projection and ``CFG.registry``
+        identifies the flight directory; ``st`` is the heartbeat state.
+    During: read the store through the canonical read-only checker, classify first-level
+        CO rows and their latest runs, then reread the flight roster and apply the cap/
+        grace rules without writing any state.
+    After: return one stable AVISO or an observable fail-closed AVISO, preserving the
+        blindness cause in ``out`` for reconciliation.
+    """
+    del st
+
+    def blind(cause):
+        """Return the observable fixed-key blindness finding.
+
+        Before: ``cause`` identifies why the store or roster cannot be measured.
+        During: record the cause in ``out`` and build the fixed-key AVISO tuple.
+        After: return one finding without writing external state.
+        """
+        out["co_sin_asentar_ciego"] = cause
+        return [("co-sin-asentar", "AVISO", f"CO sin asentar: {cause}")]
+
+    if CFG.store is None or not CFG.store.is_file():
+        return blind("store no medido")
+
+    checker = _load_cell_checker()
+    connection = None
+    try:
+        connection, _, settled = checker._store_lookup(CFG.store)
+        rows = connection.execute(
+            "SELECT thread_id, title, created_at, payload_json "
+            "FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL"
+        ).fetchall()
+        latest_runs = {}
+        for thread_id, status, ordinal in connection.execute(
+            "SELECT thread_id, status, ordinal FROM orchestration_v2_projection_runs"
+        ):
+            if not isinstance(thread_id, str) or not isinstance(status, str):
+                raise checker.MeasurementError("run ilegible")
+            if isinstance(ordinal, bool) or not isinstance(ordinal, (int, float)):
+                raise checker.MeasurementError("ordinal de run ilegible")
+            if isinstance(ordinal, float) and not ordinal.is_integer():
+                raise checker.MeasurementError("ordinal de run ilegible")
+            try:
+                ordinal_value = int(ordinal)
+            except (TypeError, ValueError) as exc:
+                raise checker.MeasurementError("ordinal de run ilegible") from exc
+            previous = latest_runs.get(thread_id)
+            if previous is None or ordinal_value > previous[0]:
+                latest_runs[thread_id] = (ordinal_value, status.casefold())
+        unsettled = []
+        for row in rows:
+            title = row["title"] if isinstance(row, sqlite3.Row) else row[1]
+            if not isinstance(title, str) or CO_TITLE_RE.match(title) is None:
+                continue
+            payload_raw = (
+                row["payload_json"] if isinstance(row, sqlite3.Row) else row[3]
+            )
+            try:
+                payload = json.loads(payload_raw)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise checker.MeasurementError("payload CO ilegible") from exc
+            if not isinstance(payload, dict):
+                raise checker.MeasurementError("payload CO no es objeto")
+            lineage = payload.get("lineage")
+            if lineage is not None and not isinstance(lineage, dict):
+                raise checker.MeasurementError("lineage CO ilegible")
+            parent = lineage.get("parentThreadId") if lineage else None
+            if parent not in (None, ""):
+                continue
+            thread_id = row["thread_id"] if isinstance(row, sqlite3.Row) else row[0]
+            if settled(thread_id):
+                continue
+            created_at = row["created_at"] if isinstance(row, sqlite3.Row) else row[2]
+            try:
+                created = dt.datetime.fromisoformat(
+                    str(created_at).strip().replace("Z", "+00:00")
+                )
+            except (TypeError, ValueError) as exc:
+                raise checker.MeasurementError("created_at CO ilegible") from exc
+            if created.tzinfo is None:
+                raise checker.MeasurementError("created_at CO naive")
+            code_match = re.match(r"^CO-\d{1,4}", title)
+            if code_match is None:
+                raise checker.MeasurementError("codigo CO ilegible")
+            unsettled.append(
+                {
+                    "code": code_match.group(0),
+                    "threadId": str(thread_id),
+                    "created": created.astimezone(dt.timezone.utc),
+                    "running": (
+                        thread_id in latest_runs
+                        and latest_runs[thread_id][1] not in CO_TERMINAL_RUNS
+                    ),
+                }
+            )
+    except (checker.MeasurementError, sqlite3.Error, OSError, TypeError, ValueError):
+        return blind("store no medido")
+    finally:
+        if connection is not None:
+            connection.close()
+
+    total = len(unsettled)
+    if total == 0:
+        return []
+
+    if CFG.registry is None:
+        return blind("roster no medido")
+    roster_path = CFG.registry.parent / FLIGHT_ROSTER_NAME
+    try:
+        roster = json.loads(roster_path.read_text(encoding="utf-8"))
+        roles = roster.get("active_roles") if isinstance(roster, dict) else None
+        orchestrator = roles.get("orquestador") if isinstance(roles, dict) else None
+        if (
+            not isinstance(orchestrator, dict)
+            or not orchestrator.get("threadId")
+            or not orchestrator.get("session_code")
+        ):
+            raise ValueError("orquestador sin threadId")
+        supervisor = roles.get("supervisor") if isinstance(roles, dict) else None
+        if (
+            not isinstance(supervisor, dict)
+            or not isinstance(supervisor.get("threadId"), str)
+            or not supervisor["threadId"].strip()
+            or not isinstance(supervisor.get("session_code"), str)
+            or not supervisor["session_code"].strip()
+        ):
+            raise ValueError("supervisor ilegible")
+        if "ancestro_directo" in roles:
+            ancestro = roles["ancestro_directo"]
+            if (
+                not isinstance(ancestro, dict)
+                or not isinstance(ancestro.get("threadId"), str)
+                or not ancestro["threadId"].strip()
+                or not isinstance(ancestro.get("session_code"), str)
+                or not ancestro["session_code"].strip()
+            ):
+                raise ValueError("ancestro_directo ilegible")
+        since_raw = orchestrator.get("since")
+        since = (
+            dt.datetime.fromisoformat(since_raw.strip().replace("Z", "+00:00"))
+            if isinstance(since_raw, str)
+            else None
+        )
+        if since is None or since.tzinfo is None:
+            raise ValueError("since ilegible")
+        triad = []
+        for role_name in ("orquestador", "supervisor", "ancestro_directo"):
+            role = roles.get(role_name) if isinstance(roles, dict) else None
+            if isinstance(role, dict):
+                triad.append(
+                    (
+                        str(role.get("threadId") or ""),
+                        str(role.get("session_code") or ""),
+                    )
+                )
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, RecursionError):
+        return blind("roster no medido")
+
+    def in_triad(item):
+        """Return whether a candidate matches a literal active role identity.
+
+        Before: ``item`` is an unsettled CO and ``triad`` contains roster identities.
+        During: compare its exact thread ID and extracted code to each role.
+        After: return a boolean membership result without changing either input.
+        """
+        return any(
+            item["threadId"] == thread_id or item["code"] == code
+            for thread_id, code in triad
+        )
+
+    candidates = [
+        item for item in unsettled if not item["running"] and not in_triad(item)
+    ]
+    candidates.sort(key=lambda item: (item["created"], item["code"]), reverse=True)
+    out["co_sin_asentar"] = [
+        {"code": item["code"], "threadId": item["threadId"]} for item in candidates
+    ]
+    overdue = (
+        now_utc() - since.astimezone(dt.timezone.utc)
+    ).total_seconds() > CO_GRACIA_MIN * 60
+    if total <= CO_TOPE and not (overdue and candidates):
+        return []
+    if candidates:
+        detail = "asentar " + ", ".join(item["code"] for item in candidates)
+    else:
+        detail = "ninguno asentable"
+    text = f"{total} CO de primer nivel sin asentar (tope {CO_TOPE}"
+    if overdue and candidates:
+        text += f"; pasados {CO_GRACIA_MIN} min del ACTIVO {orchestrator.get('session_code', 'desconocido')}"
+    text += f"): {detail}"
+    if not isinstance(roles.get("ancestro_directo"), dict):
+        text += "; terna parcial: conserva el primero como ancestro directo hasta 194b"
+    return [("co-sin-asentar", "AVISO", text)]
+
+
 def _detect(out, st, only=None):
     """Ejecuta todos los detectores aislando el fallo de cada uno.
 
@@ -2076,6 +2281,7 @@ def _detect(out, st, only=None):
         "celda": lambda: check_celda(out, st),
         "huerfano": lambda: check_huerfano(out, st),
         "presupuesto-nan": lambda: check_nan_budget(out, st),
+        "co-sin-asentar": lambda: check_co_sin_asentar(out, st),
     }
     selected = [only] if only else list(DETECTOR_NAMES)
     for name in selected:
@@ -2148,6 +2354,7 @@ def _reconcile(ca, out, found, a):
         # causa de sus claves gasto-*: no las reconcilia mientras este ciego.
         "gasto-": out.get("nan_status") == "UNKNOWN"
         or bool(out.get("nan_sources_unconfigured")),
+        "co-sin-asentar": out.get("co_sin_asentar_ciego"),
     }
     if out.get("ocio_con_cola_ciego"):
         blind["ocio-con-cola"] = True

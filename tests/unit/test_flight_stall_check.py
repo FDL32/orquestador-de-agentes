@@ -97,6 +97,10 @@ class Box:
             "created_at TEXT, deleted_at TEXT, payload_json TEXT, provider_instance_id TEXT)"
         )
         connection.execute(
+            "CREATE TABLE orchestration_v2_projection_runs ("
+            "thread_id TEXT, status TEXT, ordinal INTEGER)"
+        )
+        connection.execute(
             "CREATE TABLE projection_pending_approvals (resolved_at TEXT, status TEXT, decision TEXT)"
         )
         connection.execute(
@@ -4416,3 +4420,594 @@ def test_nan_creditos_invalidos_es_unknown_no_cero(box, monkeypatch, tmp_path):
     assert '"nan_status": "UNKNOWN"' in result.out
     assert "creditos-invalidos" in result.out
     assert '"nan_used"' not in result.out
+
+
+def _co_store(box, rows, runs=()):
+    """Before: ``rows``/``runs`` describen proyecciones CO sintéticas.
+    During: crea el esquema mínimo de lectura y fija ``T3_STATE_DB`` al fichero temporal.
+    After: devuelve la ruta del store SQLite que consumirá el detector.
+    """
+    import sqlite3
+
+    db = box.root / "co-state.sqlite"
+    if db.exists():
+        db.unlink()
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_threads ("
+        "thread_id TEXT, project_id TEXT, title TEXT, runtime_mode TEXT, "
+        "created_at TEXT, deleted_at TEXT, payload_json TEXT, provider_instance_id TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_runs ("
+        "thread_id TEXT, status TEXT, ordinal INTEGER)"
+    )
+    connection.execute(
+        "CREATE TABLE projection_pending_approvals (resolved_at TEXT, status TEXT, decision TEXT)"
+    )
+    for row in rows:
+        connection.execute(
+            "INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                row["thread_id"],
+                row.get("project_id", "p"),
+                row["title"],
+                row.get("runtime_mode", "auto"),
+                row["created_at"],
+                row.get("deleted_at"),
+                row["payload_json"],
+                row.get("provider_instance_id"),
+            ),
+        )
+    for thread_id, status, ordinal in runs:
+        connection.execute(
+            "INSERT INTO orchestration_v2_projection_runs VALUES (?, ?, ?)",
+            (thread_id, status, ordinal),
+        )
+    connection.commit()
+    connection.close()
+    box.monkeypatch.setenv("T3_STATE_DB", str(db))
+    return db
+
+
+def _co_roster(box, since_min, ancestro=None):
+    """Before: ``box.clock`` es el reloj sintético del vuelo.
+    During: escribe el roster canónico con roles activos y ``since`` relativo.
+    After: devuelve la ruta del roster escrito.
+    """
+    since = dt.datetime.fromtimestamp(
+        box.clock.now - since_min * 60, tz=dt.timezone.utc
+    ).isoformat()
+    roles = {
+        "orquestador": {"threadId": "orch", "session_code": "CO-100", "since": since},
+        "supervisor": {"threadId": "sup", "session_code": "CO-101"},
+    }
+    if ancestro is not None:
+        roles["ancestro_directo"] = ancestro
+    roster = box.flight / "flight_roster.json"
+    roster.write_text(json.dumps({"active_roles": roles}), encoding="utf-8")
+    return roster
+
+
+def _co_row(box, number, age_min=1, parent=None, thread_id=None, status=None):
+    """Before: ``number`` identifica un CO y los opcionales modelan su estado.
+    During: construye una fila de proyección con payload de lineage realista.
+    After: devuelve una fila apta para ``_co_store``.
+    """
+    payload = {"lineage": {"parentThreadId": parent}, "createdBy": "agent"}
+    if status is not None:
+        payload["status"] = status
+    return {
+        "thread_id": thread_id or f"co:{number}",
+        "title": f"CO-{number} · coordinadora",
+        "created_at": dt.datetime.fromtimestamp(
+            box.clock.now - age_min * 60, tz=dt.timezone.utc
+        ).isoformat(),
+        "payload_json": json.dumps(payload),
+    }
+
+
+def _co_cfg(box):
+    """Before: ``T3_STATE_DB`` y ``flight_roster.json`` ya son fixtures.
+    During: resuelve la configuración por la misma función usada por ``run``.
+    After: deja ``box.m.CFG`` listo para una llamada directa al detector.
+    """
+    args = types.SimpleNamespace(
+        flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+    )
+    box.m.CFG, _causes, _fatal = box.m._resolve_paths(args, box.ops)
+
+
+def test_co_sin_asentar_mutation_tope_estricto(box):
+    """Before: cuatro CO de primer nivel están sin asentar.
+    During: se ejecuta el detector aislado con el roster activo.
+    After: cuatro avisan y tres exactamente en el tope quedan silenciosos.
+    """
+    rows = [_co_row(box, number) for number in range(110, 114)]
+    _co_store(box, rows)
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    found = box.m.check_co_sin_asentar({}, {})
+    assert found[0][0:2] == ("co-sin-asentar", "AVISO")
+    _co_store(box, rows[:3])
+    out = {}
+    assert box.m.check_co_sin_asentar(out, {}) == []
+
+
+def test_co_sin_asentar_mutation_ignora_subagentes(box):
+    """Before: tres CO raíz y cinco CO hijos comparten el store.
+    During: se filtra lineage.parentThreadId mediante la ruta real.
+    After: no hay aviso por los subagentes.
+    """
+    rows = [_co_row(box, number) for number in range(110, 113)]
+    rows += [_co_row(box, number, parent="co:root") for number in range(200, 205)]
+    _co_store(box, rows)
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    assert box.m.check_co_sin_asentar({}, {}) == []
+
+
+def test_co_sin_asentar_mutation_lista_solo_no_running_fuera_terna(box):
+    """Before: un CO tiene run activa y otro completada, fuera de la terna.
+    During: se selecciona la última run por ordinal y se excluyen terna/running.
+    After: solo el completed aparece por código y threadId.
+    """
+    rows = [_co_row(box, 110, thread_id="running"), _co_row(box, 111, thread_id="done")]
+    _co_store(box, rows, [("running", "running", 3), ("done", "completed", 2)])
+    _co_roster(box, 20, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert out["co_sin_asentar"] == [{"code": "CO-111", "threadId": "done"}]
+    assert "asentar CO-111" in found[0][2]
+    assert "CO-110" not in found[0][2]
+
+
+def test_co_sin_asentar_mutation_fail_closed_store_y_roster(box):
+    """Before: primero falta el store y después se corrompe el roster con un CO.
+    During: cada lectura se ejecuta en modo aislado y fail-closed.
+    After: la misma clave AVISO expone la causa concreta.
+    """
+    row = _co_row(box, 110)
+    missing = box.root / "missing.sqlite"
+    box.monkeypatch.setenv("T3_STATE_DB", str(missing))
+    (box.flight / "flight_roster.json").write_text(
+        json.dumps(
+            {"active_roles": {"orquestador": {"threadId": "orch", "since": "bad"}}}
+        ),
+        encoding="utf-8",
+    )
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert out["co_sin_asentar_ciego"] == "store no medido"
+    assert found[0][0:2] == ("co-sin-asentar", "AVISO")
+    _co_store(box, [row])
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert out["co_sin_asentar_ciego"] == "roster no medido"
+    assert "roster no medido" in found[0][2]
+
+
+def test_co_sin_asentar_mutation_gracia_estricta(box):
+    """Before: tres CO sin asentar incluyen uno fuera de la terna.
+    During: se compara el since activo a diez y veinte minutos.
+    After: diez no avisa y veinte sí lista el candidato.
+    """
+    rows = [
+        _co_row(box, 100, thread_id="orch"),
+        _co_row(box, 101, thread_id="sup"),
+        _co_row(box, 110),
+    ]
+    _co_store(box, rows)
+    _co_roster(box, 10, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    assert box.m.check_co_sin_asentar({}, {}) == []
+    box.clock.now += 10 * 60
+    out = {}
+    assert box.m.check_co_sin_asentar(out, {})
+    assert out["co_sin_asentar"][0]["code"] == "CO-110"
+
+
+def test_co_sin_asentar_mutation_terna_parcial_y_orden(box):
+    """Before: falta ancestro_directo y hay cuatro CO raíz ordenables.
+    During: se aplica el tope y se conserva solo orquestador/supervisor en la terna.
+    After: el aviso contiene la advertencia literal y candidatos descendentes.
+    """
+    rows = [
+        _co_row(box, number, age_min=210 - number) for number in (110, 111, 112, 113)
+    ]
+    _co_store(box, rows)
+    _co_roster(box, 1)
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert (
+        "terna parcial: conserva el primero como ancestro directo hasta 194b"
+        in found[0][2]
+    )
+    assert [item["code"] for item in out["co_sin_asentar"]] == [
+        "CO-113",
+        "CO-112",
+        "CO-111",
+        "CO-110",
+    ]
+
+
+def test_co_sin_asentar_mutation_registro_y_tick_real(box):
+    """Before: el detector está registrado y cuatro CO disparan el caso.
+    During: se inspecciona AST y se ejecuta ``main`` sin filtro.
+    After: la clave existe en ambos registros y en los eventos del tick.
+    """
+    tree = ast.parse(FSC_PATH.read_text(encoding="utf-8"))
+    assert "co-sin-asentar" in box.m.DETECTOR_NAMES
+    detector_keys = []
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Dict)
+            and any(
+                isinstance(target, ast.Name) and target.id == "detectors"
+                for target in node.targets
+            )
+        ):
+            detector_keys = [
+                key.value for key in node.value.keys if isinstance(key, ast.Constant)
+            ]
+    assert "co-sin-asentar" in detector_keys
+    _co_store(box, [_co_row(box, number) for number in range(110, 114)])
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    result = box.tick()
+    assert "co-sin-asentar" in result.keys
+
+
+def test_co_sin_asentar_mutation_store_read_only(box):
+    """Before: un store CO válido contiene cuatro filas.
+    During: se espía la apertura SQLite y se calcula el hash antes/después.
+    After: todas las URI del detector son read-only y el fichero no cambia.
+    """
+    import hashlib
+
+    db = _co_store(box, [_co_row(box, number) for number in range(110, 114)])
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    before = hashlib.sha256(db.read_bytes()).digest()
+    opened = []
+    real_connect = box.m.sqlite3.connect
+
+    def spy(*args, **kwargs):
+        opened.append(str(args[0]) if args else "")
+        return real_connect(*args, **kwargs)
+
+    box.monkeypatch.setattr(box.m.sqlite3, "connect", spy)
+    box.m.check_co_sin_asentar({}, {})
+    assert opened and all("mode=ro" in uri for uri in opened)
+    assert hashlib.sha256(db.read_bytes()).digest() == before
+
+
+def test_co_sin_asentar_extra_reconcile_y_asentado(box):
+    """Before: una alerta CO está activa y una fila puede asentarse o quedar ciega.
+    During: se reconcilian ambos estados y se comprueba que status settled no cuenta.
+    After: la alerta se resuelve solo con medición fiable sin CO pendientes.
+    """
+    row = _co_row(box, 110)
+    _co_store(box, [row])
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    box.ca.event("co-sin-asentar", "AVISO", None, "active", False, False, owner="stall")
+    _co_store(box, [_co_row(box, 110, status="settled")])
+    _co_cfg(box)
+    found = box.m.check_co_sin_asentar({}, {})
+    assert found == []
+    box.m._reconcile(box.ca, {}, [], types.SimpleNamespace(dry_run=False))
+    assert "event:co-sin-asentar" not in box.ca.load_state()
+    box.ca.event("co-sin-asentar", "AVISO", None, "active", False, False, owner="stall")
+    box.m._reconcile(
+        box.ca,
+        {"co_sin_asentar_ciego": "store no medido"},
+        [],
+        types.SimpleNamespace(dry_run=False),
+    )
+    assert "event:co-sin-asentar" in box.ca.load_state()
+
+
+def test_co_sin_asentar_mutation_filtro_terna_por_id_y_codigo(box):
+    """Before: la terna activa y dos CO externos están sin asentar.
+    During: se comparan los identificadores literales y el código del título.
+    After: solo los externos aparecen, también cuando el threadId del CO coincide por código.
+    """
+    rows = [
+        _co_row(box, 100, thread_id="orch"),
+        _co_row(box, 101, thread_id="sup"),
+        _co_row(box, 102, thread_id="anc"),
+        _co_row(box, 110),
+        _co_row(box, 111),
+    ]
+    _co_store(box, rows)
+    _co_roster(box, 20, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert [item["code"] for item in out["co_sin_asentar"]] == ["CO-111", "CO-110"]
+    assert "asentar CO-111, CO-110" in found[0][2]
+    listed = found[0][2].split("): ", 1)[1]
+    assert all(
+        value not in listed
+        for value in ("CO-100", "CO-101", "CO-102", "orch", "sup", "anc")
+    )
+
+    code_match = [_co_row(box, 100, thread_id="other-thread")]
+    code_match.extend(_co_row(box, number) for number in (110, 111, 112))
+    _co_store(box, code_match)
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert [item["code"] for item in out["co_sin_asentar"]] == [
+        "CO-112",
+        "CO-111",
+        "CO-110",
+    ]
+    assert "CO-100" not in found[0][2].split("): ", 1)[1]
+
+
+def test_co_sin_asentar_mutation_excepcion_store_sigue_ciega(box):
+    """Before: un fichero basura y un SQLite sin runs contienen un CO.
+    During: se recorren ambas excepciones de medición con roster válido.
+    After: cada caso conserva el aviso fijo y la causa store no medido.
+    """
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    bad = box.root / "co-bad.sqlite"
+    bad.write_bytes(b"not sqlite")
+    box.monkeypatch.setenv("T3_STATE_DB", str(bad))
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert found[0][0:2] == ("co-sin-asentar", "AVISO")
+    assert out["co_sin_asentar_ciego"] == "store no medido"
+
+    db = _co_store(box, [_co_row(box, 110)])
+    import sqlite3
+
+    connection = sqlite3.connect(db)
+    connection.execute("DROP TABLE orchestration_v2_projection_runs")
+    connection.commit()
+    connection.close()
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert found[0][0:2] == ("co-sin-asentar", "AVISO")
+    assert out["co_sin_asentar_ciego"] == "store no medido"
+
+
+def test_co_sin_asentar_mutation_asentado_status_deleted_y_fecha(box):
+    """Before: los CO asentados usan status, deleted_at o settledAt.
+    During: se compara el universo medible con cuatro y cinco filas raíz.
+    After: un asentado deja tres silenciosos, cinco con uno asentado avisan y los demás no cuentan.
+    """
+    rows = [_co_row(box, number) for number in (110, 111, 112, 113)]
+    rows[0]["payload_json"] = json.dumps(
+        {"lineage": {"parentThreadId": None}, "createdBy": "agent", "status": "settled"}
+    )
+    _co_store(box, rows)
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    assert box.m.check_co_sin_asentar({}, {}) == []
+
+    rows = [_co_row(box, number) for number in (110, 111, 112, 113, 114)]
+    rows[0]["payload_json"] = json.dumps(
+        {"lineage": {"parentThreadId": None}, "createdBy": "agent", "status": "settled"}
+    )
+    _co_store(box, rows)
+    _co_cfg(box)
+    found = box.m.check_co_sin_asentar({}, {})
+    assert found and "4 CO" in found[0][2]
+
+    rows = [_co_row(box, number) for number in (110, 111, 112, 113, 114)]
+    rows[0]["deleted_at"] = "2026-11-01T00:00:00+00:00"
+    _co_store(box, rows)
+    _co_cfg(box)
+    found = box.m.check_co_sin_asentar({}, {})
+    assert found and "4 CO" in found[0][2] and "CO-110" not in found[0][2]
+
+    rows = [_co_row(box, number) for number in (110, 111, 112, 113)]
+    rows[0]["payload_json"] = json.dumps(
+        {
+            "lineage": {"parentThreadId": None},
+            "createdBy": "agent",
+            "settledAt": dt.datetime.fromtimestamp(
+                box.clock.now, tz=dt.timezone.utc
+            ).isoformat(),
+        }
+    )
+    _co_store(box, rows)
+    _co_cfg(box)
+    assert box.m.check_co_sin_asentar({}, {}) == []
+
+
+def test_co_sin_asentar_mutation_running_fail_safe_y_ultima_run(box):
+    """Before: queued/starting son estados desconocidos y otro CO termina después de running.
+    During: se clasifica running por complemento terminal y por ordinal máximo.
+    After: queued/starting cuentan pero no se listan, y el último completed sí se lista.
+    """
+    rows = [
+        _co_row(box, 110, thread_id="queued"),
+        _co_row(box, 111, thread_id="starting"),
+        _co_row(box, 112, thread_id="finished"),
+        _co_row(box, 113, thread_id="plain"),
+    ]
+    runs = [
+        ("queued", "queued", 1),
+        ("starting", "starting", 1),
+        ("finished", "running", 1),
+        ("finished", "completed", 2),
+    ]
+    _co_store(box, rows, runs)
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert found and "4 CO" in found[0][2]
+    assert [item["code"] for item in out["co_sin_asentar"]] == [
+        "CO-113",
+        "CO-112",
+    ]
+    assert all(code not in found[0][2] for code in ("CO-110", "CO-111"))
+
+
+def test_co_sin_asentar_mutation_filtro_titulo_coordinador(box):
+    """Before: cuatro hilos raíz tienen títulos que no son CO y uno sí es CO.
+    During: se aplica la expresión de título antes de contar el universo.
+    After: los no coordinadores no producen aviso y un único CO tampoco supera el tope.
+    """
+    rows = []
+    for number, title in enumerate(
+        ("IM-235 · x", "TR-70 · x", "COMO-1 · x", "sin titulo codigo"),
+        1,
+    ):
+        row = _co_row(box, number)
+        row["title"] = title
+        rows.append(row)
+    _co_store(box, [*rows, _co_row(box, 110)])
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    assert box.m.check_co_sin_asentar({}, {}) == []
+
+
+def test_co_sin_asentar_mutation_tope_incluye_running(box):
+    """Before: tres completed y un running están sin asentar.
+    During: el tope usa todos los CO aunque los running no sean candidatos.
+    After: cuatro avisan sin listar el running, mientras dos más un running quedan en tres.
+    """
+    rows = [
+        _co_row(box, number, thread_id=f"done-{number}") for number in (110, 111, 112)
+    ]
+    rows.append(_co_row(box, 113, thread_id="live"))
+    runs = [(f"done-{number}", "completed", 1) for number in (110, 111, 112)]
+    runs.append(("live", "running", 1))
+    _co_store(box, rows, runs)
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert found and "4 CO" in found[0][2]
+    assert "CO-113" not in found[0][2]
+    assert [item["code"] for item in out["co_sin_asentar"]] == [
+        "CO-112",
+        "CO-111",
+        "CO-110",
+    ]
+
+    rows = [_co_row(box, number, thread_id=f"done-{number}") for number in (110, 111)]
+    rows.append(_co_row(box, 112, thread_id="live"))
+    _co_store(
+        box,
+        rows,
+        [
+            ("done-110", "completed", 1),
+            ("done-111", "completed", 1),
+            ("live", "running", 1),
+        ],
+    )
+    _co_cfg(box)
+    assert box.m.check_co_sin_asentar({}, {}) == []
+
+
+def test_co_sin_asentar_mutation_borde_gracia_estricto(box):
+    """Before: tres CO incluyen un candidato fuera de la terna.
+    During: se evalúan exactamente quince minutos y quince minutos más un segundo.
+    After: el borde exacto no avisa y el segundo posterior sí avisa.
+    """
+    rows = [
+        _co_row(box, 100, thread_id="orch"),
+        _co_row(box, 101, thread_id="sup"),
+        _co_row(box, 110),
+    ]
+    _co_store(box, rows)
+    _co_roster(box, 15, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    assert box.m.check_co_sin_asentar({}, {}) == []
+    box.clock.now += 1
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert found and "pasados 15 min del ACTIVO CO-100" in found[0][2]
+
+
+def test_co_sin_asentar_mutation_ordinal_fraccionario_fail_closed(box):
+    """Before: el store contiene un ordinal real fraccionario y un CO raíz.
+    During: se mide primero 1.5 y después 2.0 mediante la misma tabla runs.
+    After: 1.5 ciega el store y 2.0 se acepta como ordinal entero.
+    """
+    import sqlite3
+
+    _co_store(box, [_co_row(box, 110)], [("co:110", "completed", 1.5)])
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert found[0][0:2] == ("co-sin-asentar", "AVISO")
+    assert out["co_sin_asentar_ciego"] == "store no medido"
+
+    connection = sqlite3.connect(box.m.CFG.store)
+    connection.execute("UPDATE orchestration_v2_projection_runs SET ordinal = 2.0")
+    connection.commit()
+    connection.close()
+    _co_cfg(box)
+    out = {}
+    assert box.m.check_co_sin_asentar(out, {}) == []
+    assert "co_sin_asentar_ciego" not in out
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "sin_supervisor",
+        "supervisor_no_dict",
+        "supervisor_sin_codigo",
+        "ancestro_dict_vacio",
+        "ancestro_string",
+    ],
+    ids=lambda case: case,
+)
+def test_co_sin_asentar_mutation_roster_terna_incompleta(box, case):
+    """Before: un CO sin asentar usa un roster con una forma incompleta de la terna.
+    During: se altera solo la forma indicada y se ejecuta la medición productiva.
+    After: cualquier forma incompleta ciega con la causa roster no medido.
+    """
+    _co_store(box, [_co_row(box, 110)])
+    _co_roster(box, 1, {"threadId": "anc", "session_code": "CO-102"})
+    roster_path = box.flight / "flight_roster.json"
+    roster = json.loads(roster_path.read_text(encoding="utf-8"))
+    if case == "sin_supervisor":
+        roster["active_roles"].pop("supervisor")
+    elif case == "supervisor_no_dict":
+        roster["active_roles"]["supervisor"] = "sup"
+    elif case == "supervisor_sin_codigo":
+        roster["active_roles"]["supervisor"].pop("session_code")
+    elif case == "ancestro_dict_vacio":
+        roster["active_roles"]["ancestro_directo"] = {"threadId": ""}
+    else:
+        roster["active_roles"]["ancestro_directo"] = "anc"
+    roster_path.write_text(json.dumps(roster), encoding="utf-8")
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert found[0][0:2] == ("co-sin-asentar", "AVISO")
+    assert out["co_sin_asentar_ciego"] == "roster no medido"
+
+
+def test_co_sin_asentar_roster_valido_sin_ancestro_sigue_parcial(box):
+    """Before: el supervisor y el orquestador son válidos, sin ancestro declarado.
+    During: se ejecuta el detector con cuatro CO raíz sin asentar.
+    After: el tope avisa y conserva la advertencia de terna parcial.
+    """
+    _co_store(box, [_co_row(box, number) for number in (110, 111, 112, 113)])
+    _co_roster(box, 1)
+    _co_cfg(box)
+    out = {}
+    found = box.m.check_co_sin_asentar(out, {})
+    assert (
+        found
+        and "terna parcial: conserva el primero como ancestro directo hasta 194b"
+        in found[0][2]
+    )
