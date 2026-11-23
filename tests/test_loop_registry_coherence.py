@@ -143,3 +143,76 @@ def test_role_models_revisor_mutation_is_red():
     config = _config()
     config["role_models"]["REVISOR"] = "nan/glm5.3-flash"
     assert cell_findings(PROMPT_PATH.read_text(encoding="utf-8"), config)
+
+
+def _load_t1():
+    """Carga scripts/flight/flight_stall_check.py como su propia suite lo hace."""
+    import importlib.util
+
+    path = ROOT / "scripts" / "flight" / "flight_stall_check.py"
+    spec = importlib.util.spec_from_file_location("flight_stall_check_221b_ut", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_t1_real_reader_consumes_the_single_table(monkeypatch, tmp_path):
+    """El T1 INTEGRADO lee la MISMA tabla unica desde una copia mutada.
+
+    Before: dos copias de agents.json en tmp_path (una con el techo de `alto`
+        mutado a 1234, otra sin `uso_maximo_por_tipo`); NAN_AGENTS_JSON apunta
+        a la copia, nunca al arbol vivo.
+    During: `_nan_agents_registry` devuelve el techo mutado de la copia y
+        `_nan_metadata` lo hace fluir como `cap` del registro que T1 escribe en
+        su recibo atomico; la copia sin la tabla devuelve `techo-ausente`
+        (fail-closed: T1 no inventa techo ni nivel).
+    After: el techo y el nivel que T1 recibe son los de la fuente unica; sin
+        tabla no hay techo. (Condicion CO-160 2026-11-23; t2-d05.)
+    """
+    t1 = _load_t1()
+    cfg = _config()
+    cfg["ensemble_registry"]["uso_maximo_por_tipo"]["alto"] = 1234
+    copy_path = tmp_path / "agents_con_techo.json"
+    copy_path.write_text(json.dumps(cfg), encoding="utf-8")
+    monkeypatch.setenv("NAN_AGENTS_JSON", str(copy_path))
+    ceilings, status = t1._nan_agents_registry()
+    assert status is None, status
+    assert ceilings["alto"] == 1234.0
+    levels, _auths, cap, _user_request, _rate = t1._nan_metadata(
+        [{"nivel": "alto", "autorizacion": "auth-1"}], ceilings
+    )
+    assert cap == 1234.0
+    assert "alto" in levels  # el nivel que viaja en el recibo de T1
+
+    bare = tmp_path / "agents_sin_techo.json"
+    bare.write_text(json.dumps({"ensemble_registry": {}}), encoding="utf-8")
+    monkeypatch.setenv("NAN_AGENTS_JSON", str(bare))
+    assert t1._nan_agents_registry() == ({}, "techo-ausente")
+
+
+def test_per_key_ceiling_redefinition_is_red_by_the_lint():
+    """Ninguna clave redefine el techo: su `uso_maximo` es una referencia.
+
+    Before: registro real (vivo, solo lectura) + copia mutada cuya primera
+        clave activa pasa a llevar un techo NUMERICO en `uso_maximo`.
+    During: el lint v2 exige que `uso_maximo` referencie un nivel valido
+        (string); hoy ninguna clave activa alberga un techo numerico, porque
+        la unica fuente numerica es `uso_maximo_por_tipo`.
+    After: la mutacion produce un hallazgo que nombra la clave y el campo; la
+        pristine queda sin hallazgos. (Condicion CO-160 2026-11-23; t2-d05.)
+    """
+    config = _config()
+    backend_keys = config["ensemble_registry"]["backend_keys"]
+    active_keys = [
+        key for key, entry in backend_keys.items() if entry.get("status") == "active"
+    ]
+    assert active_keys
+    for key in active_keys:
+        assert isinstance(backend_keys[key]["uso_maximo"], str), key
+
+    mutated = copy.deepcopy(config)
+    target = active_keys[0]
+    mutated["ensemble_registry"]["backend_keys"][target]["uso_maximo"] = 9999
+    errors = cec.lint_registry(mutated)
+    assert any(target in e and "uso_maximo" in e for e in errors), errors
+    assert cec.lint_registry(config) == []

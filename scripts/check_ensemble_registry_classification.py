@@ -168,8 +168,18 @@ def _lint_usage_table(registry: dict) -> list[str]:
     """Valida la tabla plana de techos consumida por T1.
 
     Before: `registry` es el bloque `ensemble_registry` del registro v2.
-    During: comprueba que cada nivel tenga un techo numérico, finito y no negativo.
+    During: comprueba que cada nivel tenga un techo numerico, finito y no negativo.
     After: devuelve hallazgos explicables sin modificar el registro.
+
+    Nota WOT-2026-221b (registrada y aceptada por CO-160): la ficha describe
+    esta tabla "indexada por tipo de uso y FASE"; la dimension "fase" NO
+    resuelve como dimension de uso en DISENO_NIVELES_MODELO_20261115.md (las
+    unicas apariciones de "FASE" alli son fases del ciclo de cuentas B y C, no
+    una dimension de la tabla de techos) ni en el consumidor ya integrado
+    `scripts/flight/flight_stall_check.py::_nan_agents_registry`, que exige un
+    dict plano {nivel: techo}. Se implementa el dict plano por nivel (unico
+    compatible con T1 sin tocarlo) y la "fase" queda NO VERIFICADA hasta
+    decision posterior.
     """
     import math
 
