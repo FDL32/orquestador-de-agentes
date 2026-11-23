@@ -2095,19 +2095,16 @@ def run_prompt_wired_invocations_check(project_root: Path) -> CheckResult:
 
 
 def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
-    """WOT-2026-048h: `write: false` sin enforcement posible es DECORATIVO (WARN).
+    """WOT-2026-048h: `write: false` sin enforcement posible es DECORATIVO; el closeout lo BLOQUEA.
 
     Cierra la laguna DECLARADA de WOT-2026-048k cableando
     `check_agent_write_enforced` en un camino que corre solo -- citarlo en un
     prompt seria una norma, no una barrera (punto (3) del DoD).
 
-    NACE EN WARN, y es una decision de ALCANCE, no una relajacion: la deuda es
-    PREEXISTENTE (`claude` y `codex` no declaran `readonly_agent` hoy), asi que
-    nacer bloqueante dejaria el repo en rojo permanente por algo que este ticket
-    no contrata arreglar -- tocar `agents.json` es superficie de otro ticket. Es
-    el mismo patron con que nacieron `run_workspace_contract_formation_check` y
-    `run_flight_plan_collision_check`. Endurecerlo a bloqueante exige antes
-    declarar `readonly_agent` en esos dos backends: DECISION DEL OPERADOR.
+    La rama estatica nace BLOQUEANTE: un perfil `channel: agent` con
+    `write: false` sin enforcement declarado conserva un vector de escritura
+    sin barrera. El resultado nombra el perfil y backend para que el operador
+    pueda corregir la declaracion en `agents.json`.
 
     Contrato del WARN en este runner: `run_preflight_check` imprime
     `result.output` SOLO si `not result.passed`. Un WARN modelado como
@@ -2118,10 +2115,11 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
         viven ahi, no en el destino).
     During: read-only; delega en `find_unenforced_pairs`, que es puro.
     After: `passed=True` si no hay pares huerfanos o la config no es legible
-        (SKIP nombrado); `passed=False` + `is_blocking=False` nombrando CADA par
-        (perfil, backend) cuya restriccion no se puede enforcear.
+        (SKIP nombrado); `passed=False` + `is_blocking=True` nombrando CADA par
+        (perfil, backend) estatico cuya restriccion no se puede enforcear. Las
+        mediciones dinamicas fallidas conservan su WARN no bloqueante.
     """
-    name = "Agent Write Enforced (WOT-2026-048h, WARN)"
+    name = "Agent Write Enforced (WOT-2026-048h)"
 
     try:
         from scripts.check_agent_write_enforced import find_unenforced_pairs
@@ -2149,13 +2147,13 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
             name=name,
             passed=False,
             output=(
-                f"WARN ({len(pairs)} par/es): declaran `write: false` sin poder "
+                f"BLOQUEA ({len(pairs)} par/es): declaran `write: false` sin poder "
                 f"enforcearlo, la restriccion es DECORATIVA -- {detalle}. "
-                "Deuda PREEXISTENTE (WOT-2026-048h nace WARN a proposito). Remedio: "
+                "Remedio: "
                 "declarar `readonly_agent` en esos backends; NO quitar `write: false` "
                 "(silencia el gate sin quitar el vector)."
             ),
-            is_blocking=False,
+            is_blocking=True,
         )
 
     # WOT-2026-086 (DEC-086P10-001): la comprobacion estatica de arriba ya paso
@@ -2165,13 +2163,13 @@ def run_agent_write_enforced_check(project_root: Path) -> CheckResult:
     # `repo_scope: destino`, y `auditor.md` solo vivia en
     # `<motor>/.opencode/agents/` -- el estatico daba verde mientras la lente
     # corria con permisos de escritura reales. Mismo contrato de WARN que
-    # arriba: el caso de MEDICION FALLIDA (CLI ausente, timeout, cwd invalido)
+    # la rama dinamica: el caso de MEDICION FALLIDA (CLI ausente, timeout, cwd invalido)
     # sigue siendo WARN no-bloqueante -- "no medi" no es lo mismo que "hay un
     # vector real" (CEM). El caso de AGENTE AUSENTE CONFIRMADO (rc=0, listado
     # leido, el nombre no aparece) si es bloqueante (corregido tras bucle
     # adversarial WOT-2026-086, 5/5 lentes, severidad ALTO/CRITICO): es un
-    # vector de escritura CONFIRMADO hoy, no deuda preexistente como el WARN
-    # estatico de arriba -- dejarlo como WARN permitiria push con la barrera
+    # vector de escritura CONFIRMADO hoy, no un simple aviso no bloqueante --
+    # dejarlo como WARN permitiria push con la barrera
     # rota.
     #
     # CORRECCION 2026-09-30 (bucle adversarial sobre ESTE MISMO commit, 5/5
@@ -2856,8 +2854,8 @@ def run_ensemble_profile_catalog_check(project_root: Path) -> CheckResult:
 
     Cablea check_ensemble_profile_catalog en el camino que corre solo (prepush),
     cumpliendo el punto f1-d08 de la ficha: citarlo solo en un prompt seria una
-    norma, no una barrera. Nace WARN (igual patron que run_agent_write_enforced_check
-    arriba): no existe todavia una captura programada de 'opencode models' /
+    norma, no una barrera. Nace WARN porque no existe todavia una captura
+    programada de 'opencode models' /
     'kilo models' (scripts/refresh_ensemble_model_catalog.py existe pero su
     cadencia de refresco es decision pendiente del Builder, ficha s.4); bloquear
     el push por la AUSENCIA de un snapshot que nadie genera aun seria el mismo
@@ -5053,11 +5051,9 @@ def run_preflight_check(
         # El script existia y funcionaba desde hacia meses; lo que faltaba era
         # ESTA linea -- sin ella era una norma, no una barrera.)
         results.append(run_principal_freshness_check(project_root))
-        # 6l-ter. Agent Write Enforced (WOT-2026-048h; WARN -- `write: false` que
-        # no se puede enforcear es DECORATIVO. Nace WARN porque la deuda es
-        # PREEXISTENTE (claude/codex sin `readonly_agent`) y arreglarla toca
-        # `agents.json`, superficie de otro ticket; endurecer a bloqueante es
-        # decision del operador. Cablearlo AQUI es el punto (3) de su DoD:
+        # 6l-ter. Agent Write Enforced (WOT-2026-048h; BLOQUEANTE -- `write: false`
+        # que no se puede enforcear es DECORATIVO. Cablearlo AQUI es el punto (3)
+        # de su DoD:
         # citarlo en un prompt seria una norma, no una barrera.)
         results.append(run_agent_write_enforced_check(project_root))
         # 6m. Flight Plan Collision (WOT-2026-027h; WARN -- el queued/ real ya

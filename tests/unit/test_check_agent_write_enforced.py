@@ -610,12 +610,12 @@ def test_check_is_wired_into_closeout(tmp_path, monkeypatch):
 
 
 def test_warn_is_visible_not_silent(tmp_path, monkeypatch):
-    """El WARN se modela `passed=False` + `is_blocking=False`, nunca `passed=True`.
+    """Un par estatico huerfano es visible y bloqueante; medir sigue siendo WARN.
 
     `run_preflight_check` imprime `result.output` SOLO si `not result.passed`:
-    un WARN con `passed=True` seria INVISIBLE, que es la deuda-invisible que
-    estos gates combaten. Mutation: cambiar a `passed=True` deja de reportar el
-    par huerfano y esta asercion cae.
+    un resultado con `passed=True` seria INVISIBLE, que estos gates combaten.
+    Mutation: cambiar a `passed=True` deja de reportar el par huerfano y esta
+    asercion cae.
     """
     import scripts.prepush_check as pc
 
@@ -636,11 +636,171 @@ def test_warn_is_visible_not_silent(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     r = pc.run_agent_write_enforced_check(tmp_path)
-    assert r.passed is False, "un WARN con passed=True seria invisible en el runner"
-    assert r.is_blocking is False, "la deuda es PREEXISTENTE: avisa, no bloquea"
+    assert r.passed is False, (
+        "un resultado con passed=True seria invisible en el runner"
+    )
+    assert r.is_blocking is True, "un par estatico huerfano debe bloquear el cierre"
     assert "p_huerfano" in r.output, (
         f"debe nombrar el par, no decir 'hay deuda': {r.output}"
     )
+
+    import scripts.check_agent_write_enforced as cawe
+
+    (cfg / "agents.json").write_text(
+        json.dumps(
+            _cfg(
+                {
+                    "p_medicion": {
+                        "channel": "agent",
+                        "write": False,
+                        "backend": "b_opencode",
+                        "repo_scope": "destino",
+                    }
+                },
+                {
+                    "b_opencode": {
+                        "executable": "opencode",
+                        "readonly_agent": "auditor",
+                    }
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    def _boom(executable, cwd):
+        raise FileNotFoundError("opencode: no such file or directory")
+
+    monkeypatch.setattr(cawe, "_list_agents", _boom)
+    measurement = pc.run_agent_write_enforced_check(tmp_path / "destino")
+    assert measurement.passed is False
+    assert measurement.is_blocking is False, "la medicion fallida sigue siendo WARN"
+
+
+def test_closeout_rc_1_on_static_unenforced_pair(tmp_path, monkeypatch):
+    """El cierre bloquea un par estatico y acepta una configuracion limpia.
+
+    Before: `run_preflight_check` recibe un motor temporal y todos los gates
+        ajenos al guard se sustituyen por resultados verdes.
+    During: ejecuta el closeout dos veces, con un par huerfano y con config limpia.
+    After: el primer RC es 1 y el control positivo devuelve 0.
+    """
+    import scripts.prepush_check as pc
+
+    monkeypatch.setattr(pc, "_MOTOR_ROOT", tmp_path)
+    ok = pc.CheckResult(name="stub", passed=True, output="", is_blocking=True)
+    for name in tuple(vars(pc)):
+        if (
+            name.startswith("run_")
+            and name.endswith("_check")
+            and name not in {"run_agent_write_enforced_check", "run_preflight_check"}
+        ):
+            monkeypatch.setattr(pc, name, lambda *args, **kwargs: ok)
+    monkeypatch.setattr(pc, "run_validate_all", lambda *args, **kwargs: ok)
+
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True)
+    agents = cfg / "agents.json"
+    agents.write_text(
+        json.dumps(
+            _cfg(
+                {"p_huerfano": {"channel": "agent", "write": False, "backend": "b"}},
+                {"b": {}},
+            )
+        ),
+        encoding="utf-8",
+    )
+    assert pc.run_preflight_check(tmp_path, closeout_mode=True) == 1
+
+    agents.write_text(json.dumps(_cfg({}, {})), encoding="utf-8")
+    assert pc.run_preflight_check(tmp_path, closeout_mode=True) == 0
+
+
+def test_mixed_api_and_agent_static_pair_only_agent_blocks(tmp_path, monkeypatch):
+    """Solo el perfil `channel: agent` entra en el denominador bloqueante."""
+    import scripts.prepush_check as pc
+
+    monkeypatch.setattr(pc, "_MOTOR_ROOT", tmp_path)
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True)
+    (cfg / "agents.json").write_text(
+        json.dumps(
+            _cfg(
+                {
+                    "p_api": {"channel": "api", "write": False, "backend": "b_api"},
+                    "p_agent": {
+                        "channel": "agent",
+                        "write": False,
+                        "backend": "b_agent",
+                    },
+                },
+                {"b_api": {}, "b_agent": {}},
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = pc.run_agent_write_enforced_check(tmp_path)
+    assert result.passed is False
+    assert result.is_blocking is True
+    assert "p_agent" in result.output
+    assert "b_agent" in result.output
+    assert "p_api" not in result.output
+
+
+def test_static_pair_blocks_but_measurement_failure_warns(tmp_path, monkeypatch):
+    """La rama estatica bloquea y una medicion fallida conserva el WARN."""
+    import scripts.check_agent_write_enforced as cawe
+    import scripts.prepush_check as pc
+
+    monkeypatch.setattr(pc, "_MOTOR_ROOT", tmp_path)
+    cfg = tmp_path / ".agent" / "config"
+    cfg.mkdir(parents=True)
+    agents = cfg / "agents.json"
+    agents.write_text(
+        json.dumps(
+            _cfg(
+                {"p_estatico": {"channel": "agent", "write": False, "backend": "b"}},
+                {"b": {}},
+            )
+        ),
+        encoding="utf-8",
+    )
+    static = pc.run_agent_write_enforced_check(tmp_path)
+    assert static.passed is False
+    assert static.is_blocking is True
+    assert "p_estatico" in static.output
+    assert "b" in static.output
+
+    agents.write_text(
+        json.dumps(
+            _cfg(
+                {
+                    "p_medicion": {
+                        "channel": "agent",
+                        "write": False,
+                        "backend": "b_opencode",
+                        "repo_scope": "destino",
+                    }
+                },
+                {
+                    "b_opencode": {
+                        "executable": "opencode",
+                        "readonly_agent": "auditor",
+                    }
+                },
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    def _boom(executable, cwd):
+        raise FileNotFoundError("opencode: no such file or directory")
+
+    monkeypatch.setattr(cawe, "_list_agents", _boom)
+    measurement = pc.run_agent_write_enforced_check(tmp_path / "destino")
+    assert measurement.passed is False
+    assert measurement.is_blocking is False
 
 
 def test_dynamic_check_wired_into_preflight_runner(tmp_path, monkeypatch):
@@ -687,7 +847,7 @@ def test_dynamic_check_wired_into_preflight_runner(tmp_path, monkeypatch):
     assert "auditor" in r.output
     assert r.is_blocking is True, (
         "bucle adversarial WOT-2026-086 (BA30/BA05, CRITICO): esto NO es deuda "
-        "preexistente como el WARN estatico -- es un vector de escritura real "
+        "preexistente que solo avisa -- es un vector de escritura real "
         "confirmado; dejarlo pasar como WARN permitiria el push con la barrera "
         "rota"
     )

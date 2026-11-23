@@ -75,7 +75,7 @@ EXPECTED_WIRED_REAL = {
     "pretooluse_bash_wait_guard",
     # WOT-2026-040z: cableado via hook propio pre-push en .pre-commit-config.yaml
     "check_push_authority",
-    "check_agent_write_enforced",  # WOT-2026-048h: cableado via import estatico en prepush_check.py::run_agent_write_enforced_check (closeout, WARN -- nace WARN porque la deuda claude/codex sin readonly_agent es PREEXISTENTE)
+    "check_agent_write_enforced",  # WOT-2026-048h: cableado via import estatico en prepush_check.py::run_agent_write_enforced_check (closeout, BLOQUEANTE)
     "check_ensemble_profile_catalog",  # WOT-2026-222a: cableado via import estatico en prepush_check.py::run_ensemble_profile_catalog_check (closeout, WARN -- nace WARN porque no existe aun una captura programada de opencode/kilo models)
     "check_agents_accessible",
     "check_dod_metric_freshness",  # WOT-2026-070k: cableado via run_dod_metric_freshness_check en prepush_check.py (closeout, WARN -- informe de cifras sin ancla; el modo fail-closed sigue standalone)  # WOT-2026-026e(A7): cableado por import en preflight_codeonly_pipeline.py
