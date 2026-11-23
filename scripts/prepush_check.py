@@ -3909,11 +3909,22 @@ def run_motor_destination_integration_check(
     canonical authority, context resolution, publish-ready delegation).
 
     run_integration returns EXIT_OK (0) on a healthy integration; any non-zero is a
-    real failure. WARN by default, FAIL when MOTOR_DEST_INTEGRATION_STRICT=1 (M20:
-    a real barrier that CAN block, not a never-blocks reporter).
+    real failure. A present invalid motor-destination link blocks by default; an
+    absent link remains a visible WARN, and MOTOR_DEST_INTEGRATION_STRICT=1 keeps
+    all failures blocking.
+
+    Before: `project_root` is the evaluated destination root and the integration
+        wrapper has not yet run.
+    During: executes the wrapper and classifies a non-zero result as blocking when
+        the link is present or strict mode is enabled.
+    After: returns the wrapper result as passed, with an explicit visible WARN
+        for an absent link and a blocking failure for a present invalid link.
     """
     name = "Motor<->Destino Integration (WOT-2026-024w)"
     strict = os.environ.get("MOTOR_DEST_INTEGRATION_STRICT", "").strip() == "1"
+    link_present = (
+        project_root / ".agent" / "config" / "motor_destination_link.json"
+    ).is_file()
     try:
         from scripts.check_motor_destination_integration import run_integration
     except ImportError:
@@ -3924,16 +3935,18 @@ def run_motor_destination_integration_check(
     with contextlib.redirect_stdout(buf):
         rc = run_integration(project_root, motor_root, audit_publication=False)
     if rc != 0:
-        mode = (
-            "BLOCKING (MOTOR_DEST_INTEGRATION_STRICT=1)."
-            if strict
-            else "WARN only; set MOTOR_DEST_INTEGRATION_STRICT=1 to block."
-        )
+        is_blocking = strict or link_present
+        if strict:
+            mode = "BLOCKING (MOTOR_DEST_INTEGRATION_STRICT=1)."
+        elif link_present:
+            mode = "BLOCKING: present motor-destination link is invalid."
+        else:
+            mode = "WARN only: no motor-destination link is present."
         return CheckResult(
             name=name,
             passed=False,
             output=f"integration gate rc={rc}:\n{buf.getvalue().strip()}\n{mode}",
-            is_blocking=strict,
+            is_blocking=is_blocking,
         )
     return CheckResult(
         name=name,

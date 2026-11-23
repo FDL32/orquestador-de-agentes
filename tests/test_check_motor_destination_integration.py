@@ -10,11 +10,13 @@ code, and runs the first-publication audit only behind the explicit flag.
 
 from __future__ import annotations
 
+import inspect
 import json
 from pathlib import Path
 
 import pytest
 import scripts.check_motor_destination_integration as wrapper
+import scripts.prepush_check as prepush_check
 from scripts.check_motor_destination_integration import (
     EXIT_CHECK_FAILED,
     EXIT_CONFIG_ERROR,
@@ -367,3 +369,56 @@ class TestMainCLI:
         # GREEN: coherent fixture with green delegated gate.
         good = _seed_destino(tmp_path / "g", motor_root=tmp_path)
         assert run_integration(good, None, audit_publication=False) == EXIT_OK
+
+
+class TestPrepushMotorDestinationIntegration:
+    def test_present_invalid_link_blocks_without_strict_env(
+        self, tmp_path, monkeypatch
+    ):
+        destino = _seed_destino(tmp_path, motor_root=tmp_path)
+        link = destino / ".agent" / "config" / "motor_destination_link.json"
+        link.write_text(
+            json.dumps({"motor_root": str(tmp_path), "destination_root": "/invalid"}),
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("MOTOR_DEST_INTEGRATION_STRICT", raising=False)
+
+        result = prepush_check.run_motor_destination_integration_check(destino)
+
+        assert result.passed is False
+        assert result.is_blocking is True
+
+    def test_valid_link_passes(self, tmp_path, monkeypatch):
+        destino = _seed_destino(tmp_path, motor_root=tmp_path)
+        monkeypatch.delenv("MOTOR_DEST_INTEGRATION_STRICT", raising=False)
+        monkeypatch.setattr(
+            wrapper,
+            "check_destination_authority",
+            lambda project_root: (True, "[AUTHORITY] ok"),
+        )
+        monkeypatch.setattr(wrapper, "publish_ready_main", lambda argv: 0)
+
+        result = prepush_check.run_motor_destination_integration_check(destino)
+
+        assert result.passed is True
+        assert result.is_blocking is False
+
+    def test_missing_link_does_not_block_without_strict_env(
+        self, tmp_path, monkeypatch
+    ):
+        destino = _seed_destino(tmp_path, motor_root=tmp_path, with_link=False)
+        monkeypatch.delenv("MOTOR_DEST_INTEGRATION_STRICT", raising=False)
+
+        result = prepush_check.run_motor_destination_integration_check(destino)
+
+        assert result.passed is False
+        assert result.is_blocking is False
+        assert "WARN" in result.output
+
+    def test_run_preflight_check_wires_motor_destination_integration(self):
+        source = inspect.getsource(prepush_check.run_preflight_check)
+
+        assert (
+            "results.append(run_motor_destination_integration_check(project_root))"
+            in source
+        )
