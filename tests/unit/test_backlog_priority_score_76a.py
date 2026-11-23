@@ -442,6 +442,9 @@ def test_c7_ticket_flag_returns_individual_json(tmp_path: Path) -> None:
 
 def _run_emit_recibo(repo: Path, cid: str, row_text: str) -> tuple[int, str]:
     """Ejecuta backlog_db_compare.py --emit-recibo y devuelve (rc, stdout solo)."""
+    (repo / ".agent" / "collaboration" / f"FICHA_{cid}.md").write_text(
+        "redactada_por: co\n", encoding="utf-8"
+    )
     proc = _sub.run(
         [
             sys.executable,

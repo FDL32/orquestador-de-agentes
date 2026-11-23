@@ -34,8 +34,15 @@ Antes de commitear el alta, ejecutar:
 
 `python scripts/check_backlog_admission.py --check-ficha <ruta>`
 
-El limite declarado es que no hay integracion en `backlog_db_compare.py --emit-recibo` (ticket hijo 161y propuesto).
-Esta comprobacion al alta es norma + CLI, y la barrera automatica sigue siendo closeout/pre-push
+`backlog_db_compare.py --emit-recibo` ejecuta esta misma comprobacion
+(`check_ficha_contract`, importada, no copiada) sobre `FICHA_<id>.md` junto al
+backlog, o sobre la ruta de `--ficha`, ANTES de emitir el JSON: con la ficha
+ausente o no conforme sale con rc 1, sin recibo en `stdout` y con la causa en
+`stderr`. Por eso la ficha se escribe primero y el recibo se emite despues.
+`--sin-ficha-contrato` es una salida de emergencia con nombre explicito que
+permite emitir con constancia en `stderr`, sin contaminar el JSON de `stdout`.
+La CLI `--check-ficha` sigue disponible para comprobar a mano, y la barrera
+automatica del commit ya integrado sigue siendo closeout/pre-push
 (`prepush_check.run_backlog_admission_check` y el hook del destino).
 
 ## 5. Residuo de hook de push (m-06)

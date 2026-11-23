@@ -86,11 +86,14 @@ explicita (`deferred` con `Reactivation: condition:<N sesiones
 acumuladas>` o equivalente).
 
 3. **Si el resultado es ALTA** (fila nueva en `backlog.md`):
-   a. Genera el recibo con `backlog_db_compare.py --emit-recibo` (el recibo
+   a. Escribe primero en disco, junto al backlog, la ficha
+      `.agent/collaboration/FICHA_<ID>.md` con su contrato conforme; la ficha
+      debe existir antes de emitir el recibo.
+   b. Genera despues el recibo con `backlog_db_compare.py --emit-recibo` (el recibo
       mecanico lo emite ESTE generador, no `find_similar_signals`).
-   b. Incluye el recibo en el mensaje del commit del alta, como linea
+   c. Incluye el recibo en el mensaje del commit del alta, como linea
       `BACKLOG-ADMISSION-RECIBO: <json>`.
-   c. Antes de commitear, comprueba la ficha con `python scripts/check_backlog_admission.py --check-ficha <ruta>`; el contrato vive en `.agent/rules/common/backlog_ficha_contract.md`.
+   d. Antes de commitear, comprueba la ficha con `python scripts/check_backlog_admission.py --check-ficha <ruta>`; el contrato vive en `.agent/rules/common/backlog_ficha_contract.md`.
 
 4. **El guard contrasta** (fail-closed): si el recibo falta o es incoherente,
    `check_backlog_admission.py` rechaza con `SIN_RECIBO` o
@@ -166,6 +169,11 @@ python scripts/backlog_db_compare.py --emit-recibo \
     --git-root <repo_del_alta>
 ```
 
+`--ficha <ruta>` permite indicar otra ficha; una ruta relativa se resuelve
+contra `--git-root`. `--sin-ficha-contrato` es una salida de emergencia:
+permite emitir el recibo aunque la ficha falte o no cumpla el contrato, deja
+una constancia en `stderr` y no añade advertencias al JSON de `stdout`.
+
 El generador importa `derive_corpus_sha` y las constantes del guard
 (`DEFAULT_BACKLOG`, `DEFAULT_ARCHIVES`, `ALGORITMO_REQUERIDO`,
 `UMBRAL_REQUERIDO`, `RECIBO_MARKER`, `RECIBO_VERSION`) directamente de
@@ -189,6 +197,10 @@ python scripts/find_similar_signals.py --text-file candidato.txt \
 
 # 2. Generar recibo
 RECIBO=$(python scripts/backlog_db_compare.py --emit-recibo \
+    --candidato-id WOT-2026-XXXXx \
+    --veredicto NUEVA \
+    --row-text "| Media | WOT-2026-XXXXx | titulo | ... |" \
+    --ficha .agent/collaboration/FICHA_WOT-2026-XXXXx.md \
     --backlog .agent/collaboration/backlog.md \
     --git-root .)
 
@@ -208,7 +220,11 @@ El flag `--emit-recibo` en `backlog_db_compare.py`:
 3. Valida que el universo declarado cubre al menos `DEFAULT_BACKLOG` +
    `DEFAULT_ARCHIVES`. Si falta alguna superficie obligatoria -> falla y NO
    emite recibo.
-4. Emite el JSON del recibo a stdout.
+4. Determina `FICHA_<ID>.md` (o la ruta de `--ficha`) y comprueba
+   automáticamente su contrato antes de construir el corpus. Si la ficha no
+   existe o no es conforme, rechaza sin emitir JSON; solo
+   `--sin-ficha-contrato` permite continuar con aviso en `stderr`.
+5. Emite el JSON del recibo a stdout.
 
 El schema del recibo es EL MISMO que `check_backlog_admission.py` contrasta:
 mismos campos, mismas constantes, misma version. El generador y el guard

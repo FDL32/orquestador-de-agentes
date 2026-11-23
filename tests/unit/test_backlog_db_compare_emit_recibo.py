@@ -16,6 +16,7 @@ tests/test_pre_handoff_guard.py); subprocess de git NUNCA mockeado.
 
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
@@ -68,8 +69,30 @@ def init_repo(tmp_path: Path, backlog_extra: str = "", archive_extra: str = "") 
     return repo
 
 
+def _emit_ficha(repo: Path, cid: str, text: str = "redactada_por: co\n") -> None:
+    (repo / ".agent" / "collaboration" / f"FICHA_{cid}.md").write_text(
+        text, encoding="utf-8"
+    )
+
+
 def run_emit_recibo(repo: Path, *args: str) -> tuple[int, str]:
-    """Ejecuta backlog_db_compare.py --emit-recibo y devuelve (rc, stdout+stderr)."""
+    """Ejecuta emit-recibo con una ficha conforme y devuelve rc/salida combinada."""
+    cid = args[args.index("--candidato-id") + 1]
+    _emit_ficha(repo, cid)
+    rc, stdout, stderr = run_emit_recibo_capture(repo, *args)
+    return rc, stdout + stderr
+
+
+def run_emit_recibo_capture(
+    repo: Path,
+    *args: str,
+    ficha_text: str | None = "redactada_por: co\n",
+    create_ficha: bool = True,
+) -> tuple[int, str, str]:
+    """Ejecuta emit-recibo conservando stdout y stderr por separado."""
+    cid = args[args.index("--candidato-id") + 1]
+    if create_ficha and "--ficha" not in args and ficha_text is not None:
+        _emit_ficha(repo, cid, ficha_text)
     proc = subprocess.run(
         [
             sys.executable,
@@ -85,7 +108,7 @@ def run_emit_recibo(repo: Path, *args: str) -> tuple[int, str]:
         errors="replace",
         check=False,
     )
-    return proc.returncode, proc.stdout + proc.stderr
+    return proc.returncode, proc.stdout, proc.stderr
 
 
 def run_guard(repo: Path, *args: str) -> tuple[int, str]:
@@ -265,6 +288,205 @@ def test_universo_completo_generador_pasa(tmp_path: Path) -> None:
     assert recibo["candidato_id"] == "WOT-2026-704a"
     assert len(recibo["corpus"]) >= 2
     assert recibo["veredicto_propuesta"]["tipo"] == "NUEVA"
+
+
+# ---------- WOT-2026-161y: contrato de ficha antes del recibo ----------
+
+
+def _ficha_args(cid: str) -> tuple[str, ...]:
+    return (
+        "--candidato-id",
+        cid,
+        "--row-text",
+        row(cid),
+        "--veredicto",
+        "NUEVA",
+    )
+
+
+def test_mutation_m01_ficha_no_permitida_rechaza_y_co_emite(tmp_path: Path) -> None:
+    """m-01: el valor fuera del vocabulario no puede emitir el recibo."""
+    repo = init_repo(tmp_path)
+    cid = "WOT-2026-161ya"
+    rc, stdout, stderr = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), ficha_text="redactada_por: codex\n"
+    )
+    assert rc == 1
+    assert stdout == ""
+    assert cba.CAUSA_VALOR_FUERA_VOCAB in stderr
+
+    rc_ok, stdout_ok, _stderr_ok = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), ficha_text="redactada_por: co\n"
+    )
+    assert rc_ok == 0
+    assert json.loads(stdout_ok)["candidato_id"] == cid
+
+
+def test_mutation_m02_causas_distintas_en_stderr(tmp_path: Path) -> None:
+    """m-02: ausente, duplicada y fuera de vocabulario conservan causas distintas."""
+    cases = (
+        ("redactada_por co\n", cba.CAUSA_CLAVE_AUSENTE),
+        ("redactada_por: co\nredactada_por: co\n", cba.CAUSA_CLAVE_DUPLICADA),
+        ("redactada_por: codex\n", cba.CAUSA_VALOR_FUERA_VOCAB),
+    )
+    messages = []
+    for index, (ficha, causa) in enumerate(cases):
+        repo = init_repo(tmp_path / str(index))
+        cid = f"WOT-2026-161y{index}"
+        rc, stdout, stderr = run_emit_recibo_capture(
+            repo, *_ficha_args(cid), ficha_text=ficha
+        )
+        assert rc == 1
+        assert stdout == ""
+        assert causa in stderr
+        assert cba.FICHA_CONTRACT_REL in stderr
+        messages.append(stderr)
+    assert len(set(messages)) == 3
+
+
+def test_mutation_m03_ficha_inexistente_rechaza_sin_stdout(tmp_path: Path) -> None:
+    """m-03: la ficha ausente tiene causa explícita y no deja JSON parcial."""
+    repo = init_repo(tmp_path)
+    cid = "WOT-2026-161ym"
+    rc, stdout, stderr = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), create_ficha=False
+    )
+    assert rc == 1
+    assert stdout == ""
+    assert cba.CAUSA_FICHA_NO_PRESENTE in stderr
+    assert cba.FICHA_CONTRACT_REL in stderr
+
+
+def test_mutation_m04_importa_check_ficha_contract_una_vez() -> None:
+    """m-04: el emisor importa la única implementación del guard de ficha."""
+    source = Path(bdc.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    imports = [
+        alias
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "scripts.check_backlog_admission"
+        for alias in node.names
+        if alias.name == "check_ficha_contract"
+    ]
+    assert len(imports) == 1
+    assert "def check_ficha_contract" not in source
+
+
+def test_mutation_m05_json_identico_con_y_sin_comprobacion(tmp_path: Path) -> None:
+    """m-05: contrastar la ficha no cambia el schema ni el JSON del recibo."""
+    repo = init_repo(tmp_path)
+    cid = "WOT-2026-161yn"
+    args = _ficha_args(cid)
+    rc_a, stdout_a, stderr_a = run_emit_recibo_capture(repo, *args)
+    rc_b, stdout_b, stderr_b = run_emit_recibo_capture(
+        repo, *args, "--sin-ficha-contrato"
+    )
+    assert rc_a == rc_b == 0
+    assert stdout_a == stdout_b
+    assert stderr_a == stderr_b == ""
+
+
+def test_sin_ficha_contrato_emite_aviso_y_json_con_ficha_rota(tmp_path: Path) -> None:
+    """El bypass solo advierte por stderr y conserva stdout como JSON puro."""
+    repo = init_repo(tmp_path)
+    cid = "WOT-2026-161yo"
+    rc, stdout, stderr = run_emit_recibo_capture(
+        repo,
+        *_ficha_args(cid),
+        "--sin-ficha-contrato",
+        ficha_text="redactada_por: codex\n",
+    )
+    assert rc == 0
+    assert json.loads(stdout)["candidato_id"] == cid
+    assert "AVISO: --sin-ficha-contrato activo" in stderr
+
+
+def test_sin_ficha_contrato_conforme_no_emite_aviso(tmp_path: Path) -> None:
+    """Una ficha conforme no produce constancia al usar el bypass."""
+    repo = init_repo(tmp_path)
+    cid = "WOT-2026-161yp"
+    rc, stdout, stderr = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), "--sin-ficha-contrato"
+    )
+    assert rc == 0
+    assert json.loads(stdout)["candidato_id"] == cid
+    assert stderr == ""
+
+
+def test_shadow_log_no_se_ejecuta_si_ficha_rechaza(tmp_path: Path) -> None:
+    """El rechazo de contrato ocurre antes del efecto secundario shadow."""
+    repo = init_repo(tmp_path)
+    cid = "WOT-2026-161yq"
+    rc, stdout, stderr = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), ficha_text="redactada_por: codex\n"
+    )
+    assert rc == 1
+    assert stdout == ""
+    assert "AVISO: --sin-ficha-contrato" not in stderr
+    assert not (
+        repo
+        / ".agent"
+        / "runtime"
+        / "audit"
+        / "backlog_priority"
+        / "tds_shadow_log.jsonl"
+    ).exists()
+
+
+def test_ficha_opcion_relativa_y_absoluta_se_resuelven_contra_git_root(
+    tmp_path: Path,
+) -> None:
+    """--ficha manda sobre la ficha derivada: relativa a --git-root o absoluta."""
+    repo = init_repo(tmp_path)
+    cid = "WOT-2026-161yr"
+    otra = repo / "otra_ficha.md"
+    otra.write_text("redactada_por: codex\n", encoding="utf-8")
+    # La ficha derivada es conforme: solo --ficha puede producir el rechazo.
+    _emit_ficha(repo, cid)
+
+    rc_rel, out_rel, err_rel = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), "--ficha", "otra_ficha.md"
+    )
+    assert rc_rel == 1
+    assert out_rel == ""
+    assert cba.CAUSA_VALOR_FUERA_VOCAB in err_rel
+
+    rc_abs, out_abs, err_abs = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), "--ficha", str(otra)
+    )
+    assert rc_abs == 1
+    assert out_abs == ""
+    assert cba.CAUSA_VALOR_FUERA_VOCAB in err_abs
+
+    otra.write_text("redactada_por: im\n", encoding="utf-8")
+    rc_ok, out_ok, _err_ok = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), "--ficha", "otra_ficha.md"
+    )
+    assert rc_ok == 0
+    assert json.loads(out_ok)["candidato_id"] == cid
+
+
+def test_ficha_ilegible_rechaza_con_rc2_y_el_bypass_la_degrada(tmp_path: Path) -> None:
+    """Una ficha que no es UTF-8 no se puede contrastar: rc 2, o aviso con bypass."""
+    repo = init_repo(tmp_path)
+    cid = "WOT-2026-161ys"
+    (repo / ".agent" / "collaboration" / f"FICHA_{cid}.md").write_bytes(
+        b"redactada_por: co\n\xff\xfe\n"
+    )
+    rc, stdout, stderr = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), create_ficha=False
+    )
+    assert rc == 2
+    assert stdout == ""
+    assert "ERROR al leer ficha" in stderr
+
+    rc_b, stdout_b, stderr_b = run_emit_recibo_capture(
+        repo, *_ficha_args(cid), "--sin-ficha-contrato", create_ficha=False
+    )
+    assert rc_b == 0
+    assert json.loads(stdout_b)["candidato_id"] == cid
+    assert "AVISO: --sin-ficha-contrato activo" in stderr_b
 
 
 # ---------- DoD-1 REALISTA: corpus con entradas_censadas >= 2 ----------

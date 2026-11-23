@@ -1009,6 +1009,20 @@ def build_parser() -> argparse.ArgumentParser:
             "'DUPLICADO_DE:WOT-2026-001a'."
         ),
     )
+    p.add_argument(
+        "--ficha",
+        type=Path,
+        default=None,
+        help="Ruta de la ficha de backlog (relativa a --git-root si no es absoluta).",
+    )
+    p.add_argument(
+        "--sin-ficha-contrato",
+        action="store_true",
+        help=(
+            "Salida de emergencia: emite sin contrastar la ficha y deja constancia "
+            "en stderr."
+        ),
+    )
     return p
 
 
@@ -1283,6 +1297,54 @@ def _build_corpus(
     return corpus, sum(s["entradas"] for s in corpus)
 
 
+def _check_recibo_ficha(
+    ficha_path: Path, candidato_id: str, sin_ficha_contrato: bool
+) -> int:
+    """Comprueba la ficha previa al recibo y devuelve el rc de la operación.
+
+    Before: ``ficha_path`` apunta a la ficha derivada o solicitada; el
+        validador y las constantes se importan aquí de ``check_backlog_admission``
+        (import diferido: evita el import circular y no copia nada).
+    During: lee UTF-8 y valida la única declaración ``redactada_por``; todo
+        mensaje va a stderr para que stdout siga siendo solo el JSON del recibo.
+        ``sin_ficha_contrato`` convierte el rechazo en un aviso en stderr.
+    After: devuelve 0 para continuar, 1 si la ficha falta o no es conforme y 2
+        si no se puede leer.
+    """
+    from scripts.check_backlog_admission import (
+        CAUSA_FICHA_NO_PRESENTE,
+        FICHA_CONTRACT_REL,
+        check_ficha_contract,
+    )
+
+    def _bypass_or(rc: int, rechazo: str) -> int:
+        if not sin_ficha_contrato:
+            print(rechazo, file=sys.stderr)
+            return rc
+        print(
+            f"[db-compare] AVISO: --sin-ficha-contrato activo para {candidato_id}; "
+            "recibo emitido sin contrastar contrato de la ficha",
+            file=sys.stderr,
+        )
+        return 0
+
+    if not ficha_path.is_file():
+        return _bypass_or(
+            1,
+            f"CAUSA {CAUSA_FICHA_NO_PRESENTE}: no existe {ficha_path}; crea la "
+            f"ficha ANTES de emitir el recibo segun {FICHA_CONTRACT_REL}",
+        )
+    try:
+        ficha_text = ficha_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return _bypass_or(2, f"[db-compare] ERROR al leer ficha {ficha_path}: {exc}")
+
+    ficha_rc, lines_f, _valor, _causa = check_ficha_contract(ficha_text)
+    if ficha_rc != 0:
+        return _bypass_or(1, "\n".join(lines_f))
+    return 0
+
+
 def _emit_recibo(args: argparse.Namespace) -> int:
     """Modo generador de recibo para el alta de backlog.
 
@@ -1293,6 +1355,12 @@ def _emit_recibo(args: argparse.Namespace) -> int:
     Contrato de universo: si el invocante pasa MENOS que el universo
     obligatorio, el generador falla explicito y NO emite recibo (NG-RAIZ
     aplicado al emisor).
+
+    **Contrato de la ficha (WOT-2026-161y):** tras validar los argumentos y
+    antes de construir el corpus, comprueba con `check_ficha_contract` la ficha
+    `FICHA_<candidato-id>.md` junto a `DEFAULT_BACKLOG` (o la de `--ficha`).
+    Ficha ausente o no conforme -> rc 1, mensaje a stderr, stdout vacio y sin
+    shadow log; solo `--sin-ficha-contrato` lo degrada a un aviso en stderr.
 
     **`--backlog`/`--archive-file` NO alteran el corpus de este modo**
     (WOT-2026-104p): `_build_corpus` siempre recalcula sobre
@@ -1384,6 +1452,20 @@ def _emit_recibo(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+
+    if args.ficha:
+        # Un Path absoluto ignora git_root en el operador `/`.
+        ficha_path = (git_root / args.ficha).resolve()
+    else:
+        ficha_path = (
+            git_root / Path(DEFAULT_BACKLOG).parent / f"FICHA_{candidato_id}.md"
+        )
+
+    ficha_check_rc = _check_recibo_ficha(
+        ficha_path, candidato_id, args.sin_ficha_contrato
+    )
+    if ficha_check_rc:
+        return ficha_check_rc
 
     candidato_contenido_sha = ""
     if args.row_text:
