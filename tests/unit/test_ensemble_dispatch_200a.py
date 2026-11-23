@@ -73,6 +73,14 @@ def _config() -> dict:
                 "write": False,
             },
         },
+        "ensemble_registry": {
+            "roles": {"U4": {"nivel": "medio"}, "U8": {"nivel": "alto"}},
+            "uso_maximo_por_tipo": {"medio": 7000, "alto": 7000},
+            "backend_keys": {
+                key: {"status": "active", "nivel": "medio"}
+                for key in ("BA02", "BA03", "BA05", "BA07", "BA99")
+            },
+        },
     }
 
 

@@ -219,6 +219,18 @@ def test_doc_deliverable_passes_with_two_distinct():
 
 
 # ----------------------------------------------------- integracion end-to-end
+def _valid_level_receipt_fields():
+    """Devuelve el recibo de nivel minimo que requiere una ronda nueva."""
+    return {
+        "nivel_gate_version": cle.LEVEL_GATE_VERSION,
+        "uso": "U4",
+        "nivel_max_uso": "medio",
+        "nivel_clave": "medio",
+        "peticion": None,
+        "techo": 7000,
+    }
+
+
 def test_emit_nonce_then_record_round_join_passes(tmp_path):
     """END-TO-END en la ruta REAL: emit_nonce escribe la emision, y una fila de
     scorecard que copia ese nonce con backend_key distinto pasa el join dual."""
@@ -241,6 +253,7 @@ def test_emit_nonce_then_record_round_join_passes(tmp_path):
                 "backend_key": bk,
                 "challenge_nonce": "FIXED_NONCE",
                 "ts": "2099-01-01T00:00:00+00:00",
+                **_valid_level_receipt_fields(),
             },
         )
     verdicts = cle.audit(tmp_path, commit_shas=["abc123"], deliverable_type="code")
@@ -267,6 +280,7 @@ def test_end_to_end_degraded_fails(tmp_path):
                 "backend_key": "BA10",
                 "challenge_nonce": "FIXED_NONCE",
                 "ts": "2099-01-01T00:00:00+00:00",
+                **_valid_level_receipt_fields(),
             },
         )
     verdicts = cle.audit(tmp_path, commit_shas=["abc123"], deliverable_type="code")
@@ -503,8 +517,15 @@ def test_transport_failure_writes_a_row_then_reraises(tmp_path, monkeypatch):
     clasificado) ANTES de re-lanzar -- verificado en la ruta productiva, no
     asumido."""
     cfg = {
-        "ensemble_profiles": {"p0": {"backend": "nan", "model": "m0"}},
+        "ensemble_profiles": {
+            "p0": {"backend": "nan", "model": "m0", "backend_key": "BA10"}
+        },
         "backends": {"nan": {}},
+        "ensemble_registry": {
+            "roles": {"U4": {"nivel": "medio"}, "U8": {"nivel": "alto"}},
+            "uso_maximo_por_tipo": {"medio": 7000, "alto": 7000},
+            "backend_keys": {"BA10": {"status": "active", "nivel": "medio"}},
+        },
     }
     monkeypatch.setattr(ed, "_backend_version", lambda _b: "v0")
 
@@ -572,9 +593,24 @@ def test_end_to_end_silent_fanout_fails_through_run_loop_round(tmp_path, monkeyp
     )
     config = {
         "ensemble_profiles": {
-            f"p{i}": {"backend": "nan", "model": f"m{i}"} for i in range(4)
+            f"p{i}": {
+                "backend": "nan",
+                "model": f"m{i}",
+                "backend_key": f"BA{i + 10}",
+            }
+            for i in range(4)
         },
         "backends": {"nan": {}},
+        "ensemble_registry": {
+            "roles": {
+                "U4": {"nivel": "medio"},
+                "U8": {"nivel": "alto"},
+            },
+            "uso_maximo_por_tipo": {"medio": 7000, "alto": 7000},
+            "backend_keys": {
+                f"BA{i + 10}": {"status": "active", "nivel": "medio"} for i in range(4)
+            },
+        },
     }
     monkeypatch.setattr(ed, "_backend_version", lambda *a, **k: "v0")
     monkeypatch.setattr(
@@ -624,9 +660,21 @@ def test_end_to_end_substantive_fanout_passes_through_run_loop_round(
     )
     config = {
         "ensemble_profiles": {
-            f"p{i}": {"backend": "nan", "model": f"m{i}"} for i in range(4)
+            f"p{i}": {
+                "backend": "nan",
+                "model": f"m{i}",
+                "backend_key": f"BA{i + 10}",
+            }
+            for i in range(4)
         },
         "backends": {"nan": {}},
+        "ensemble_registry": {
+            "roles": {"U4": {"nivel": "medio"}, "U8": {"nivel": "alto"}},
+            "uso_maximo_por_tipo": {"medio": 7000, "alto": 7000},
+            "backend_keys": {
+                f"BA{i + 10}": {"status": "active", "nivel": "medio"} for i in range(4)
+            },
+        },
     }
     monkeypatch.setattr(ed, "_backend_version", lambda *a, **k: "v0")
     monkeypatch.setattr(ed, "send_to_profile", lambda *a, **k: "REFUTA: " + "x" * 900)
@@ -755,6 +803,7 @@ def _build_accredited_ensemble(dest: Path, sha40: str) -> None:
                 "backend_key": bk,
                 "challenge_nonce": "N-SHATEST",
                 "ts": "2099-01-01T00:00:00+00:00",
+                **_valid_level_receipt_fields(),
             },
         )
 
@@ -1126,6 +1175,7 @@ def _build_accredited_ensemble_dest(tmp_path, destino, sha, *, loop_id="L-TEST")
                 "challenge_nonce": f"N-{loop_id}",
                 "ts": now,
                 "loop_id": loop_id,
+                **_valid_level_receipt_fields(),
             },
         )
 
@@ -1496,6 +1546,7 @@ def _round_for(repo: Path, sha: str, *, backend: str = "BA10") -> None:
             "backend_key": backend,
             "challenge_nonce": "N-FAB",
             "ts": "2099-01-01T00:00:00+00:00",
+            **_valid_level_receipt_fields(),
         },
     )
 
@@ -1614,6 +1665,7 @@ def test_088b_cli_de_produccion_bloquea_y_tras_remapear_pasa(tmp_path):
                 "challenge_nonce": "N-REMAP",
                 "ts": "2099-01-01T00:00:00+00:00",
                 "loop_id": "L-088B",
+                **_valid_level_receipt_fields(),
             },
         )
 

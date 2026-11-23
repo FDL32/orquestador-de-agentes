@@ -20,6 +20,7 @@ it pins:
 
 from __future__ import annotations
 
+import copy
 import email.message
 import gzip
 import hashlib
@@ -83,6 +84,8 @@ def _config(*, trusted: bool = False, private_roots: list[str] | None = None):
                 "api_key_env": "FAKE_API_KEY",
                 "data_sensitivity": "public",
                 "write": False,
+                "backend_key": "BA01",
+                "lens_class": "texto",
             },
             "p_chal": {
                 "backend": "fake",
@@ -92,6 +95,8 @@ def _config(*, trusted: bool = False, private_roots: list[str] | None = None):
                 "api_key_env": "FAKE_API_KEY",
                 "data_sensitivity": "public",
                 "write": False,
+                "backend_key": "BA11",
+                "lens_class": "verificadora",
             },
         },
         "ensemble_pipelines": {
@@ -101,6 +106,37 @@ def _config(*, trusted: bool = False, private_roots: list[str] | None = None):
                 "rubric": "prompts/audit_agent_output.md",
                 "max_rounds": 2,
             }
+        },
+        "ensemble_registry": {
+            "backend_keys": {
+                **{
+                    key: {
+                        "status": "active",
+                        "nivel": "medio",
+                        "niveles": ["medio"],
+                        "lens_class": "texto",
+                    }
+                    for key in (
+                        "BA01",
+                        "BA02",
+                        "BA03",
+                        "BA05",
+                        "BA06",
+                        "BA09",
+                        "BA11",
+                        "BA20",
+                        "BA1",
+                        "NA01",
+                    )
+                },
+            },
+            "roles": {"U4": {"nivel": "medio"}, "U8": {"nivel": "alto"}},
+            "uso_maximo_por_tipo": {
+                "base": 7000,
+                "medio": 7000,
+                "alto": 7000,
+                "premium": 7000,
+            },
         },
         "ensemble_private_roots": private_roots or [],
     }
@@ -703,6 +739,13 @@ def test_scorecard_fields_prefix_is_frozen():
         # WOT-2026-044l: SHA-256 del bundle EXACTO enviado a la lente, calculado
         # por el despachador. Al final, mismo mecanismo.
         "bundle_sha256",
+        "nivel_gate_version",
+        "uso",
+        "nivel_max_uso",
+        "nivel_clave",
+        "peticion",
+        "techo",
+        "procedencia_stall",
     ], "los 14 campos nuevos deben ir DESPUES del prefijo frozen (D1)"
     # WOT-2026-037b review (mimo lens): append_scorecard normaliza via
     # {k: row.get(k) for k in SCORECARD_FIELDS}; una clave DUPLICADA se
@@ -1805,6 +1848,8 @@ def _schema_config(**overrides):
     base = _config()
     base["role_assignments"] = {}
     base.update(overrides)
+    for profile in base["ensemble_profiles"].values():
+        profile.setdefault("lens_class", "texto")
     return base
 
 
@@ -1868,6 +1913,7 @@ def test_047y_schema_rejects_agent_model_without_backend_template(tmp_path):
         "model": "modelo-que-nadie-inyecta",
         "data_sensitivity": "public",
         "write": False,
+        "lens_class": "texto",
     }
     with pytest.raises(AgentsConfigError, match="model_flag"):
         _validate_ensemble(cfg, tmp_path / "agents.json")
@@ -1890,6 +1936,7 @@ def test_047y_schema_accepts_agent_model_with_template_and_null_model(tmp_path):
         "model": "modelo-x",
         "data_sensitivity": "public",
         "write": False,
+        "lens_class": "texto",
     }
     assert _validate_ensemble(cfg, tmp_path / "agents.json") is None
 
@@ -1900,6 +1947,8 @@ def test_047y_schema_accepts_agent_model_with_template_and_null_model(tmp_path):
         "model": None,
         "data_sensitivity": "public",
         "write": False,
+        "backend_key": "BA05",
+        "lens_class": "texto",
     }
     assert _validate_ensemble(cfg, tmp_path / "agents.json") is None
 
@@ -2746,6 +2795,7 @@ def _smoke_config(*, timeout_s=900):
                 "api_key_env": "KEY_A",
                 "data_sensitivity": "public",
                 "write": False,
+                "backend_key": "BA01",
             },
             "b_one": {
                 "backend": "provB",
@@ -2755,9 +2805,24 @@ def _smoke_config(*, timeout_s=900):
                 "api_key_env": "KEY_B",
                 "data_sensitivity": "public",
                 "write": False,
+                "backend_key": "BA11",
             },
         },
         "ensemble_private_roots": [],
+        "ensemble_registry": {
+            "backend_keys": {
+                "BA01": {"status": "active", "nivel": "medio", "niveles": ["medio"]},
+                "BA11": {"status": "active", "nivel": "medio", "niveles": ["medio"]},
+                "BA05": {"status": "active", "nivel": "medio", "niveles": ["medio"]},
+            },
+            "roles": {"U4": {"nivel": "medio"}, "U8": {"nivel": "alto"}},
+            "uso_maximo_por_tipo": {
+                "base": 7000,
+                "medio": 7000,
+                "alto": 7000,
+                "premium": 7000,
+            },
+        },
     }
 
 
@@ -3017,6 +3082,8 @@ def _smoke_config_with_agent():
         "model": None,
         "data_sensitivity": "public",
         "write": False,
+        "backend_key": "BA05",
+        "lens_class": "texto",
     }
     return config
 
@@ -3130,6 +3197,7 @@ def test_086h_tope_concurrencia_por_proveedor(tmp_path):
             "api_key_env": "KEY_A",
             "data_sensitivity": "public",
             "write": False,
+            "backend_key": f"BA{i}",
         }
         for i in range(6)
     }
@@ -3141,11 +3209,27 @@ def test_086h_tope_concurrencia_por_proveedor(tmp_path):
         "api_key_env": "KEY_B",
         "data_sensitivity": "public",
         "write": False,
+        "backend_key": "BA99",
     }
     config = {
         "backends": {"provA": dict(backend), "provB": dict(backend)},
         "ensemble_profiles": profiles,
         "ensemble_private_roots": [],
+        "ensemble_registry": {
+            "backend_keys": {
+                **{
+                    f"BA{i}": {
+                        "status": "active",
+                        "nivel": "medio",
+                        "niveles": ["medio"],
+                    }
+                    for i in range(6)
+                },
+                "BA99": {"status": "active", "nivel": "medio", "niveles": ["medio"]},
+            },
+            "roles": {"U4": {"nivel": "medio"}},
+            "uso_maximo_por_tipo": {"medio": 7000},
+        },
     }
     lock = threading.Lock()
     active = {"provA": 0, "provB": 0}
@@ -3334,6 +3418,8 @@ def _agent_config(tmp_path: Path, needle: str, *, repo_scope: str | None) -> dic
         "channel": "agent",
         "data_sensitivity": "public",
         "write": False,
+        "backend_key": "BA05",
+        "lens_class": "texto",
     }
     if repo_scope is not None:
         profile["repo_scope"] = repo_scope
@@ -3348,6 +3434,13 @@ def _agent_config(tmp_path: Path, needle: str, *, repo_scope: str | None) -> dic
         },
         "ensemble_profiles": {"p_lente": profile},
         "ensemble_private_roots": [],
+        "ensemble_registry": {
+            "backend_keys": {
+                "BA05": {"status": "active", "nivel": "medio", "niveles": ["medio"]}
+            },
+            "roles": {"U4": {"nivel": "medio"}},
+            "uso_maximo_por_tipo": {"medio": 7000},
+        },
     }
 
 
@@ -3557,9 +3650,18 @@ def test_055m_mutation_dispatch_from_destino_cwd_no_longer_mislabels_motor(
                 "channel": "agent",
                 "data_sensitivity": "public",
                 "write": False,
+                "backend_key": "BA05",
+                "lens_class": "texto",
             }
         },
         "ensemble_private_roots": [],
+        "ensemble_registry": {
+            "backend_keys": {
+                "BA05": {"status": "active", "nivel": "medio", "niveles": ["medio"]}
+            },
+            "roles": {"U4": {"nivel": "medio"}},
+            "uso_maximo_por_tipo": {"medio": 7000},
+        },
     }
 
     out = ed.send_to_profile(
@@ -3761,6 +3863,18 @@ class TestBackendTimeout:
         verde mientras opencode seguia muriendo a los 300s.
         """
         cfg = ed.load_motor_config()
+        cfg = copy.deepcopy(cfg)
+        cfg["ensemble_profiles"]["challenger_opencode_glm_5_2"]["backend_key"] = (
+            "SYNTH-OPENCODE"
+        )
+        cfg["ensemble_registry"]["backend_keys"]["SYNTH-OPENCODE"] = {
+            "backend": "opencode",
+            "model": "glm-5.2",
+            "status": "active",
+            "nivel": "medio",
+            "niveles": ["medio"],
+            "acceso": "cuenta_propia",
+        }
         seen: dict = {}
 
         def transport(profile, backend_cfg, messages, timeout):
@@ -3795,8 +3909,18 @@ class TestBackendTimeout:
 class TestBackendKeyMatchesProfile:
     """El receipt de la ronda no puede atribuirse a una lente que no ejecuto."""
 
-    def _run(self, profile_name, backend_key, tmp_path):
-        cfg = ed.load_motor_config()
+    def _run(self, profile_name, backend_key, tmp_path, *, synth=False):
+        cfg = copy.deepcopy(ed.load_motor_config())
+        if synth:
+            cfg["ensemble_profiles"][profile_name]["backend_key"] = "SYNTH-OPENCODE"
+            cfg["ensemble_registry"]["backend_keys"]["SYNTH-OPENCODE"] = {
+                "backend": "opencode",
+                "model": "glm-5.2",
+                "status": "active",
+                "nivel": "medio",
+                "niveles": ["medio"],
+                "acceso": "cuenta_propia",
+            }
 
         def transport(profile, backend_cfg, messages, timeout):
             return "ok"
@@ -3838,13 +3962,23 @@ class TestBackendKeyMatchesProfile:
 
     def test_matching_key_passes(self, tmp_path):
         """CONTROL POSITIVO: la invocacion correcta no se molesta."""
-        assert self._run("challenger_opencode_glm_5_2", "BA06", tmp_path) == "ok"
+        assert (
+            self._run(
+                "challenger_opencode_glm_5_2", "SYNTH-OPENCODE", tmp_path, synth=True
+            )
+            == "ok"
+        )
 
     def test_error_names_the_key_the_caller_should_use(self, tmp_path):
         """Gate self-service: el mensaje dice COMO arreglarlo, no solo que fallo."""
         with pytest.raises(ValueError) as exc:
             self._run("challenger_opencode_glm_5_2", "BA12", tmp_path)
         assert "--backend-key BA06" in str(exc.value)
+
+    def test_real_over_max_profile_rejects_wrong_key_before_level_gate(self, tmp_path):
+        """CO-161 06:3x: identidad preexistente gana al gate de nivel."""
+        with pytest.raises(ValueError, match="no corresponde al perfil"):
+            self._run("challenger_opencode_glm_5_2", "BA12", tmp_path)
 
 
 # =============================================================================
@@ -4931,6 +5065,7 @@ def _config_agent_codex(
         "channel": "agent",
         "model": None,
         "backend_key": "BA05",
+        "lens_class": "texto",
         "data_sensitivity": "public",
         "write": False,
     }
@@ -5227,7 +5362,7 @@ def test_086k_canal_api_con_el_prefijo_no_escribe_evento(tmp_path):
         config,
         _FakeTransport(replies=[reply]),
         profile_name="p_chal",
-        backend_key="BA05",
+        backend_key="BA11",
     )
     assert _fallback_events(tmp_path) == []
 
@@ -6191,7 +6326,15 @@ def _legacy_config() -> dict:
                 "backend_key": "BA07",
             },
             "claude_x": {"backend": "claude", "model": None, "backend_key": "BA01"},
-        }
+        },
+        "ensemble_registry": {
+            "backend_keys": {
+                key: {"status": "active", "nivel": "medio", "niveles": ["medio"]}
+                for key in ("BA01", "BA06", "BA07")
+            },
+            "roles": {"U4": {"nivel": "medio"}},
+            "uso_maximo_por_tipo": {"medio": 7000},
+        },
     }
 
 
@@ -7088,7 +7231,7 @@ def test_loop_round_cli_writes_the_four_barrier_fields(tmp_path, monkeypatch):
             "--loop-id",
             "L2100",
             "--backend-key",
-            "NA01",
+            "BA11",
             "--commit-sha",
             sha40[:7],
             "--challenge-nonce",
@@ -7109,7 +7252,7 @@ def test_loop_round_cli_writes_the_four_barrier_fields(tmp_path, monkeypatch):
     row = rows[0]
     # Los 4 campos que la barrera LEE. Sin ellos la fila es imputable a nadie.
     assert row["loop_id"] == "L2100"
-    assert row["backend_key"] == "NA01"
+    assert row["backend_key"] == "BA11"
     assert row["commit_sha"] == sha40, (
         "la fila debe llevar el sha40 normalizado, no la forma abreviada"
     )
@@ -7218,7 +7361,7 @@ def test_048g_failed_transport_is_recorded_as_no_aportacion(tmp_path):
         rol="challenger",
         phase="challenge-fanout",
         loop_id="L800",
-        backend_key="BA05",
+        backend_key="BA11",
         sensitivity="public",
         transport=transport,
     )
@@ -7517,7 +7660,7 @@ def test_048g_scorecard_records_declared_and_reported_side_by_side(tmp_path):
         rol="challenger",
         phase="challenge-fanout",
         loop_id="L800",
-        backend_key="BA06",
+        backend_key="BA11",
         sensitivity="public",
         transport=transport,
     )
@@ -8174,7 +8317,7 @@ def _run_loop_round_cli(tmp_path, monkeypatch, commit_sha):
         "--loop-id",
         "L800",
         "--backend-key",
-        "BA10",
+        "BA11",
         "--data-sensitivity",
         "public",
         "--project-root",
@@ -8503,7 +8646,7 @@ def test_046b_strips_shell_noise_prefixes_preserves_real_response(tmp_path):
         rol="challenger",
         phase="fanout-dif",
         loop_id="L700",
-        backend_key="BA05",
+        backend_key="BA11",
         sensitivity="public",
         transport=transport,
     )
@@ -8600,7 +8743,7 @@ def test_046b_strips_multiple_noise_lines(tmp_path):
         rol="proposer",
         phase="challenge-fanout",
         loop_id="L900",
-        backend_key="BA20",
+        backend_key="BA11",
         sensitivity="public",
         transport=transport,
     )
@@ -9321,7 +9464,7 @@ def test_loop_round_cli_warns_when_commit_sha_omitted(capsys, tmp_path, monkeypa
         "--loop-id",
         "L700",
         "--backend-key",
-        "BKA",
+        "BA11",
         "--data-sensitivity",
         "public",
         "--project-root",
@@ -9386,7 +9529,7 @@ def test_loop_round_cli_no_warn_when_commit_sha_provided(capsys, tmp_path, monke
         "--loop-id",
         "L701",
         "--backend-key",
-        "BKA",
+        "BA11",
         "--data-sensitivity",
         "public",
         "--project-root",
@@ -9434,7 +9577,7 @@ def test_loop_round_cli_warn_with_rc_zero_non_government(capsys, tmp_path, monke
         "--loop-id",
         "L702",
         "--backend-key",
-        "BKA",
+        "BA11",
         "--data-sensitivity",
         "public",
         "--project-root",
@@ -9480,7 +9623,7 @@ def _phase_argv(tmp_path: Path, phase: str) -> list[str]:
         "--loop-id",
         "L700",
         "--backend-key",
-        "BKA",
+        "BA11",
         "--data-sensitivity",
         "public",
         "--project-root",
@@ -9842,7 +9985,7 @@ def test_086d_failed_agent_row_carries_failure_class(tmp_path):
         rol="challenger",
         phase="challenge-fanout",
         loop_id="L800",
-        backend_key="BA05",
+        backend_key="BA11",
         sensitivity="public",
         transport=_FakeTransport(replies=[reply]),
     )
@@ -9867,7 +10010,7 @@ def test_086d_failed_agent_without_known_cause_is_unknown(tmp_path):
         rol="challenger",
         phase="challenge-fanout",
         loop_id="L800",
-        backend_key="BA05",
+        backend_key="BA11",
         sensitivity="public",
         transport=_FakeTransport(replies=[reply]),
     )
@@ -11391,7 +11534,7 @@ def test_046c_censo_de_salidas_a_backend_coincide_con_el_registro():
 
     Si un nuevo fichero anada una salida a backend (Popen de un ejecutable
     de backend), el censo lo descubre y lo pone en ROJO: clave nueva no
-    existe en el registro → assert 'salidas sin ... declarada'.
+    existe en el registro -> assert 'salidas sin ... declarada'.
     Si el registro tiene una entrada que ya no existe, lo pone en ROJO:
     assert 'registro podrido'.
     Si una ruta existe pero el mecanismo declarado no se cumple (preflight
@@ -11526,7 +11669,7 @@ def test_046c_la_premisa_de_unica_salida_queda_corregida_y_vigilada():
     doc_modulo = _ast.get_docstring(tree) or ""
     assert "run_codex_audit" in doc_modulo, (
         "el docstring del modulo no menciona run_codex_audit como segunda "
-        "salida — la premisa sigue incorrecta (WOT-2026-046c)"
+        "salida - la premisa sigue incorrecta (WOT-2026-046c)"
     )
     # Tambien el pin en el body del modulo (WOT-2026-046c: se menciona
     # explicitamente en texto plano, no solo en el docstring).
@@ -11805,10 +11948,18 @@ def test_210a_send_verificadora_uses_disposable_snapshot(tmp_path):
                 "write": False,
                 "lens_class": "verificadora",
                 "data_sensitivity": "public",
+                "backend_key": "BA05",
             }
         },
         "backends": {
             "fake": {"executable": "fake", "args": [], "readonly_agent": "verificador"}
+        },
+        "ensemble_registry": {
+            "backend_keys": {
+                "BA05": {"status": "active", "nivel": "medio", "niveles": ["medio"]}
+            },
+            "roles": {"U4": {"nivel": "medio"}},
+            "uso_maximo_por_tipo": {"medio": 7000},
         },
         "ensemble_private_roots": [],
     }
@@ -11857,9 +12008,17 @@ def test_210a_tree_fingerprint_and_normal_round_have_no_incident(tmp_path):
                 "lens_class": "verificadora",
                 "repo_scope": "destino",
                 "data_sensitivity": "public",
+                "backend_key": "BA05",
             }
         },
         "backends": {"fake": {"executable": "fake", "args": []}},
+        "ensemble_registry": {
+            "backend_keys": {
+                "BA05": {"status": "active", "nivel": "medio", "niveles": ["medio"]}
+            },
+            "roles": {"U4": {"nivel": "medio"}},
+            "uso_maximo_por_tipo": {"medio": 7000},
+        },
         "ensemble_private_roots": [],
     }
     dispatch_fn = getattr(ed, "send_to" + "_profile")
@@ -11895,10 +12054,18 @@ def test_210a_tree_fingerprint_flags_real_tree_write(tmp_path):
                 "lens_class": "verificadora",
                 "repo_scope": "destino",
                 "data_sensitivity": "public",
+                "backend_key": "BA05",
             }
         },
         "backends": {"fake": {"executable": "fake", "args": []}},
         "ensemble_private_roots": [],
+        "ensemble_registry": {
+            "backend_keys": {
+                "BA05": {"status": "active", "nivel": "medio", "niveles": ["medio"]}
+            },
+            "roles": {"U4": {"nivel": "medio"}},
+            "uso_maximo_por_tipo": {"medio": 7000},
+        },
     }
 
     def transport(profile, backend_cfg, messages, timeout):

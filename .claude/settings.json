@@ -2,6 +2,15 @@
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "mcp__t3-code__delegate_task",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python -c \"import sys,json,subprocess; from pathlib import Path; r=next((p for p in [Path('.').resolve()]+list(Path('.').resolve().parents) if (p/'.claude').exists()),Path('.').resolve()); e=r/'.agent'/'hooks'/'guard_model_level.py'; l=r/'.agent'/'config'/'motor_destination_link.json'; e=e if e.exists() else ((Path(json.loads(l.read_text(encoding='utf-8-sig'))['motor_root'])/'.agent'/'hooks'/'guard_model_level.py') if l.exists() else e); p=subprocess.run([sys.executable,str(e)],input=sys.stdin.buffer.read(),cwd=str(r)) if e.exists() else None; sys.exit(p.returncode if p is not None and p.returncode in (0,2) else (sys.stderr.write('HOOK INACTIVE: guard_model_level.py failed to load or execute; dispatch blocked (fail-closed).'),2)[1])\""
+          }
+        ]
+      },
+      {
         "matcher": "Write|Edit|MultiEdit",
         "hooks": [
           {

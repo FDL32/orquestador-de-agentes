@@ -45,6 +45,14 @@ def mock_config(tmp_path):
             "opencode": {"executable": "echo", "args": []},
             "nan_api": {"executable": "echo", "args": []},
         },
+        "ensemble_registry": {
+            "roles": {"U4": {"nivel": "medio"}, "U8": {"nivel": "alto"}},
+            "uso_maximo_por_tipo": {"medio": 7000, "alto": 7000},
+            "backend_keys": {
+                key: {"status": "active", "nivel": "medio"}
+                for key in ("BA06", "BA11", "BA12")
+            },
+        },
     }
     # Fixture realista: schema REAL de `regenerate_leaders` (nunca una clave
     # inventada "profile" -- esa clave no existe en ningun productor del

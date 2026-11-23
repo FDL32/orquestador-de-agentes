@@ -3058,6 +3058,129 @@ def test_chain_ledger_consumes_each_step_once(tmp_path):
     assert ledger.is_consumed(CHAIN_MESSAGE_ID, 3) is False
 
 
+def test_level_authorization_consumes_one_message_and_step(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+    assert (
+        vua.consume_chain_authorization(
+            ledger, CHAIN_MESSAGE_ID, 7, "CO-33", "CO-34", verified=True
+        )
+        is True
+    )
+    assert (
+        vua.consume_chain_authorization(
+            ledger, CHAIN_MESSAGE_ID, 7, "CO-33", "CO-34", verified=True
+        )
+        is False
+    )
+
+
+def test_level_authorization_rejects_reuse_expiry_and_text_mutation(tmp_path):
+    ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
+    assert (
+        vua.consume_chain_authorization(
+            ledger, CHAIN_MESSAGE_ID, 8, "CO-33", "CO-34", verified=True
+        )
+        is True
+    )
+    assert ledger.is_consumed(CHAIN_MESSAGE_ID, 8)
+    assert vua.validate_chain_request_id("not-a-uuid") is False
+    assert vua.validate_chain_request_id(CHAIN_MESSAGE_ID) is True
+
+
+def _real_level_record():
+    expires = "2026-11-23T20:00:00+00:00"
+    text = CHAIN_TEXT.replace("2026-11-05T08:00:00+01:00", expires)
+    return _chain_record(
+        created_at="2026-11-23T08:00:00.000Z",
+        expires_at=expires,
+        literal_text=text,
+        text_sha256=vua.sha256_text(text),
+    )
+
+
+def _consume_real_level(tmp_path, *, now, text=None, record=None, step=1):
+    record_mapping = record or _real_level_record()
+    record_obj = vua.ChainAuthorizationRecord.from_mapping(record_mapping)
+    store = build_db(
+        tmp_path,
+        anchor={"message_id": CHAIN_ANCHOR_ID},
+        rows=[
+            {
+                "message_id": CHAIN_MESSAGE_ID,
+                "text": text or record_obj.literal_text,
+                "created_at": record_obj.created_at,
+            }
+        ],
+    )
+    connection = vua.open_store_ro(store)
+    try:
+        ledger = vua.ChainAuthorityLedger(
+            tmp_path / "flight" / "autorizacion_cadena.ledger.jsonl"
+        )
+        return vua.consume_chain_authorization(
+            ledger,
+            CHAIN_MESSAGE_ID,
+            step,
+            "CO-33",
+            "CO-34",
+            connection=connection,
+            record=record_obj,
+            anchor_message_id=CHAIN_ANCHOR_ID,
+            now=now,
+        )
+    finally:
+        connection.close()
+
+
+def test_level_authorization_real_revalidation_consumes_once(tmp_path):
+    now = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+    record = vua.ChainAuthorizationRecord.from_mapping(_real_level_record())
+    store = build_db(
+        tmp_path,
+        anchor={"message_id": CHAIN_ANCHOR_ID},
+        rows=[
+            {
+                "message_id": CHAIN_MESSAGE_ID,
+                "text": record.literal_text,
+                "created_at": record.created_at,
+            }
+        ],
+    )
+    connection = vua.open_store_ro(store)
+    try:
+        ledger = vua.ChainAuthorityLedger(tmp_path / "flight" / "ledger.jsonl")
+        kwargs = {
+            "connection": connection,
+            "record": record,
+            "anchor_message_id": CHAIN_ANCHOR_ID,
+            "now": now,
+        }
+        assert (
+            vua.consume_chain_authorization(
+                ledger, CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34", **kwargs
+            )
+            is True
+        )
+        assert (
+            vua.consume_chain_authorization(
+                ledger, CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34", **kwargs
+            )
+            is False
+        )
+    finally:
+        connection.close()
+
+
+def test_level_authorization_real_revalidation_rejects_expiry(tmp_path):
+    now = datetime(2026, 11, 23, 21, 0, tzinfo=timezone.utc)
+    assert _consume_real_level(tmp_path, now=now) is False
+
+
+def test_level_authorization_real_revalidation_rejects_mutated_text(tmp_path):
+    now = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+    assert _consume_real_level(tmp_path, now=now, text="texto mutado") is False
+
+
 def test_chain_ledger_rejects_invalid_step_and_preserves_append_only_log(tmp_path):
     ledger = vua.ChainAuthorityLedger(tmp_path / "chain.jsonl")
 

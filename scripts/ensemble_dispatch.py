@@ -127,6 +127,13 @@ if str(_AGENT_DIR) not in sys.path:
 from agents_config import load_agents_config  # noqa: E402
 from bus.redact import redact  # noqa: E402
 from bus.subprocess_env import build_backend_env  # noqa: E402
+from scripts.flight.verify_user_authorization import (  # noqa: E402
+    LEVEL_GATE_VERSION,
+    ChainAuthorityLedger,
+    ChainAuthorizationRecord,
+    InfraError,
+    open_store_ro,
+)
 
 
 SCORECARD_REL = Path(".agent/runtime/ensemble/scorecard.jsonl")
@@ -276,7 +283,240 @@ SCORECARD_FIELDS = [
     # fila sin bundle registrado (legacy, o ronda que fallo antes de leer el
     # contenido: usage-error, missing-nonce). Al final, prefijo frozen.
     "bundle_sha256",
+    # WOT-2026-221c: extension append-only del recibo de nivel.
+    "nivel_gate_version",
+    "uso",
+    "nivel_max_uso",
+    "nivel_clave",
+    "peticion",
+    "techo",
+    "procedencia_stall",
 ]
+
+_LEVEL_ORDER = {"base": 0, "medio": 1, "alto": 2, "premium": 3}
+_UUID36_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def derive_usage(phase: object, task_type: str | None = None) -> str:
+    """Deriva el uso del gate; ``task_type`` solo se valida contra el enum."""
+    if task_type is not None and task_type not in TASK_TYPES:
+        raise ValueError(_invalid_task_type_message(task_type))
+    return "U8" if canonical_phase(phase) == "CLOSE" else "U4"
+
+
+def _level_rejection(reason: str, detail: str = "") -> LevelGateError:
+    instruction = (
+        "Revalida con una peticion de usuario UUID36 verificable y repite la ronda; "
+        "si aplica, anade --peticion-store-path <almacen de mensajes> y "
+        "--peticion-anchor <messageId ancla> con FLIGHT_DIR apuntando al vuelo "
+        "(registro autorizacion_cadena.json); verifica con "
+        "scripts/flight/verify_user_authorization.py; un plan, brief o decision "
+        "de agente no sustituye la peticion."
+    )
+    return LevelGateError(f"{reason}: {detail}. {instruction}")
+
+
+def validate_message_id(message_id: str | None) -> bool:
+    """Acepta solo el formato UUID36 requerido por la peticion."""
+    return isinstance(message_id, str) and bool(_UUID36_RE.fullmatch(message_id))
+
+
+def _authorize_level_request(
+    *,
+    message_id: str,
+    step: int,
+    out_code: str,
+    in_code: str,
+    store_path: Path | None,
+    anchor_message_id: str | None,
+) -> bool:
+    """Revalida y consume una peticion real desde el vuelo aislado.
+
+    Before: ``FLIGHT_DIR`` contiene el registro de cadena y el llamador aporta
+        el store SQLite y el messageId ancla mediante flags explícitos.
+    During: abre el store en solo lectura, revalida la identidad completa y
+        consume una sola vez ``(messageId, step)`` en el ledger del vuelo.
+    After: devuelve True solo si ambas operaciones fueron autorizadas; todas
+        las conexiones se cierran aunque la revalidación falle.
+    """
+    raw_flight_dir = os.environ.get("FLIGHT_DIR")
+    flight_dir = (
+        Path(raw_flight_dir.strip())
+        if raw_flight_dir and raw_flight_dir.strip()
+        else None
+    )
+    if flight_dir is None or store_path is None or not anchor_message_id:
+        return False
+    try:
+        raw_record = json.loads(
+            (flight_dir / "autorizacion_cadena.json").read_text(encoding="utf-8")
+        )
+        record = ChainAuthorizationRecord.from_mapping(raw_record)
+        if record.message_id != message_id:
+            return False
+        connection = open_store_ro(store_path)
+        try:
+            ledger = ChainAuthorityLedger(
+                flight_dir / "autorizacion_cadena.ledger.jsonl"
+            )
+            from scripts.flight.verify_user_authorization import (
+                consume_chain_authorization,
+            )
+
+            return consume_chain_authorization(
+                ledger,
+                message_id,
+                step,
+                out_code,
+                in_code,
+                connection=connection,
+                record=record,
+                anchor_message_id=anchor_message_id,
+                now=datetime.now(timezone.utc),
+            )
+        finally:
+            connection.close()
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        AttributeError,
+        TypeError,
+        ValueError,
+        InfraError,
+    ):
+        return False
+
+
+def _stall_receipt(project_root: Path | None) -> tuple[object | None, bool]:
+    """Lee solo el recibo T1 desde ``FLIGHT_OPS_DIR``; ausente permite."""
+    del project_root
+    ops = os.environ.get("FLIGHT_OPS_DIR")
+    if not ops:
+        return None, False
+    path = Path(ops) / "stall_state.json"
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None, False
+    receipt = state.get("nan_receipt") if isinstance(state, dict) else None
+    if not isinstance(receipt, dict):
+        return None, False
+    projection = receipt.get("proyeccion")
+    sanctioned = isinstance(projection, dict) and projection.get("nivel") == "URGENTE"
+    return receipt, sanctioned
+
+
+def evaluate_level_gate(  # noqa: C901
+    profile_name: str,
+    *,
+    config: dict,
+    phase: object = None,
+    task_type: str | None = None,
+    project_root: Path | None = None,
+    ticket: str | None = None,
+    ronda: int = 1,
+    peticion_usuario: str | None = None,
+    peticion_store_path: Path | None = None,
+    peticion_anchor: str | None = None,
+) -> dict:
+    """Evalua nivel, acceso, techo y recibo T1 antes de gastar una llamada.
+
+    Las peticiones de nivel superior se revalidan y consumen contra el vuelo;
+    sin store, ancla o ``FLIGHT_DIR`` el camino permanece fail-closed.
+    """
+    registry = config.get("ensemble_registry")
+    profile = (config.get("ensemble_profiles") or {}).get(profile_name, {})
+    if not isinstance(registry, dict):
+        raise _level_rejection("nivel-no-autorizado", "registro-ausente")
+    if not profile.get("backend_key"):
+        raise _level_rejection("nivel-no-autorizado", "backend-key-ausente")
+    usage = derive_usage(phase, task_type)
+    roles = registry.get("roles") or {}
+    role = roles.get(usage) or {}
+    if usage == "U8":
+        lens_level = None
+        if project_root is not None and ticket:
+            ficha = (
+                Path(project_root) / ".agent" / "collaboration" / f"FICHA_{ticket}.md"
+            )
+            try:
+                for line in ficha.read_text(encoding="utf-8").splitlines():
+                    if line.strip().lower().startswith("nivel_lentes:"):
+                        lens_level = line.split(":", 1)[1].strip().lower()
+                        break
+            except (OSError, UnicodeError):
+                lens_level = None
+        if lens_level != "alto":
+            role = roles.get("U4") or {}
+    max_level = role.get("nivel")
+    ceilings = registry.get("uso_maximo_por_tipo") or {}
+    ceiling = ceilings.get(max_level)
+    if (
+        max_level not in _LEVEL_ORDER
+        or not isinstance(ceiling, (int, float))
+        or isinstance(ceiling, bool)
+        or not math.isfinite(float(ceiling))
+        or ceiling < 0
+    ):
+        raise _level_rejection(
+            "nivel-no-autorizado", "uso_maximo_por_tipo ausente o invalido"
+        )
+    key = (registry.get("backend_keys") or {}).get(profile.get("backend_key"))
+    if not isinstance(key, dict):
+        raise _level_rejection("nivel-no-autorizado", "clave-ausente")
+    if key.get("status") != "active":
+        raise _level_rejection("nivel-no-autorizado", "clave-inactiva")
+    levels = key.get("niveles") if isinstance(key, dict) else None
+    declared = (
+        levels
+        if isinstance(levels, list) and levels
+        else [key.get("nivel") if isinstance(key, dict) else None]
+    )
+    valid = sorted(
+        (level for level in declared if level in _LEVEL_ORDER), key=_LEVEL_ORDER.get
+    )
+    effective = next(
+        (
+            level
+            for level in reversed(valid)
+            if _LEVEL_ORDER[level] <= _LEVEL_ORDER[max_level]
+        ),
+        "premium",
+    )
+    access = key.get("acceso") if isinstance(key, dict) else None
+    if access == "externo_pago":
+        raise _level_rejection("acceso-externo-pago", profile.get("backend_key", ""))
+    if _LEVEL_ORDER.get(effective, 3) > _LEVEL_ORDER[max_level] and (
+        not validate_message_id(peticion_usuario)
+        or not _authorize_level_request(
+            message_id=peticion_usuario,
+            step=ronda,
+            out_code=ticket or "ticket",
+            in_code=profile_name,
+            store_path=peticion_store_path,
+            anchor_message_id=peticion_anchor,
+        )
+    ):
+        raise _level_rejection("nivel-no-autorizado", f"{effective}>{max_level}")
+    stall, sanctioned = _stall_receipt(project_root)
+    if sanctioned:
+        raise _level_rejection("gasto-sancionado", "recibo T1 sancionado")
+    result = {
+        "nivel_gate_version": LEVEL_GATE_VERSION,
+        "uso": usage,
+        "nivel_max_uso": max_level,
+        "nivel_clave": effective,
+        "peticion": peticion_usuario,
+        "techo": ceiling,
+    }
+    if stall is not None:
+        result["procedencia_stall"] = stall.get("procedencia")
+    return result
+
 
 ADJUDICATED_OUTCOMES = {
     "adoptada",
@@ -701,11 +941,16 @@ def resolve_default_session_id(project_root: Path) -> str | None:
         NO bloquea la ronda -- deja la fila honestamente NO-ATRIBUIBLE
         (`session_id=None`), que el cierre reporta (DoD (d)), nunca la esconde.
     """
+
     try:
         from scripts.init_session_scratch import resolve_current_session_id
     except ImportError:  # pragma: no cover - scratch no importable
         return None
     return resolve_current_session_id(project_root)
+
+
+class LevelGateError(DispatchBlockedError):
+    """Rechazo estable del gate WOT-2026-221c."""
 
 
 # WOT-2026-027n: gate de CONTENIDO, acotado a ASIGNACION CON VALOR DE ALTA
@@ -2622,6 +2867,9 @@ def send_to_profile(
     # real; hoy es ruta NO VERIFICADA (ningun test la ejercita contra un
     # Builder real, ver FICHA s.1).
     caller: str = "lens",
+    peticion_usuario: str | None = None,
+    peticion_store_path: Path | None = None,
+    peticion_anchor: str | None = None,
 ) -> str:
     """Camino de salida POR PERFIL hacia un backend; el preflight corre AQUI.
 
@@ -2658,6 +2906,7 @@ def send_to_profile(
         )
     backend_cfg = config["backends"][profile["backend"]]
     enforce_profile_policy(profile, caller=caller, backend_cfg=backend_cfg)
+    level_gate_prechecked = profile.pop("_level_gate_prechecked", False) is True
     # WOT-2026-042v: el ambito se resuelve AQUI porque esta es la salida
     # POR PERFIL hacia un backend (lo declara el docstring, y el canary de
     # WOT-2026-042k midio que 9 de 9 `dispatch.py` de gobierno llaman a esta
@@ -2706,6 +2955,15 @@ def send_to_profile(
     if not allowed:
         raise DispatchBlockedError(
             f"privacy_preflight BLOQUEA el envio via '{profile_name}': {reason}"
+        )
+    if not level_gate_prechecked:
+        profile["_level_gate_receipt"] = evaluate_level_gate(
+            profile_name,
+            config=config,
+            project_root=project_root,
+            peticion_usuario=peticion_usuario,
+            peticion_store_path=peticion_store_path,
+            peticion_anchor=peticion_anchor,
         )
     # WOT-2026-042k: el canary observa AQUI, no solo en `run_pipeline`.
     # MEDIDO en el review: 9 de 9 `dispatch.py` de gov_* llaman a esta funcion
@@ -4912,6 +5170,9 @@ def smoke_profile(
     # `False` (default) conserva el dict historico sin `class`.
     backend_cfg_override: dict | None = None,
     probe: bool = False,
+    peticion_usuario: str | None = None,
+    peticion_store_path: Path | None = None,
+    peticion_anchor: str | None = None,
 ) -> dict:
     """Smoke round-trip por CONTENIDO: el token debe volver en la respuesta.
 
@@ -4947,6 +5208,9 @@ def smoke_profile(
             sensitivity="public",
             transport=transport,
             timeout=timeout,
+            peticion_usuario=peticion_usuario,
+            peticion_store_path=peticion_store_path,
+            peticion_anchor=peticion_anchor,
         )
     except DispatchBlockedError:
         # WOT-2026-055o: el preflight bloqueo ANTES de tocar red -- no hubo
@@ -6115,6 +6379,7 @@ def _record_round(
             # este registrador. None cuando la fila no llego a leer un bundle
             # (usage-error, missing-nonce).
             "bundle_sha256": bundle_sha256_value,
+            **(profile.get("_level_gate_receipt") or {}),
             **(
                 {"post_round_incident": True}
                 if profile.get("post_round_incident")
@@ -6145,6 +6410,9 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
     challenge_nonce: str | None = None,
     author_model: str | None = None,
     reviewer_model: str | None = None,
+    peticion_usuario: str | None = None,
+    peticion_store_path: Path | None = None,
+    peticion_anchor: str | None = None,
     _tried_profiles: frozenset[str] = frozenset(),
 ) -> str:
     """UNA ronda de un bucle de GOBIERNO (`launched_from: chat`), registrada.
@@ -6254,6 +6522,22 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
             f"y la barrera de independencia cuenta esa columna. Usa "
             f"--backend-key {expected_key}."
         )
+    # CO-161 06:3x: la identidad preexistente se valida antes del gate de
+    # nivel; asi un argumento de perfil incorrecto no consume ni evalua una
+    # peticion. El gate queda inmediatamente antes del primer gasto.
+    profile["_level_gate_receipt"] = evaluate_level_gate(
+        profile_name,
+        config=config,
+        phase=phase,
+        task_type=task_type,
+        project_root=project_root,
+        ticket=ticket,
+        ronda=ronda,
+        peticion_usuario=peticion_usuario,
+        peticion_store_path=peticion_store_path,
+        peticion_anchor=peticion_anchor,
+    )
+    profile["_level_gate_prechecked"] = True
     # WOT-2026-200a: familia antes del hash, despacho y registro de la ronda.
     _family_check_before_spend(
         project_root,
@@ -6302,6 +6586,9 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
             sensitivity=sensitivity,
             transport=transport,
             project_root=project_root,
+            peticion_usuario=peticion_usuario,
+            peticion_store_path=peticion_store_path,
+            peticion_anchor=peticion_anchor,
         )
     except DispatchBlockedError as _block_exc:
         _latency_ms = round((time.perf_counter() - _t0) * 1000)
@@ -7133,6 +7420,9 @@ def _probe_one_profile(
     timeout: int,
     transport,
     project_root: Path | None,
+    peticion_usuario: str | None,
+    peticion_store_path: Path | None,
+    peticion_anchor: str | None,
 ) -> dict:
     """Prueba UN perfil: `/v1/models` ausente -> skip; si no, smoke con tope."""
     profile = profiles[name]
@@ -7172,6 +7462,9 @@ def _probe_one_profile(
             backend_cfg_override=override,
             probe=True,
             timeout=timeout,
+            peticion_usuario=peticion_usuario,
+            peticion_store_path=peticion_store_path,
+            peticion_anchor=peticion_anchor,
         )
 
 
@@ -7186,6 +7479,9 @@ def _probe_all_profiles(
     timeout: int,
     transport,
     project_root: Path | None,
+    peticion_usuario: str | None = None,
+    peticion_store_path: Path | None = None,
+    peticion_anchor: str | None = None,
 ) -> dict[str, dict]:
     """Smoke en paralelo con un `ThreadPoolExecutor` compartido + semaforo POR
     PROVEEDOR.
@@ -7210,6 +7506,9 @@ def _probe_all_profiles(
             timeout=timeout,
             transport=transport,
             project_root=project_root,
+            peticion_usuario=peticion_usuario,
+            peticion_store_path=peticion_store_path,
+            peticion_anchor=peticion_anchor,
         )
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -7218,6 +7517,8 @@ def _probe_all_profiles(
             name = futures[fut]
             try:
                 name, result = fut.result()
+            except LevelGateError:
+                raise
             except Exception as exc:  # un perfil no aborta el smoke
                 result = {
                     "profile": name,
@@ -7298,7 +7599,11 @@ def _cmd_smoke(args, config, *, models_fetcher=None, transport=None) -> int:
         que impone el tope de 4 (los grupos de proveedores corren a la vez;
         el tope NO es un total global); (4) un modelo ausente de `/v1/models`
         se marca `model_unavailable` SIN gastar completion; (5) agrega en el
-        orden original de `names` (JSON deterministico).
+        orden original de `names` (JSON deterministico). La opcion A de
+        WOT-2026-221c deja el consumo de peticiones exclusivamente en
+        `send_to_profile`: los skips por cuarentena o modelo ausente no
+        consumen, y un `LevelGateError` se propaga desde el executor para
+        conservar el rc 2 del CLI cuando el perfil realmente se intenta.
     After: imprime el JSON con `denominador`/`inspeccionados`/`vivos`/
         `saltados` (consistente: `inspeccionados + len(saltados) ==
         denominador`) y retorna 0 si hay algun vivo, 1 si `inspeccionados==0`
@@ -7329,6 +7634,9 @@ def _cmd_smoke(args, config, *, models_fetcher=None, transport=None) -> int:
             "en el scorecard",
             file=sys.stderr,
         )
+    peticion_usuario = getattr(args, "peticion_usuario", None)
+    peticion_store_path = getattr(args, "peticion_store_path", None)
+    peticion_anchor = getattr(args, "peticion_anchor", None)
     saltados: list[dict] = []
 
     # Cuarentena (diseno Seccion 5.2): aviso ANTES de la llamada real, para
@@ -7366,6 +7674,9 @@ def _cmd_smoke(args, config, *, models_fetcher=None, transport=None) -> int:
             timeout=timeout,
             transport=transport,
             project_root=project_root,
+            peticion_usuario=peticion_usuario,
+            peticion_store_path=peticion_store_path,
+            peticion_anchor=peticion_anchor,
         )
 
     return _emit_smoke_report(
@@ -8382,6 +8693,9 @@ def _cmd_loop_round(args, config) -> int:  # noqa: C901 - WOT-2026-152s-2 anade 
             challenge_nonce=args.challenge_nonce,
             author_model=getattr(args, "author_model", None),
             reviewer_model=getattr(args, "reviewer_model", None),
+            peticion_usuario=getattr(args, "peticion_usuario", None),
+            peticion_store_path=getattr(args, "peticion_store_path", None),
+            peticion_anchor=getattr(args, "peticion_anchor", None),
         )
     except BackendTimeoutError as exc:
         print(
@@ -8848,6 +9162,9 @@ def main(argv: list[str] | None = None) -> int:
         help="destino-rol donde registrar la fila de exploracion "
         "(default: AGENT_PROJECT_ROOT; sin ninguno no se registra)",
     )
+    p_smoke.add_argument("--peticion-usuario", default=None)
+    p_smoke.add_argument("--peticion-store-path", type=Path, default=None)
+    p_smoke.add_argument("--peticion-anchor", default=None)
     p_smoke.add_argument(
         "--ignore-quarantine",
         action="store_true",
@@ -9021,6 +9338,13 @@ def main(argv: list[str] | None = None) -> int:
         "y sale con 5",
     )
     p_loop.add_argument("--project-root", required=True)
+    p_loop.add_argument(
+        "--peticion-usuario",
+        default=None,
+        help="messageId UUID36 de una peticion de usuario verificada para elevar nivel",
+    )
+    p_loop.add_argument("--peticion-store-path", type=Path, default=None)
+    p_loop.add_argument("--peticion-anchor", default=None)
 
     p_adj = sub.add_parser("adjudicate", help="adjudicar outcome de una ronda")
     p_adj.add_argument("--ticket", required=True)
@@ -9130,6 +9454,9 @@ def main(argv: list[str] | None = None) -> int:
     }
     try:
         return handlers[args.command](args, config)
+    except LevelGateError as exc:
+        print(f"[BLOCKED] {exc}", file=sys.stderr)
+        return 2
     except DispatchBlockedError as exc:
         # Veto de politica: la barrera bloqueo A PROPOSITO. Conserva su
         # prefijo `[BLOCKED]` y su codigo de salida.

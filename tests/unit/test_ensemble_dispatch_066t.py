@@ -45,6 +45,7 @@ def _config() -> dict:
         "ensemble_profiles": {
             "p_chal": {
                 "backend": "fake",
+                "backend_key": "BA11",
                 "channel": "api",
                 "model": "m2",
                 "api_base_url": "https://fake.example/v1/chat/completions",
@@ -52,6 +53,11 @@ def _config() -> dict:
                 "data_sensitivity": "public",
                 "write": False,
             },
+        },
+        "ensemble_registry": {
+            "roles": {"U4": {"nivel": "medio"}, "U8": {"nivel": "alto"}},
+            "uso_maximo_por_tipo": {"medio": 7000, "alto": 7000},
+            "backend_keys": {"BA11": {"status": "active", "nivel": "medio"}},
         },
     }
 

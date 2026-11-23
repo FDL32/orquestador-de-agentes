@@ -90,6 +90,7 @@ def _config() -> dict:
         "ensemble_profiles": {
             "p_chal": {
                 "backend": "fake",
+                "backend_key": "BKA",
                 "channel": "api",
                 "model": "m2",
                 "api_base_url": "https://fake.example/v1/chat/completions",
@@ -100,6 +101,11 @@ def _config() -> dict:
         },
         "ensemble_pipelines": {},
         "ensemble_private_roots": [],
+        "ensemble_registry": {
+            "roles": {"U4": {"nivel": "medio"}, "U8": {"nivel": "alto"}},
+            "uso_maximo_por_tipo": {"medio": 7000, "alto": 7000},
+            "backend_keys": {"BKA": {"status": "active", "nivel": "medio"}},
+        },
     }
 
 
@@ -751,6 +757,7 @@ def _internal_timeout_config(timeout_s: int = 1) -> dict:
         "ensemble_profiles": {
             "p_hang": {
                 "backend": "hangtest",
+                "backend_key": "BKH",
                 "channel": "agent",
                 "data_sensitivity": "public",
                 "write": False,
@@ -758,11 +765,19 @@ def _internal_timeout_config(timeout_s: int = 1) -> dict:
         },
         "ensemble_pipelines": {},
         "ensemble_private_roots": [],
+        "ensemble_registry": {
+            "roles": {"U4": {"nivel": "medio"}, "U8": {"nivel": "alto"}},
+            "uso_maximo_por_tipo": {"medio": 7000, "alto": 7000},
+            "backend_keys": {"BKH": {"status": "active", "nivel": "medio"}},
+        },
     }
 
 
 def _hang_argv(tmp_path: Path) -> list[str]:
-    return ["p_hang" if a == "p_chal" else a for a in _argv(tmp_path)]
+    return [
+        "p_hang" if a == "p_chal" else "BKH" if a == "BKA" else a
+        for a in _argv(tmp_path)
+    ]
 
 
 def test_internal_backend_timeout_leaves_timeout_row_and_rc5(

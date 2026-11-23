@@ -89,6 +89,7 @@ import argparse
 import json
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -101,6 +102,10 @@ from ensemble_dispatch import (  # noqa: E402
     load_motor_config,
     read_emitted_nonces,
     resolve_governed_commit_sha,
+)
+from scripts.flight.verify_user_authorization import (  # noqa: E402
+    INTEGRATION_CUTOFF,
+    LEVEL_GATE_VERSION as _LEVEL_GATE_VERSION,
 )
 
 
@@ -118,6 +123,29 @@ DEFAULT_MIN_DISTINCT_BACKENDS = {
 }
 # Fallback conservador cuando el deliverable_type es desconocido: el mas estricto.
 FALLBACK_MIN_DISTINCT = 4
+_LEVEL_ORDER = {"base": 0, "medio": 1, "alto": 2, "premium": 3}
+LEVEL_GATE_VERSION = _LEVEL_GATE_VERSION
+
+
+def validate_level_receipt(row: dict) -> dict[str, object]:
+    """Valida grandfather y autorizacion mínima de una fila de ronda."""
+    marker = row.get("nivel_gate_version")
+    raw_ts = row.get("ts")
+    try:
+        stamp = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")).date()
+    except (TypeError, ValueError):
+        return {"ok": False, "reason": "nivel-no-autorizado"}
+    if not marker:
+        if stamp < INTEGRATION_CUTOFF:
+            return {"ok": True, "reason": "grandfather"}
+        return {"ok": False, "reason": "nivel-no-autorizado"}
+    maximum = row.get("nivel_max_uso")
+    effective = row.get("nivel_clave")
+    if _LEVEL_ORDER.get(str(effective), 3) > _LEVEL_ORDER.get(
+        str(maximum), -1
+    ) and not row.get("peticion"):
+        return {"ok": False, "reason": "nivel-no-autorizado"}
+    return {"ok": True, "reason": "nivel-gate"}
 
 
 class FamilyResolutionError(ValueError):
@@ -1674,12 +1702,33 @@ def audit_commit(
         }
         for nonce, instancia in sorted(fanouts.items())
     ]
-    return {
+
+    def is_level_candidate(row: dict) -> bool:
+        if row.get("event", "ronda") != "ronda":
+            return False
+        if row.get("nivel_gate_version") or any(
+            row.get(name) is not None
+            for name in ("uso", "nivel_max_uso", "nivel_clave", "peticion", "techo")
+        ):
+            return True
+        raw_ts = row.get("ts")
+        try:
+            stamp = datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00")).date()
+        except (TypeError, ValueError):
+            return False
+        return stamp >= INTEGRATION_CUTOFF
+
+    level_failures = [
+        row
+        for row in scorecard_rows
+        if is_level_candidate(row) and not validate_level_receipt(row)["ok"]
+    ]
+    result = {
         "commit_sha": commit_sha,
         "distinct_backends": sorted(backends),
         "min_distinct": min_distinct,
         # C' (DEC-bucle-doc-001): decide la INSTANCIA, no la union.
-        "ok": any(entry["ok"] for entry in per_nonce),
+        "ok": any(entry["ok"] for entry in per_nonce) and not level_failures,
         # Instancias por nonce, con las que no llegan a N NOMBRADAS.
         "per_nonce": per_nonce,
         # WOT-2026-043q: rondas que corrieron y callaron. Se reportan SIEMPRE
@@ -1700,6 +1749,9 @@ def audit_commit(
             scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
         ),
     }
+    if level_failures:
+        result["level_failures"] = level_failures
+    return result
 
 
 def summarize_loop_groups(

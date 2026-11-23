@@ -41,12 +41,17 @@ import subprocess
 import sys
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
 
 _ORIGINAL_OS_CLOSE = os.close
+
+# CO-161 06:3x, sujeto a CO-160: las rondas sin marcador anteriores al
+# primer dia completo posterior a la integracion quedan grandfathered.
+LEVEL_GATE_VERSION = "WOT-2026-221c-v1"
+INTEGRATION_CUTOFF = date(2026, 11, 24)
 
 
 SCHEMA_MESSAGES = "orchestration_v2_projection_messages"
@@ -1614,6 +1619,43 @@ class ChainAuthorityLedger:
                 lock_path.unlink()
             raise InfraError("chain-ledger-append-failed", str(exc)) from exc
         return True
+
+
+def validate_chain_request_id(message_id: str | None) -> bool:
+    """Valida la forma UUID36 de una peticion antes de consultar el almacen."""
+    return isinstance(message_id, str) and bool(_UUID36_RE.fullmatch(message_id))
+
+
+def consume_chain_authorization(
+    ledger: ChainAuthorityLedger,
+    message_id: str,
+    step: int,
+    out_code: str,
+    in_code: str,
+    *,
+    verified: bool = False,
+    connection: sqlite3.Connection | None = None,
+    record: ChainAuthorizationRecord | None = None,
+    anchor_message_id: str | None = None,
+    now: datetime | None = None,
+) -> bool:
+    """Revalida una cadena y consume atomamente `(messageId, step)`."""
+    if not validate_chain_request_id(message_id):
+        return False
+    if connection is not None or record is not None:
+        if connection is None or record is None or not anchor_message_id:
+            return False
+        if record.message_id != message_id:
+            return False
+        decision = revalidate_chain_authorization(
+            connection, record=record, anchor_message_id=anchor_message_id, now=now
+        )
+        if not decision.allowed:
+            return False
+        verified = True
+    if not verified:
+        return False
+    return ledger.consume(message_id, step, out_code, in_code)
 
 
 def _default_git_runner(
