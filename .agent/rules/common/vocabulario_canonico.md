@@ -16,16 +16,37 @@ No usar "workspace" a secas: el termino es ambiguo porque describe tanto el repo
 
 ### Tipos de SESION: DISENO vs DESARROLLO (WOT-2026-039c)
 
-Solo hay DOS tipos de sesion y este es su vocabulario canonico. **No usar "research"** para
+Solo hay DOS tipos de sesion (DISENO y DESARROLLO), distintos de las clases CO, IM y TR de la seccion siguiente, y este es su vocabulario canonico. **No usar "research"** para
 designarlas: lo que produce una sesion de planificacion es un DISENO (un artefacto: el flight plan,
 la ficha, el DAG), no una investigacion.
 
 | Termino | Que hace | Escribe en | Prompts (bootstrap / cierre) |
 |---------|----------|------------|------------------------------|
-| `sesion_diseno` | Tria el backlog, disena planes de vuelo y redacta fichas. READ-ONLY sobre el codigo: NO implementa, NO commitea codigo, NO escribe `backlog.md`. | `queued/`, `reports/`, `backlog_inbox/` | `orchestrator_session_bootstrap_design.md` / `orchestrator_session_close_full_audit_design.md` |
-| `sesion_desarrollo` | Ejecuta un vuelo: implementa, commitea, mueve `queued/ -> in_flight/ -> done/` y escribe `backlog.md`. | codigo, `backlog.md`, `in_flight/`, `done/` | `orchestrator_session_bootstrap.md` / `orchestrator_session_close_full_audit.md` |
+| `sesion_diseno` | Tria el backlog, disena planes de vuelo (el flight plan, artefacto de diseno; no la capa vuelo de la seccion siguiente) y redacta fichas. READ-ONLY sobre el codigo: NO implementa, NO commitea codigo, NO escribe `backlog.md`. | `queued/`, `reports/`, `backlog_inbox/` | `orchestrator_session_bootstrap_design.md` / `orchestrator_session_close_full_audit_design.md` |
+| `sesion_desarrollo` | Ejecuta los pipelines de un vuelo: implementa, commitea, mueve `queued/ -> in_flight/ -> done/` y escribe `backlog.md`. | codigo, `backlog.md`, `in_flight/`, `done/` | `orchestrator_session_bootstrap.md` / `orchestrator_session_close_full_audit.md` |
 
 El contrato de no-colision entre ambas vive en `<destino>/orchestrator_pipeline/flight_plans/INDEX.md`.
+
+### Vuelo, pipeline, ticket y sesion (WOT-2026-219c)
+
+ESTADO: PENDIENTE DE RATIFICACION LITERAL DEL USUARIO. D-V = A (7dba5ae6-a7c1-4153-bba2-4c8b5dca94e8) y las cinco recomendaciones (a42a125d-b6fb-4d3f-a1e0-2d16cb137169); la redaccion de las enmiendas de la ronda de lentes forma parte de lo pendiente de ratificar; la ratificacion del literal se registra en un commit posterior.
+
+Definiciones canonicas, cada una con su principio y su fin:
+
+| Termino | Definicion | Principio | Fin |
+|---------|------------|-----------|-----|
+| `vuelo` | Espacio de operacion autonoma CONTINUA sobre UN destino (`repo_destino` / `workspace_activo`), con id, rama, carpeta de estado, roster, registro de sesiones, cadena de relevo y conjunto de herramientas. | Se abre con una autorizacion tipo GO del usuario (regla de apertura abajo). | Lo cierra el usuario (regla de cierre abajo); NUNCA termina solo por un push. |
+| `pipeline` | Conjunto de tickets de un vuelo que se ejecuta y se cierra JUNTO: pasa por admision, implantacion y revision. | La coordinadora congela su cola. | UNA suite canonica verde sobre el HEAD final Y cada repo con commits del pipeline con su push autorizado (una frase por repo), o el descarte declarado por el usuario (el pipeline queda DESCARTADO); con un solo repo publicado el pipeline sigue ABIERTO. |
+| `ticket` | Ficha mas fila de backlog; se trabaja con cualquier combinacion de sesiones CO, IM y TR. | Alta con recibo. | Cierre con `commit:<sha>`. |
+| `sesion` | Hilo de T3 de clase CO, IM o TR. RELACION CLASE-TIPO: la clase (CO, IM o TR) identifica el hilo y su funcion en el vuelo, el tipo (DISENO o DESARROLLO) dice que escribe y que puede tocar, y ninguno sustituye al otro. | Creacion del hilo, con su codigo de sesion. | Hilo cerrado o relevado. |
+
+Un vuelo contiene pipelines sucesivos: el cierre de un pipeline (fila `pipeline`) no cierra el vuelo, que continua.
+
+- **Regla de apertura:** un vuelo se abre cuando hay 2 o mas tickets a implantar en el destino, sin numero fijo en el canon; un ticket suelto sigue el pipeline normal. Lo abre la coordinadora del destino con autorizacion tipo GO del usuario. El contador de sesiones CO es GLOBAL y no reutiliza numeros. Esta regla no reinterpreta vuelos antiguos de un solo ticket.
+- **Cierre de vuelo:** el usuario cierra un vuelo por EVENTO (p. ej. el destino ya no tiene trabajo o cambian las herramientas); vale para TODOS los vuelos.
+- **Objetivo de la CO:** lo fija el PRIMER aviso de contexto que salte (rc 3 o rc 4).
+
+`flight plan` (`PLAN_VUELO_*`) es el nombre del artefacto de diseno, no un concepto de esta capa; no cambia el contrato de `sesion_diseno`.
 
 ### Modos de EJECUCION multiagente: Tradicional, 4 capas, Intermedio
 
