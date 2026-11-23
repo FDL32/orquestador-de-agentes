@@ -119,6 +119,28 @@ def test_check_tr_lenses_cli_is_wired(tmp_path, capsys):
     assert exc.value.code == 2
 
 
+def test_d03_positive_accepts_declared_admission_families():
+    ficha = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: claude|sonnet-5|APPROVE\n"
+        "lente_2: opencode|nan/mimo-v2.6-flash|APPROVE\n"
+    )
+    rc, lines = cba.check_tr_lenses(ficha)
+    assert rc == 0
+    assert any("familia del triador: gemma" in line for line in lines)
+
+
+def test_d03_mutant_rejects_second_triador_family():
+    ficha = (
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: claude|sonnet-5|APPROVE\n"
+        "lente_2: kilo|nan/gemma4|APPROVE\n"
+    )
+    rc, lines = cba.check_tr_lenses(ficha)
+    assert rc == 1
+    assert any("comparte familia" in line.casefold() for line in lines)
+
+
 def _write_ficha(repo: Path, ticket: str, text: str) -> None:
     path = repo / ".agent" / "collaboration" / f"FICHA_{ticket}.md"
     path.write_text(text, encoding="utf-8")

@@ -32,9 +32,14 @@ def _session(
 
 def _cell(builder="thread:delegated-task:one"):
     return {
-        "revisor": "nan deepseek-v4-flash",
+        "revisor": "claude-sonnet-5",
         "builder": {"name": "codex gpt-5.6-luna", "threadId": builder},
         "lentes": ["glm5.3-flash", "deepseek-v4-flash"],
+        "v1": "codex gpt-5.6-luna",
+        "nivel": "medio",
+        "esfuerzo": "alto",
+        "cuenta": {"preferente": "alvarovans", "refugio": "brabander"},
+        "fase": ["A", "B", "C", "D"],
     }
 
 
@@ -68,12 +73,326 @@ def _run(registry, store, *flags):
     return checker.main(["--registry", str(registry), "--store", str(store), *flags])
 
 
+def _write_agents(path, mutate=None):
+    source = (
+        Path(checker.__file__).resolve().parents[2]
+        / ".agent"
+        / "config"
+        / "agents.json"
+    )
+    value = json.loads(source.read_text(encoding="utf-8"))
+    if mutate is not None:
+        mutate(value)
+    path.write_text(json.dumps(value), encoding="utf-8")
+
+
+def _run_new(registry, store, agents, flag):
+    return checker.main(
+        [
+            "--registry",
+            str(registry),
+            "--store",
+            str(store),
+            "--agents-json",
+            str(agents),
+            flag,
+        ]
+    )
+
+
 @pytest.fixture
 def fixtures(tmp_path):
     registry, store = tmp_path / "registry.json", tmp_path / "state.sqlite"
     _write_registry(registry, [])
     _write_store(store, [])
     return registry, store
+
+
+def test_post_cutoff_im_requires_declared_complete_cell(fixtures, tmp_path):
+    registry, store = fixtures
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    _write_registry(
+        registry,
+        [_session("IM-new", started="2026-11-24T00:00:00+01:00", celda=_cell())],
+    )
+    assert _run_new(registry, store, agents, "--check-im") == 0
+
+    missing = tmp_path / "agents-missing.json"
+    _write_agents(missing, lambda value: value.pop("celdas"))
+    assert _run_new(registry, store, missing, "--check-im") == 2
+
+    malformed = [
+        lambda value: value["celdas"]["im"]["builder"].update(backend_key="BA-NO"),
+        lambda value: value["celdas"]["im"].update(nivel="alto"),
+        lambda value: value["celdas"]["im"].update(
+            cuenta={"preferente": "otro", "refugio": "brabander"}
+        ),
+        lambda value: value["celdas"]["im"].update(
+            fase_B_subagentes_largos_claude=True
+        ),
+        lambda value: value["celdas"]["im"].update(fase_aplicable=["A", "E"]),
+        lambda value: value["celdas"]["im"].update(fase_aplicable=[{"fase": "A"}]),
+    ]
+    for index, mutate in enumerate(malformed):
+        candidate = tmp_path / f"agents-malformed-{index}.json"
+        _write_agents(candidate, mutate)
+        assert _run_new(registry, store, candidate, "--check-im") == 2
+
+    divergent = tmp_path / "agents-copy-divergent.json"
+    _write_agents(divergent, lambda value: value["celdas"]["im"].update(nivel="alto"))
+    assert _run_new(registry, store, divergent, "--check-im") == 2
+
+
+def test_post_cutoff_tr_uses_declared_models(fixtures, tmp_path):
+    registry, store = fixtures
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    session = _session(
+        "TR-new",
+        role="triaje",
+        started="2026-11-24T00:00:00+01:00",
+        celda={"triador": "nan/gemma4", "revisor": "mimo-v2.6-flash"},
+    )
+    _write_registry(registry, [session])
+    assert _run_new(registry, store, agents, "--check-tr") == 0
+    session["celda"]["revisor"] = "claude-sonnet-5"
+    _write_registry(registry, [session])
+    assert _run_new(registry, store, agents, "--check-tr") == 2
+    missing = tmp_path / "agents-no-tr.json"
+    _write_agents(missing, lambda value: value["celdas"].pop("tr"))
+    assert _run_new(registry, store, missing, "--check-tr") == 2
+
+
+def test_declaration_scope_is_per_mode(fixtures, tmp_path):
+    """Cada modo lee solo su celda: --check-im no lee celdas.tr ni al reves.
+
+    Before: la declaracion se validaba entera en cualquier modo con sesion nueva,
+        asi que una celda rota marcaba de rojo al comprobador de la otra.
+    During: ``_load_cell_declaration`` solo valida las celdas que pide el modo.
+    After: celdas.tr ausente deja ``--check-im`` en verde y celdas.im ausente
+        deja ``--check-tr`` en verde; cada modo sigue fallando en su propia celda.
+    """
+    registry, store = fixtures
+    no_tr = tmp_path / "agents-scope-no-tr.json"
+    _write_agents(no_tr, lambda value: value["celdas"].pop("tr"))
+    _write_registry(
+        registry,
+        [_session("IM-new", started="2026-11-24T00:00:00+01:00", celda=_cell())],
+    )
+    assert _run_new(registry, store, no_tr, "--check-im") == 0
+
+    no_im = tmp_path / "agents-scope-no-im.json"
+    _write_agents(no_im, lambda value: value["celdas"].pop("im"))
+    _write_registry(
+        registry,
+        [
+            _session(
+                "TR-new",
+                role="triaje",
+                started="2026-11-24T00:00:00+01:00",
+                celda={"triador": "nan/gemma4", "revisor": "mimo-v2.6-flash"},
+            )
+        ],
+    )
+    assert _run_new(registry, store, no_im, "--check-tr") == 0
+    _write_registry(
+        registry,
+        [_session("IM-new", started="2026-11-24T00:00:00+01:00", celda=_cell())],
+    )
+    assert _run_new(registry, store, no_im, "--check-im") == 2
+
+
+def test_legacy_only_does_not_read_agents_json(fixtures, tmp_path):
+    registry, store = fixtures
+    _write_registry(registry, [_session("IM-old", celda=_cell())])
+    missing = tmp_path / "does-not-exist.json"
+    assert (
+        checker.main(
+            [
+                "--registry",
+                str(registry),
+                "--store",
+                str(store),
+                "--agents-json",
+                str(missing),
+                "--check-im",
+            ]
+        )
+        == 0
+    )
+
+
+def test_declared_model_pattern_has_boundaries():
+    assert checker._model_pattern("claude-sonnet-5").search("claude-sonnet-5")
+    assert checker._model_pattern("claude-sonnet-5").search("claude sonnet 5")
+    assert not checker._model_pattern("claude-sonnet-5").search("claude-sonnet-5-5")
+    assert not checker._model_pattern("gemma4").search("antigemma4")
+    assert not checker._model_pattern("gemma4").search("gemma4flash")
+
+
+def test_direct_caller_without_declaration_loads_default(fixtures):
+    """Un llamador directo sin declaracion mide de verdad (hallazgo V1 MAYOR).
+
+    Before: ``check_im``/``check_tr`` devolvian ``RC_VIOLATION`` a cualquier
+        llamador que no aportara ``declaration``; el detector cableado
+        ``flight_stall_check.py:1070`` llama ``check_tr`` sin tercer argumento,
+        asi que pasaria a avisar "celda triaje no conforme" sobre una celda
+        conforme (un guard que miente es peor que un guard ausente).
+    During: si el llamador no trae declaracion y alguna sesion sujeta a las
+        reglas nuevas lo exige, la resuelve perezosamente desde ``agents.json``
+        por defecto; una lectura ilegible sigue siendo violacion cerrada.
+    After: la sesion TR conforme con ``started`` ausente da rc 0 por API
+        directa, igual que por CLI.
+    """
+    registry, _store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "TR-direct",
+                role="triaje",
+                started=None,
+                celda={"triador": "nan/gemma4", "revisor": "mimo-v2.6-flash"},
+            ),
+            _session("IM-direct", started=None, celda=_cell()),
+        ],
+    )
+    sessions = json.loads(Path(registry).read_text(encoding="utf-8"))["sessions"]
+    assert checker.check_tr(sessions, "2026-11-15") == 0
+    assert checker.check_im(sessions, "2026-11-15") == 0
+
+
+def test_direct_caller_declaration_unreadable_is_violation_not_exception(
+    fixtures, monkeypatch
+):
+    """La carga perezosa falla cerrada SIN excepcion para el llamador directo.
+
+    Before: la resolucion interna podia elevar ``CellDeclarationError`` fuera de
+        ``_run_mode``, que es el unico traductor conocido a rc.
+    During: el fallback captura ese error y devuelve ``None``.
+    After: los dos modos devuelven rc 2 sin propagar excepcion al consumidor.
+    """
+    registry, _store = fixtures
+    _write_registry(
+        registry,
+        [
+            _session(
+                "TR-broken",
+                role="triaje",
+                started=None,
+                celda={"triador": "nan/gemma4", "revisor": "mimo-v2.6-flash"},
+            ),
+            _session("IM-broken", started=None, celda=_cell()),
+        ],
+    )
+    sessions = json.loads(Path(registry).read_text(encoding="utf-8"))["sessions"]
+    monkeypatch.setattr(
+        checker, "_default_agents_json_path", lambda: Path("no-existe-221d.json")
+    )
+    assert checker.check_tr(sessions, "2026-11-15") == 2
+    assert checker.check_im(sessions, "2026-11-15") == 2
+
+
+def test_re_triador_y_revisor_tr_siguen_patrones_de_modulo():
+    """Contrato del consumidor fuera del FLT: registry_ops los lee por nombre.
+
+    Before: ``registry_ops._validate_cell_requirements`` usa
+        ``checker.RE_TRIADOR`` y ``checker.RE_REVISOR_TR`` como atributos de
+        modulo en cada alta de triaje.
+    During: los dos patrones siguen existiendo y casan con el par legacy del
+        canon P35 sin relajar sus bordes.
+    After: los cuatro casos (par legacy y sus dos rechazos tipicos) se cumplen.
+    """
+    assert checker.RE_TRIADOR.search("nan/gemma4")
+    assert not checker.RE_TRIADOR.search("antigemma4")
+    assert checker.RE_REVISOR_TR.search("mimo-v2.6-flash")
+    assert not checker.RE_REVISOR_TR.search("glm5.3-flash")
+
+
+def test_post_cutoff_mutation_missing_nivel_is_violation(fixtures, tmp_path):
+    registry, store = fixtures
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    cell = _cell()
+    cell.pop("nivel")
+    _write_registry(
+        registry,
+        [
+            _session(
+                "IM-mutation-nivel", started="2026-11-24T00:00:00+01:00", celda=cell
+            )
+        ],
+    )
+    assert _run_new(registry, store, agents, "--check-im") == 2
+
+
+def test_post_cutoff_mutation_wrong_esfuerzo_is_violation(fixtures, tmp_path):
+    registry, store = fixtures
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    cell = _cell()
+    cell["esfuerzo"] = "medio"
+    _write_registry(
+        registry,
+        [
+            _session(
+                "IM-mutation-esfuerzo", started="2026-11-24T00:00:00+01:00", celda=cell
+            )
+        ],
+    )
+    assert _run_new(registry, store, agents, "--check-im") == 2
+
+
+def test_post_cutoff_mutation_wrong_cuenta_is_violation(fixtures, tmp_path):
+    registry, store = fixtures
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    cell = _cell()
+    cell["cuenta"] = {"preferente": "brabander", "refugio": "alvarovans"}
+    _write_registry(
+        registry,
+        [
+            _session(
+                "IM-mutation-cuenta", started="2026-11-24T00:00:00+01:00", celda=cell
+            )
+        ],
+    )
+    assert _run_new(registry, store, agents, "--check-im") == 2
+
+
+def test_post_cutoff_mutation_missing_v1_is_violation(fixtures, tmp_path):
+    registry, store = fixtures
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    cell = _cell()
+    cell.pop("v1")
+    _write_registry(
+        registry,
+        [_session("IM-mutation-v1", started="2026-11-24T00:00:00+01:00", celda=cell)],
+    )
+    assert _run_new(registry, store, agents, "--check-im") == 2
+
+
+def test_retroactive_cutoff_preserves_legacy_and_rejects_new_contract(
+    fixtures, tmp_path
+):
+    registry, store = fixtures
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    cell = _cell()
+    for key in ("nivel", "esfuerzo", "cuenta", "fase", "v1"):
+        cell.pop(key)
+    _write_registry(
+        registry, [_session("IM-old", started="2026-11-10T00:00:00+01:00", celda=cell)]
+    )
+    assert _run_new(registry, store, agents, "--check-im") == 0
+    _write_registry(
+        registry, [_session("IM-new", started="2026-11-24T00:00:00+01:00", celda=cell)]
+    )
+    assert _run_new(registry, store, agents, "--check-im") == 2
+    _write_registry(registry, [_session("IM-unknown", started=None, celda=cell)])
+    assert _run_new(registry, store, agents, "--check-im") == 2
 
 
 def test_read_only_conforme_rc0(fixtures):

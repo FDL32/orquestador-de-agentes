@@ -17,6 +17,28 @@ Estas fases A-D del CICLO no son las fases A-D de cada movimiento de un hilo del
 La MADRE es la supervisora y la HIJA la coordinadora. La HIJA mueve a la
 MADRE; la MADRE mueve a la HIJA.
 
+## Registro de la sesion revisora IM (WOT-2026-221d)
+
+El estado conserva estas cinco claves hermanas de `madre_en_refugio` y
+`hija_en_refugio`: `revisor_im_en_refugio=false`,
+`revisor_im_cuenta=null`, `revisor_im_fase=null`,
+`revisor_im_relevo=null` y `revisor_im_retorno=null`. Un estado persistido
+anterior sin ellas se completa con estos defaults al leerse; no es un error.
+
+Los eventos cerrados `revisor_im_en_refugio`, `revisor_im_en_preferida`,
+`revisor_im_fase_a`, `revisor_im_fase_b`, `revisor_im_fase_c` y
+`revisor_im_fase_d` solo registran la observacion: actualizan cuenta, refugio,
+fase y el timestamp ISO de relevo o retorno, pero no ejecutan movimiento ni
+añaden acciones `MOVE_*`.
+
+La restriccion de FASE B se aplica a las tres entidades (madre, hija y
+`revisor_im`, que no son cuentas): los subagentes largos Claude están
+prohibidos en FASE B, con `alvarovans` o `brabander`. La funcion pura
+`subagentes_largos_claude_permitidos` solo permite A, C y D y falla cerrado
+para B, valores ausentes o desconocidos. La cuenta registrada por
+`revisor_im_cuenta` debe ser siempre la preferida `alvarovans` o el refugio
+`brabander`, según la disponibilidad declarada por este ciclo.
+
 ## Reglas de la hija
 
 En la FASE B la HIJA lanza sus lentes y subagentes con CODEX y NUNCA con claude alvarovans (moririan a medias al agotarse); los lentes claude solo con cuenta brabander explicita, permitidos en la FASE C.

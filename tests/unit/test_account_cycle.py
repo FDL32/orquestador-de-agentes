@@ -73,6 +73,92 @@ def action_pair(result):
     return result[1]["tipo"], result[1]["ejecutor"]
 
 
+def test_revisor_im_defaults_and_legacy_state_compatibility(tmp_path):
+    module = load_module()
+    assert module.ESTADO_INICIAL["revisor_im_en_refugio"] is False
+    assert module.ESTADO_INICIAL["revisor_im_cuenta"] is None
+    assert module.ESTADO_INICIAL["revisor_im_fase"] is None
+    assert module.ESTADO_INICIAL["revisor_im_relevo"] is None
+    assert module.ESTADO_INICIAL["revisor_im_retorno"] is None
+    path = tmp_path / "state.json"
+    path.write_text(json.dumps({"version": 1}), encoding="utf-8")
+    restored = module._read_state(path)
+    assert all(
+        restored[key] == module.ESTADO_INICIAL[key]
+        for key in (
+            "revisor_im_en_refugio",
+            "revisor_im_cuenta",
+            "revisor_im_fase",
+            "revisor_im_relevo",
+            "revisor_im_retorno",
+        )
+    )
+
+
+def test_revisor_im_account_events_record_without_new_action():
+    module = load_module()
+    now = 1000
+    base = state()
+    plain_state, plain_action = module.decide(readings(now=now), base, now, [])
+    refuge_state, refuge_action = module.decide(
+        readings(now=now), base, now, ["revisor_im_en_refugio"]
+    )
+    preferred_state, preferred_action = module.decide(
+        readings(now=now), base, now, ["revisor_im_en_preferida"]
+    )
+    assert refuge_state["revisor_im_en_refugio"] is True
+    assert refuge_state["revisor_im_cuenta"] == module.REFUGIO
+    relevo = datetime.fromisoformat(refuge_state["revisor_im_relevo"])
+    assert relevo.tzinfo is not None and relevo.timestamp() == now
+    assert preferred_state["revisor_im_en_refugio"] is False
+    assert preferred_state["revisor_im_cuenta"] == module.PREFERIDA
+    retorno = datetime.fromisoformat(preferred_state["revisor_im_retorno"])
+    assert retorno.tzinfo is not None and retorno.timestamp() == now
+    assert action_pair((plain_state, plain_action)) == action_pair(
+        (refuge_state, refuge_action)
+    )
+    assert action_pair((plain_state, plain_action)) == action_pair(
+        (preferred_state, preferred_action)
+    )
+
+
+@pytest.mark.parametrize(
+    "event, expected",
+    [
+        ("revisor_im_fase_a", "A"),
+        ("revisor_im_fase_b", "B"),
+        ("revisor_im_fase_c", "C"),
+        ("revisor_im_fase_d", "D"),
+    ],
+)
+def test_revisor_im_phase_events_record(event, expected):
+    module = load_module()
+    result, _ = module.decide(readings(now=1000), state(), 1000, [event])
+    assert result["revisor_im_fase"] == expected
+
+
+@pytest.mark.parametrize(
+    "fase, expected",
+    [
+        ("A", True),
+        ("B", False),
+        ("C", True),
+        ("D", True),
+        (None, False),
+        ("Z", False),
+        (7, False),
+    ],
+)
+def test_subagentes_largos_claude_fase_b_guard(fase, expected):
+    assert load_module().subagentes_largos_claude_permitidos(fase) is expected
+
+
+def test_revisor_im_unknown_event_cli_is_rejected():
+    with pytest.raises(SystemExit) as caught:
+        load_module().main(["--evento", "revisor_im_fase_z"])
+    assert caught.value.code == 2
+
+
 def test_m03_rem5_y_proyeccion_mueven_madre_a_refugio():
     """Before: the preferred account has either low remaining quota or a falling trend.
 

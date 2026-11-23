@@ -3023,6 +3023,22 @@
     "retry_backoff_multiplier": 2.0,
     "human_gate_timeout_seconds": 86400
   },
+  "celdas": {
+    "im": {
+      "builder": {"backend_key": "BA05"},
+      "revisor": {"backend_key": "BA269"},
+      "v1": {"backend_key": "BA05"},
+      "nivel": "medio",
+      "esfuerzo": "alto",
+      "cuenta": {"preferente": "alvarovans", "refugio": "brabander"},
+      "fase_aplicable": ["A", "B", "C", "D"],
+      "fase_B_subagentes_largos_claude": false
+    },
+    "tr": {
+      "triador": {"backend_key": "BA09"},
+      "revisor": {"backend_key": "BA04"}
+    }
+  },
   "skill_allowlists": {
     "BUILDER": [
       "/impl",

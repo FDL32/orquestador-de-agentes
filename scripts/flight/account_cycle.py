@@ -17,7 +17,7 @@ import sys
 import tempfile
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -27,6 +27,11 @@ ESTADO_INICIAL = {
     "version": 1,
     "madre_en_refugio": False,
     "hija_en_refugio": False,
+    "revisor_im_en_refugio": False,
+    "revisor_im_cuenta": None,
+    "revisor_im_fase": None,
+    "revisor_im_relevo": None,
+    "revisor_im_retorno": None,
     "agotada": None,
     "despertar_en": None,
     "reintentos": 0,
@@ -167,6 +172,16 @@ def _cuenta_agotada(pct, weekly):
     return (pct is not None and pct >= 100) or (weekly is not None and weekly >= 100)
 
 
+def subagentes_largos_claude_permitidos(fase):
+    """Apply the closed FASE B restriction to all three tracked entities.
+
+    Before: ``fase`` is an external phase value that may be absent or malformed.
+    During: allow only the phases outside the FASE B prohibition.
+    After: return ``True`` for A/C/D and ``False`` for every other value.
+    """
+    return isinstance(fase, str) and fase in {"A", "C", "D"}
+
+
 def decide(lecturas, estado, ahora, eventos):  # noqa: C901
     """Choose one account-cycle action from readings, state, time, and events.
 
@@ -201,6 +216,33 @@ def decide(lecturas, estado, ahora, eventos):  # noqa: C901
                     "motivo": None,
                 }
             )
+        elif evento == "revisor_im_en_refugio":
+            nuevo.update(
+                {
+                    "revisor_im_en_refugio": True,
+                    "revisor_im_cuenta": REFUGIO,
+                    "revisor_im_relevo": datetime.fromtimestamp(
+                        ahora, tz=timezone.utc
+                    ).isoformat(),
+                }
+            )
+        elif evento == "revisor_im_en_preferida":
+            nuevo.update(
+                {
+                    "revisor_im_en_refugio": False,
+                    "revisor_im_cuenta": PREFERIDA,
+                    "revisor_im_retorno": datetime.fromtimestamp(
+                        ahora, tz=timezone.utc
+                    ).isoformat(),
+                }
+            )
+        elif evento in {
+            "revisor_im_fase_a",
+            "revisor_im_fase_b",
+            "revisor_im_fase_c",
+            "revisor_im_fase_d",
+        }:
+            nuevo["revisor_im_fase"] = evento.rsplit("_", 1)[-1].upper()
         else:
             raise ValueError(f"evento desconocido: {evento}")
 
@@ -522,6 +564,12 @@ def main(argv=None):
             "madre_en_refugio",
             "hija_en_refugio",
             "madre_en_preferida",
+            "revisor_im_en_refugio",
+            "revisor_im_en_preferida",
+            "revisor_im_fase_a",
+            "revisor_im_fase_b",
+            "revisor_im_fase_c",
+            "revisor_im_fase_d",
         }
     ]
     if unknown:

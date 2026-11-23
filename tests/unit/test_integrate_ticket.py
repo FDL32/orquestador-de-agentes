@@ -242,6 +242,38 @@ def test_check_family_cli_accepts_distinct_families_and_rejects_author_mutant(
     assert "autor" in capsys.readouterr().out
 
 
+def test_d04_real_ticket_family_contract_and_author_mutant(tmp_path, capsys):
+    w = _family_world(
+        tmp_path,
+        [("opencode", "nan/mimo-v2.6-flash"), ("nan_api", "mimo-v2.6-flash")],
+    )
+    ficha = w.destino / ".agent" / "collaboration" / "FICHA_WOT-2026-221d.md"
+    ficha.write_text(
+        "autor_modelo: codex|gpt-5.6-luna\nrevisor_modelo: claude|sonnet-5\n",
+        encoding="utf-8",
+    )
+    args = [
+        "--ticket",
+        "WOT-2026-221d",
+        "--candidate",
+        "candidate",
+        "--project-root",
+        str(w.destino),
+        "--motor-root",
+        str(w.motor),
+        "--check-family",
+    ]
+    assert it.main(args) == 0
+    assert capsys.readouterr().out.startswith("OK familia WOT-2026-221d")
+    _write_family_evidence(
+        w.destino,
+        w.tip,
+        [("opencode", "nan/mimo-v2.6-flash"), ("codex", "gpt-5.6-luna")],
+    )
+    assert it.main(args) == 1
+    assert "autor" in capsys.readouterr().out
+
+
 def test_family_contract_parser_and_canon_boundaries():
     with pytest.raises(it.FamilyCheckError):
         it.parse_ficha_models("autor_modelo: codex|gpt-5.6-luna\n")

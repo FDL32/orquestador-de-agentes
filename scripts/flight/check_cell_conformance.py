@@ -26,6 +26,7 @@ RC_OK = 0
 RC_VIOLATION = 2
 RC_NOT_MEASURED = 3
 CUTOFF_DATE = "2026-11-10"
+CELLS_CUTOFF = datetime.fromisoformat("2026-11-24T00:00:00+01:00")
 REGISTRY_ENV = "FLIGHT_DIR"
 STORE_ENV = "T3_STATE_DB"
 THREADS_TABLE = "orchestration_v2_projection_threads"
@@ -40,12 +41,212 @@ class MeasurementError(Exception):
     """
 
 
+class CellDeclarationError(ValueError):
+    """Indica que la declaracion de celdas no es verificable.
+
+    Before: una sesion posterior al corte exige una declaracion de agents.json.
+    During: conserva el fallo de estructura o coherencia sin degradar a regex legacy.
+    After: el llamador lo traduce a ``RC_VIOLATION`` y no a ``NO MEDIDO``.
+    """
+
+
 RE_ACTIVA_PREFIX = re.compile(r"^ACTIVA(\s|$)")
-# Copia deliberada de scripts/check_roster_matches_acting_thread.py:77.
-# CO-69 ronda 9: el par del TR exige frontera de palabra, igual que codex/sol;
-# un modelo con prefijo ("antigemma4", "antimimo-v2.6-flash") no es el modelo.
+# Par legacy del canon P35; registry_ops._validate_cell_requirements los lee como
+# atributos de modulo (checker.RE_TRIADOR y checker.RE_REVISOR_TR) para validar
+# cada alta de triaje.
 RE_TRIADOR = re.compile(r"(?<![a-z0-9])gemma4(?![a-z0-9])")
 RE_REVISOR_TR = re.compile(r"(?<![a-z0-9])mimo-v2\.6-flash(?![a-z0-9])")
+
+
+def _model_pattern(model):
+    """Construye el patron de modelo a partir de una declaracion canonica.
+
+    Before: ``model`` es el modelo textual resuelto desde ``agents.json``.
+    During: elimina el prefijo de proveedor y exige fronteras de identidad.
+    After: devuelve un regex que tolera separadores equivalentes sin aceptar
+        prefijos, sufijos de version ni subcadenas de otro modelo.
+    """
+    if not isinstance(model, str) or not model.strip():
+        raise CellDeclarationError("modelo de celda no textual")
+    core = model.split("/", 1)[-1].casefold().strip()
+    escaped = "".join("[-._ ]" if char in "-._ " else re.escape(char) for char in core)
+    return re.compile(rf"(?<![a-z0-9]){escaped}(?![\s\-._]?[a-z0-9])")
+
+
+def _load_account_cycle_module():
+    """Carga account_cycle.py solo cuando una declaracion nueva lo necesita.
+
+    Before: el comprobador puede ejecutarse para sesiones legacy sin config nueva.
+    During: importa el modulo por ruta, sin convertirlo en dependencia de import.
+    After: devuelve sus constantes de cuenta o eleva ``CellDeclarationError``.
+    """
+    path = Path(__file__).resolve().with_name("account_cycle.py")
+    try:
+        spec = importlib.util.spec_from_file_location("cell_account_cycle", path)
+        if spec is None or spec.loader is None:
+            raise CellDeclarationError(f"no se pudo cargar ciclo: {path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    except (OSError, ImportError, AttributeError, CellDeclarationError) as exc:
+        if isinstance(exc, CellDeclarationError):
+            raise
+        raise CellDeclarationError(f"ciclo de cuentas ilegible: {exc}") from exc
+
+
+def _load_cell_declaration(path, needed=("im", "tr")):  # noqa: C901
+    """Lee y valida ``celdas`` y resuelve sus modelos por ``backend_key``.
+
+    Before: ``path`` identifica agents.json y ``needed`` nombra las celdas que
+        exige el modo que va a medir (``--check-im`` no lee ``celdas.tr`` ni al
+        reves: una declaracion rota en la otra celda no puede marcar de rojo un
+        comprobador cuyo ambito no la incluye).
+    During: valida tipos, claves, niveles, cuentas, fases y la bandera de FASE B
+        unicamente de las celdas pedidas.
+    After: devuelve una declaracion normalizada para esas celdas o eleva
+        declaracion no verificable, siempre fail-closed.
+    """
+    try:
+        document = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise CellDeclarationError(f"agents.json ilegible: {exc}") from exc
+    if not isinstance(document, dict):
+        raise CellDeclarationError("agents.json no es objeto")
+    registry = document.get("ensemble_registry")
+    backends = registry.get("backend_keys") if isinstance(registry, dict) else None
+    cells = document.get("celdas")
+    if not isinstance(backends, dict) or not isinstance(cells, dict):
+        raise CellDeclarationError("declaracion celdas ausente o malformada")
+
+    def resolve(cell_name, role_name):
+        cell = cells.get(cell_name)
+        entry = cell.get(role_name) if isinstance(cell, dict) else None
+        key = entry.get("backend_key") if isinstance(entry, dict) else None
+        backend = backends.get(key) if isinstance(key, str) else None
+        model = backend.get("model") if isinstance(backend, dict) else None
+        if not isinstance(model, str) or not model.strip():
+            raise CellDeclarationError(f"backend_key invalido: {cell_name}.{role_name}")
+        return model.strip(), backend
+
+    declaration = {}
+    if "im" in needed:
+        im = cells.get("im")
+        if not isinstance(im, dict):
+            raise CellDeclarationError("celdas.im ausente")
+        builder_model, _ = resolve("im", "builder")
+        revisor_model, revisor_backend = resolve("im", "revisor")
+        v1_model, _ = resolve("im", "v1")
+        if not isinstance(im.get("nivel"), str) or not isinstance(
+            im.get("esfuerzo"), str
+        ):
+            raise CellDeclarationError("nivel/esfuerzo IM no textuales")
+        if im["nivel"] != revisor_backend.get("nivel") or im[
+            "esfuerzo"
+        ] != revisor_backend.get("esfuerzo"):
+            raise CellDeclarationError("nivel/esfuerzo IM divergen del revisor")
+        account_cycle = _load_account_cycle_module()
+        expected_account = {
+            "preferente": account_cycle.PREFERIDA,
+            "refugio": account_cycle.REFUGIO,
+        }
+        if im.get("cuenta") != expected_account:
+            raise CellDeclarationError("cuenta IM diverge del ciclo")
+        phases = im.get("fase_aplicable")
+        if (
+            not isinstance(phases, list)
+            or not phases
+            or not all(isinstance(phase, str) for phase in phases)
+            or len(phases) != len(set(phases))
+            or any(phase not in {"A", "B", "C", "D"} for phase in phases)
+        ):
+            raise CellDeclarationError("fase_aplicable IM malformada")
+        if im.get("fase_B_subagentes_largos_claude") is not False:
+            raise CellDeclarationError("restriccion FASE B ausente o activa")
+        declaration["im"] = {
+            "builder": _model_pattern(builder_model),
+            "revisor": _model_pattern(revisor_model),
+            "v1": _model_pattern(v1_model),
+            "nivel": im["nivel"],
+            "esfuerzo": im["esfuerzo"],
+            "cuenta": expected_account,
+            "fase": phases,
+        }
+    if "tr" in needed:
+        tr = cells.get("tr")
+        if not isinstance(tr, dict):
+            raise CellDeclarationError("celdas.tr ausente")
+        triador_model, _ = resolve("tr", "triador")
+        tr_revisor_model, _ = resolve("tr", "revisor")
+        declaration["tr"] = {
+            "triador": _model_pattern(triador_model),
+            "revisor": _model_pattern(tr_revisor_model),
+        }
+    return declaration
+
+
+def _started_datetime(session):
+    """Parsea ``started`` con zona para clasificar la frontera de celdas.
+
+    Before: una sesion puede omitir ``started`` o contener una fecha invalida.
+    During: parsea ISO y rechaza timestamps naive como ilegibles.
+    After: devuelve datetime aware o ``None`` para aplicar reglas nuevas.
+    """
+    started = session.get("started")
+    if not isinstance(started, str) or not started.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(started.strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def _uses_new_cell_rules(session):
+    """Indica si una sesion IM/TR cruza la frontera de celdas.
+
+    Before: ``session`` es una sesion gobernada por una celda.
+    During: compara timestamps aware contra ``CELLS_CUTOFF``.
+    After: devuelve ``True`` para ausencia/ilegalidad o fecha inclusiva nueva.
+    """
+    started = _started_datetime(session)
+    return started is None or started >= CELLS_CUTOFF
+
+
+def _default_agents_json_path():
+    """Ruta por defecto de la declaracion de celdas, sin leerla.
+
+    Before: el CLI y los llamadores directos deben compartir la misma fuente.
+    During: parte de la raiz del repo del propio modulo, no del cwd.
+    After: devuelve ``<raiz>/.agent/config/agents.json``.
+    """
+    return Path(__file__).resolve().parents[2] / ".agent" / "config" / "agents.json"
+
+
+def _resolve_declaration(sessions, role, declaration):
+    """Resuelve la declaracion que exigen las sesiones medidas de ``role``.
+
+    Before: ``declaration`` viene del CLI o es ``None`` cuando el llamador es
+        directo (``flight_stall_check`` llama ``check_tr`` sin tercer argumento
+        y no puede recibir una excepcion).
+    During: solo si alguna sesion de ese rol cruza ``CELLS_CUTOFF`` y todavia no
+        hay declaracion, la carga perezosamente de la ruta por defecto; cualquier
+        fallo de lectura se convierte en ``None``, que el modo traduce a rc 2.
+    After: la declaracion normalizada pedida o ``None``; nunca una excepcion.
+    """
+    if declaration is not None:
+        return declaration
+    if not any(
+        session.get("role") == role and _uses_new_cell_rules(session)
+        for session in sessions
+    ):
+        return None
+    # El rol de sesion y el nombre de celda no son el mismo identificador:
+    # ``_load_cell_declaration`` valida por celda ("im"/"tr").
+    cell_name = "im" if role == "implantacion" else "tr"
+    try:
+        return _load_cell_declaration(_default_agents_json_path(), (cell_name,))
+    except CellDeclarationError:
+        return None
 
 
 def is_activa(status):
@@ -264,8 +465,18 @@ def _builder_name(builder):
     return ""
 
 
-def check_im(sessions, cutoff):
-    """Comprueba la celda IM: revisor distinto y builder codex no-sol."""
+def check_im(sessions, cutoff, declaration=None):
+    """Comprueba IM legacy o los siete datos de la declaracion nueva.
+
+    Before: ``sessions`` contiene IM medibles y ``declaration`` solo llega del
+        CLI; un llamador directo (sin tercer argumento) tambien debe medir.
+    During: resuelve perezosamente la declaracion por defecto si alguna sesion
+        cruza ``CELLS_CUTOFF`` y aplica regex legacy a rondas anteriores, o
+        valida builder, revisor, V1, nivel, esfuerzo, cuenta y fase en rondas
+        nuevas.
+    After: ``RC_OK``, o ``RC_VIOLATION`` ante omision, discrepancia o
+        declaracion ilegible; nunca acepta omision como conformidad.
+    """
     measured = [
         s
         for s in _sessions_for_measure(sessions, cutoff)
@@ -273,10 +484,42 @@ def check_im(sessions, cutoff):
     ]
     if not measured:
         return RC_NOT_MEASURED
+    resolved = _resolve_declaration(measured, "implantacion", declaration)
     for session in measured:
         cell = _cell(session)
         revisor, builder = (cell or {}).get("revisor"), (cell or {}).get("builder")
         builder_text = _builder_name(builder)
+        if _uses_new_cell_rules(session):
+            if resolved is None:
+                return RC_VIOLATION
+            required = resolved["im"]
+            v1 = (cell or {}).get("v1")
+            nivel = (cell or {}).get("nivel")
+            esfuerzo = (cell or {}).get("esfuerzo")
+            cuenta = (cell or {}).get("cuenta")
+            fase = (cell or {}).get("fase")
+            if (
+                not builder_text
+                or not required["builder"].search(builder_text.casefold())
+                or not isinstance(revisor, str)
+                or not revisor.strip()
+                or revisor.strip().casefold() == builder_text.casefold()
+                or not required["revisor"].search(revisor.strip().casefold())
+                or not isinstance(v1, str)
+                or not v1.strip()
+                or not required["v1"].search(v1.strip().casefold())
+                or not isinstance(nivel, str)
+                or nivel != required["nivel"]
+                or not isinstance(esfuerzo, str)
+                or esfuerzo != required["esfuerzo"]
+                or not isinstance(cuenta, dict)
+                or cuenta != required["cuenta"]
+                or not isinstance(fase, list)
+                or fase != required["fase"]
+                or any(item not in {"A", "B", "C", "D"} for item in fase)
+            ):
+                return RC_VIOLATION
+            continue
         if (
             not isinstance(revisor, str)
             or not revisor.strip()
@@ -294,32 +537,42 @@ def check_im(sessions, cutoff):
     return RC_OK
 
 
-def check_tr(sessions, cutoff):
-    """Comprueba el par TR gemma4 y mimo-v2.6-flash.
+def check_tr(sessions, cutoff, declaration=None):
+    """Comprueba TR legacy o los modelos de la declaracion nueva.
 
-    Before: cada celda TR declara ``triador`` y ``revisor`` sin validar.
-    During: accepts the historical triador dictionary through ``_builder_name``
-        and reads ``supervisor`` only when ``revisor`` is absent; both models
-        still require their word-boundary regular expressions.
-    After: 2 si alguna celda TR incumple el par, 0 si todas lo cumplen y 3 si no
-        hay celdas medibles.
+    Before: cada celda TR declara ``triador`` y ``revisor`` sin validar y el
+        llamador directo (``flight_stall_check``) no aporta ``declaration``.
+    During: resuelve perezosamente la declaracion por defecto cuando alguna
+        sesion cruza ``CELLS_CUTOFF``; acepta el triador historico como
+        diccionario via ``_builder_name`` y lee ``supervisor`` solo si falta
+        ``revisor``; las rondas nuevas comparan contra los modelos declarados y
+        las anteriores contra el par legacy con frontera de palabra.
+    After: 2 si alguna celda TR incumple el par o la declaracion no es
+        verificable, 0 si todas lo cumplen y 3 si no hay celdas medibles.
     """
     measured = [
         s for s in _sessions_for_measure(sessions, cutoff) if s.get("role") == "triaje"
     ]
     if not measured:
         return RC_NOT_MEASURED
+    resolved = _resolve_declaration(measured, "triaje", declaration)
     for session in measured:
         cell = _cell(session) or {}
         triador = cell.get("triador")
         revisor = cell["revisor"] if "revisor" in cell else cell.get("supervisor")
         triador_text = _builder_name(triador)
-        if (
-            not triador_text
-            or not RE_TRIADOR.search(triador_text.casefold())
-            or not isinstance(revisor, str)
-            or not revisor.strip()
-            or not RE_REVISOR_TR.search(revisor.casefold())
+        if not triador_text or not isinstance(revisor, str) or not revisor.strip():
+            return RC_VIOLATION
+        if _uses_new_cell_rules(session):
+            if resolved is None:
+                return RC_VIOLATION
+            required = resolved["tr"]
+            if not required["triador"].search(triador_text.casefold()) or not required[
+                "revisor"
+            ].search(revisor.strip().casefold()):
+                return RC_VIOLATION
+        elif not RE_TRIADOR.search(triador_text.casefold()) or not RE_REVISOR_TR.search(
+            revisor.casefold()
         ):
             return RC_VIOLATION
     return RC_OK
@@ -612,13 +865,27 @@ def _paths(args):
     return registry, store, args.cutoff or CUTOFF_DATE
 
 
-def _run_mode(name, sessions, cutoff, store):
-    """Ejecuta un modo individual y traduce fallos a NO MEDIDO."""
+def _run_mode(name, sessions, cutoff, store, agents_json):
+    """Ejecuta un modo individual con carga perezosa de la declaracion.
+
+    Before: ``sessions`` ya esta validado y ``agents_json`` identifica la fuente
+        declarativa candidata.
+    During: lee la fuente solo si el modo IM/TR tiene una sesion nueva; un fallo
+        declarativo se traduce a violacion cerrada.
+    After: devuelve el codigo del modo sin tocar ningun artefacto.
+    """
     try:
+        declaration = None
+        if name in {"im", "tr"} and any(
+            session.get("role") == ("implantacion" if name == "im" else "triaje")
+            and _uses_new_cell_rules(session)
+            for session in sessions
+        ):
+            declaration = _load_cell_declaration(agents_json, (name,))
         if name == "im":
-            return check_im(sessions, cutoff)
+            return check_im(sessions, cutoff, declaration)
         if name == "tr":
-            return check_tr(sessions, cutoff)
+            return check_tr(sessions, cutoff, declaration)
         if name == "lenses":
             return check_lenses(sessions, cutoff)
         if name == "cutoff":
@@ -628,7 +895,10 @@ def _run_mode(name, sessions, cutoff, store):
         if name == "im-vivos":
             return check_im_vivos(sessions, cutoff, store)
         return check_im_cuentas(sessions, cutoff, store)
-    except (MeasurementError, sqlite3.Error, RuntimeError) as exc:
+    except (CellDeclarationError, MeasurementError, sqlite3.Error, RuntimeError) as exc:
+        if isinstance(exc, CellDeclarationError):
+            print(f"VIOLACION {name}: {exc}", file=sys.stderr)
+            return RC_VIOLATION
         print(f"NO MEDIDO {name}: {exc}", file=sys.stderr)
         return RC_NOT_MEASURED
 
@@ -644,6 +914,7 @@ def main(argv=None):
     parser.add_argument("--registry")
     parser.add_argument("--store")
     parser.add_argument("--cutoff", default=CUTOFF_DATE)
+    parser.add_argument("--agents-json")
     parser.add_argument("--read-only", action="store_true")
     for mode in ("im", "tr", "lenses", "cutoff", "pairing", "im-vivos", "im-cuentas"):
         parser.add_argument(f"--check-{mode}", action="store_true")
@@ -664,6 +935,9 @@ def main(argv=None):
     if not selected or args.read_only:
         selected = ("im", "tr", "lenses", "cutoff", "pairing", "im-vivos", "im-cuentas")
     registry, store, cutoff = _paths(args)
+    agents_json = (
+        Path(args.agents_json) if args.agents_json else _default_agents_json_path()
+    )
     if registry is None:
         print("NO MEDIDO: registry irresoluble", file=sys.stderr)
         return RC_NOT_MEASURED
@@ -672,7 +946,7 @@ def main(argv=None):
     except MeasurementError as exc:
         print(f"NO MEDIDO: {exc}", file=sys.stderr)
         return RC_NOT_MEASURED
-    codes = [_run_mode(name, sessions, cutoff, store) for name in selected]
+    codes = [_run_mode(name, sessions, cutoff, store, agents_json) for name in selected]
     result = (
         RC_VIOLATION
         if RC_VIOLATION in codes
