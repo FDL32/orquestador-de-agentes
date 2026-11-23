@@ -30,12 +30,14 @@ Cuando un hallazgo del PASO 0 se clasifica como ALTA (fila nueva en
 2. Ejecutar el barrido previo (PASO 0 del protocolo)
 3. Generar el recibo con `backlog_db_compare.py --emit-recibo`
 4. Commit con el recibo en el mensaje
+5. Comprobar la ficha segun el prompt y `.agent/rules/common/backlog_ficha_contract.md`
 
 ## References
 
 - `prompts/backlog_admit.md` -- prompt canonico (contract_id: cid-backlog-admit-v1)
 - `scripts/backlog_db_compare.py` -- generador del recibo (--emit-recibo)
 - `scripts/check_backlog_admission.py` -- guard que contrasta el recibo
+- `.agent/rules/common/backlog_ficha_contract.md` -- contrato de ficha
 
 ## Constraints
 

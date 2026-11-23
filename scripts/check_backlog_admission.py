@@ -60,6 +60,8 @@ After (Post-condiciones y Errores):
       recibos encontrados y veredicto por alta. Read-only: este modulo no
       escribe nada (los temporales de materializacion viven en tempfile y se
       borran).
+    - `--check-ficha` valida solo el contrato de `redactada_por`; c-14 en el
+      closeout lee la ficha desde el commit de alta, no desde el arbol.
     - LIMIT declarado (contrato T-054M-001 D3): las superficies FUERA del
       repo del alta (`repo: externo`) se DECLARAN en `corpus`, cuentan en la
       coherencia interna, pero NO se re-cuentan ni se pinean mecanicamente.
@@ -79,6 +81,7 @@ Schema del recibo (v1, una linea JSON tras el marcador):
 from __future__ import annotations
 
 import argparse
+import difflib
 import hashlib
 import json
 import re
@@ -128,6 +131,13 @@ LENSES_VERDICTS = frozenset({"APPROVE"})
 LENTES_TR_CONFORME = "LENTES_TR_CONFORME"
 LENTES_TR_NO_CONFORME = "LENTES_TR_NO_CONFORME"
 LENTES_TR_GRANDFATHERED = "LENTES_TR_GRANDFATHERED"
+REDACTADA_POR_KEY = "redactada_por"
+REDACTADA_POR_VALUES = ("tr", "co", "im")
+FICHA_CONTRACT_REL = ".agent/rules/common/backlog_ficha_contract.md"
+CAUSA_CLAVE_AUSENTE = "clave_ausente_o_mal_escrita"
+CAUSA_CLAVE_DUPLICADA = "clave_duplicada"
+CAUSA_VALOR_FUERA_VOCAB = "valor_fuera_de_vocabulario"
+CAUSA_FICHA_NO_PRESENTE = "ficha_no_presente_en_commit_de_alta"
 # Forma canonica de id del contrato (requisito F2.1): acepta legacy WP-/WT-.
 ID_RE = re.compile(r"\b[A-Z]{2,6}-\d{4}-\d{2,3}[a-z]?\b")
 
@@ -278,13 +288,97 @@ def check_tr_lenses(ficha_text: str) -> tuple[int, list[str]]:
     ]
 
 
+def check_ficha_contract(
+    ficha_text: str,
+) -> tuple[int, list[str], str | None, str | None]:
+    """Comprueba la declaracion unica de ``redactada_por``.
+
+    Before: ``ficha_text`` contiene el texto UTF-8 de una ficha, sin escribir
+        nada en disco.
+    During: identifica claves separadas por ``:`` sin distinguir mayusculas,
+        cuenta duplicados y valida el valor contra el vocabulario publico.
+    After: devuelve ``(rc, lineas, valor, causa)``; rc 0 solo representa una
+        clave unica con valor permitido, y rc 1 describe la causa accionable.
+    """
+    markers: list[tuple[str, str, bool]] = []
+    similar_keys: list[str] = []
+    for raw in ficha_text.splitlines():
+        key, separator, raw_value = raw.partition(":")
+        stripped_key = key.strip()
+        normalized_key = stripped_key.casefold()
+        if normalized_key == REDACTADA_POR_KEY:
+            markers.append(
+                (
+                    raw_value.strip().casefold() if separator else "",
+                    stripped_key,
+                    bool(separator),
+                )
+            )
+        elif stripped_key:
+            similar_keys.append(stripped_key)
+
+    if not markers or (len(markers) == 1 and not markers[0][2]):
+        close = difflib.get_close_matches(
+            REDACTADA_POR_KEY, similar_keys, n=1, cutoff=0.8
+        )
+        if markers:
+            detail = "mal escrita: la linea no lleva ':' tras la clave"
+        elif close:
+            detail = f"mal escrita: se encontro <{close[0]}>"
+        else:
+            detail = "ausente"
+        return (
+            1,
+            [
+                "VEREDICTO: FICHA_CONTRATO_NO_CONFORME",
+                f"CAUSA {CAUSA_CLAVE_AUSENTE}: la clave esta {detail}; "
+                f"anade una linea unica '{REDACTADA_POR_KEY}: tr|co|im' segun "
+                f"{FICHA_CONTRACT_REL}",
+            ],
+            None,
+            CAUSA_CLAVE_AUSENTE,
+        )
+    if len(markers) >= 2:
+        return (
+            1,
+            [
+                "VEREDICTO: FICHA_CONTRATO_NO_CONFORME",
+                f"CAUSA {CAUSA_CLAVE_DUPLICADA}: conserva una sola linea "
+                f"'{REDACTADA_POR_KEY}: ...' segun {FICHA_CONTRACT_REL}",
+            ],
+            None,
+            CAUSA_CLAVE_DUPLICADA,
+        )
+
+    value = markers[0][0]
+    if value not in REDACTADA_POR_VALUES:
+        allowed = ", ".join(REDACTADA_POR_VALUES)
+        return (
+            1,
+            [
+                "VEREDICTO: FICHA_CONTRATO_NO_CONFORME",
+                f"CAUSA {CAUSA_VALOR_FUERA_VOCAB}: valor encontrado "
+                f"'{value}' no pertenece a ({allowed}); corrige la linea "
+                f"segun {FICHA_CONTRACT_REL}",
+            ],
+            value or None,
+            CAUSA_VALOR_FUERA_VOCAB,
+        )
+    return (
+        0,
+        ["VEREDICTO: FICHA_CONTRATO_CONFORME", f"{REDACTADA_POR_KEY}={value}"],
+        value,
+        None,
+    )
+
+
 def _c14_finding(repo: Path, alta: dict, cutoff_sha: str, lines: list[str]) -> dict:
     """Mide c-14 para una alta post-corte y devuelve un hallazgo ortogonal.
 
     Before: ``alta`` contiene ``id`` y ``commit`` producidos por ``audit_range``;
         ``cutoff_sha`` resuelve y es ancestro del HEAD.
-    During: localiza la ficha, valida ``redactada_por`` y, para TR, reutiliza
-        ``check_tr_lenses``; solo lee el repositorio y la ficha.
+    During: localiza la ficha en el commit de alta, valida ``redactada_por`` y,
+        para TR, reutiliza ``check_tr_lenses``; solo lee el repositorio.
     After: devuelve un hallazgo con una clave ``LENTES_*`` propia; nunca cambia
         los contadores ni el veredicto del recibo.
     """
@@ -302,13 +396,17 @@ def _c14_finding(repo: Path, alta: dict, cutoff_sha: str, lines: list[str]) -> d
             "clave": verdict,
             "veredicto": verdict,
             "motivos": [reason],
+            "causa": None,
         }
 
-    ficha_path = repo / ".agent" / "collaboration" / f"FICHA_{candidate_id}.md"
-    try:
-        ficha_text = ficha_path.read_text(encoding="utf-8")
-    except OSError:
-        reason = f"ficha no localizable: {ficha_path.name}"
+    ficha_rel = f".agent/collaboration/FICHA_{candidate_id}.md"
+    ficha_content = rev_content(repo, commit, ficha_rel)
+    if ficha_content is None:
+        causa = CAUSA_FICHA_NO_PRESENTE
+        reason = (
+            f"CAUSA {causa}: la ficha debe viajar en el commit de alta; "
+            f"consulta {FICHA_CONTRACT_REL}"
+        )
         verdict = LENTES_TR_NO_CONFORME
         lines.append(
             f"ALTA {candidate_id} en {commit[:12]} -> VEREDICTO: {verdict}: {reason}"
@@ -319,19 +417,17 @@ def _c14_finding(repo: Path, alta: dict, cutoff_sha: str, lines: list[str]) -> d
             "clave": verdict,
             "veredicto": verdict,
             "motivos": [reason],
+            "causa": causa,
         }
 
-    markers = []
-    for raw in ficha_text.splitlines():
-        key, separator, value = raw.partition(":")
-        if key.strip().casefold() == "redactada_por":
-            markers.append(value.strip().casefold() if separator else "")
-    if len(markers) != 1 or markers[0] not in {"tr", "co", "im"}:
-        reason = "redactada_por ausente o fuera de {tr, co, im}"
+    ficha_text = ficha_content.decode("utf-8", errors="replace")
+    ficha_rc, ficha_lines, marker, causa = check_ficha_contract(ficha_text)
+    if ficha_rc != 0:
+        reason = "; ".join(ficha_lines[1:])
         verdict = LENTES_TR_NO_CONFORME
-    elif markers[0] in {"co", "im"}:
+    elif marker in {"co", "im"}:
         verdict = LENTES_TR_CONFORME
-        reason = f"redactada_por={markers[0]} no exige lineas de lentes"
+        reason = f"redactada_por={marker} no exige lineas de lentes"
     else:
         try:
             lens_rc, lens_lines = check_tr_lenses(ficha_text)
@@ -352,6 +448,7 @@ def _c14_finding(repo: Path, alta: dict, cutoff_sha: str, lines: list[str]) -> d
         "clave": verdict,
         "veredicto": verdict,
         "motivos": [reason],
+        "causa": causa,
     }
 
 
@@ -368,6 +465,26 @@ def _run_tr_lenses_cli(parser: argparse.ArgumentParser, ficha: Path | None) -> i
     try:
         code, lines = check_tr_lenses(ficha.read_text(encoding="utf-8"))
     except (OSError, MeasurementError) as exc:
+        print(f"MEDICION_FALLIDA: {exc}")
+        return 2
+    print("\n".join(lines))
+    return code
+
+
+def _run_ficha_contract_cli(parser: argparse.ArgumentParser, ficha: Path | None) -> int:
+    """Ejecuta el modo CLI del contrato estructural de la ficha.
+
+    Before: ``ficha`` es la ruta pasada con ``--check-ficha``.
+    During: lee UTF-8 y delega en ``check_ficha_contract`` sin validar lentes.
+    After: imprime las lineas del contrato y devuelve rc 0/1/2.
+    """
+    if ficha is None:
+        parser.error("--check-ficha exige una ruta")
+    try:
+        code, lines, _value, _cause = check_ficha_contract(
+            ficha.read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError) as exc:
         print(f"MEDICION_FALLIDA: {exc}")
         return 2
     print("\n".join(lines))
@@ -1716,7 +1833,7 @@ def _audit_closeout(
     return code, lines, False, findings
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None) -> int:  # noqa: C901
     parser = argparse.ArgumentParser(
         description="Backlog admission guard (WOT-2026-054m): PASO 0 como barrera."
     )
@@ -1772,6 +1889,12 @@ def main(argv: list[str] | None = None) -> int:
         help="comprueba c-14 sobre la ficha de admision de un TR",
     )
     parser.add_argument(
+        "--check-ficha",
+        type=Path,
+        default=None,
+        help="comprueba el contrato de la ficha, sin validar lentes",
+    )
+    parser.add_argument(
         "--ficha",
         type=Path,
         default=None,
@@ -1782,6 +1905,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.check_tr_lenses:
         return _run_tr_lenses_cli(parser, args.ficha)
+    if args.check_ficha is not None:
+        return _run_ficha_contract_cli(parser, args.check_ficha)
 
     repo = (args.git_root or Path.cwd()).resolve()
     surfaces = [args.backlog_file] + (args.archive_file or list(DEFAULT_ARCHIVES))

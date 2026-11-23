@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -251,6 +252,26 @@ def commit_alta(repo: Path, row_text: str, message: str) -> str:
     return git(repo, "rev-parse", "HEAD").strip()
 
 
+def commit_alta_with_ficha(
+    repo: Path, row_text: str, message: str, ticket: str, ficha_text: str
+) -> str:
+    """Commit a backlog row and its ficha as one admission.
+
+    Before: ``repo`` is an initialized temporary git repository and the row
+        is not yet present.
+    During: writes the ficha and row, stages only those admission surfaces,
+        and creates the alta commit.
+    After: returns the full SHA of the commit containing both artifacts.
+    """
+    ficha = repo / ".agent" / "collaboration" / f"FICHA_{ticket}.md"
+    ficha.write_text(ficha_text, encoding="utf-8")
+    p = repo / BACKLOG_REL
+    p.write_text(p.read_text(encoding="utf-8") + row_text, encoding="utf-8")
+    git(repo, "add", BACKLOG_REL, str(ficha.relative_to(repo)))
+    git(repo, "commit", "-m", message)
+    return git(repo, "rev-parse", "HEAD").strip()
+
+
 def run_guard(repo: Path, *args: str) -> tuple[int, str]:
     proc = subprocess.run(
         [sys.executable, str(GUARD), "--git-root", str(repo), *args],
@@ -263,19 +284,306 @@ def run_guard(repo: Path, *args: str) -> tuple[int, str]:
     return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
 
 
+@pytest.mark.parametrize("value", ["codex", "claude", "texto libre"])
+def test_mutation_redactada_por_outside_vocabulary_is_red_and_co_is_green(
+    tmp_path: Path, monkeypatch, value: str
+) -> None:
+    """MUTATION: c-14 rejects every outside value while co remains positive.
+
+    Before: each temporary repo has a post-cutoff alta with a coherent receipt.
+    During: the ficha in the alta commit uses the parameterized invalid value;
+        a second repo provides the positive ``co`` control.
+    After: only the invalid admission is red and its cause is explicit.
+    """
+    ticket = "WOT-2026-161x"
+    bad = init_repo(tmp_path / "bad")
+    cutoff = git(bad, "rev-parse", "HEAD").strip()
+    candidate = row(ticket)
+    receipt = build_recibo(bad, ticket, candidate, [backlog_surface(bad)])
+    commit_alta_with_ficha(
+        bad,
+        candidate,
+        msg_with_recibo("alta invalid", receipt),
+        ticket,
+        f"redactada_por: {value}\n",
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    bad_code, _bad_lines, _bad_skip, bad_findings = cba._audit_closeout(
+        bad, cutoff_sha=cutoff
+    )
+    assert bad_code == 1
+    assert any(
+        finding.get("causa") == cba.CAUSA_VALOR_FUERA_VOCAB for finding in bad_findings
+    )
+
+    good = init_repo(tmp_path / "good")
+    good_cutoff = git(good, "rev-parse", "HEAD").strip()
+    good_receipt = build_recibo(good, ticket, candidate, [backlog_surface(good)])
+    commit_alta_with_ficha(
+        good,
+        candidate,
+        msg_with_recibo("alta co", good_receipt),
+        ticket,
+        "redactada_por: co\n",
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", good_cutoff)
+    good_code, _good_lines, _good_skip, good_findings = cba._audit_closeout(
+        good, cutoff_sha=good_cutoff
+    )
+    assert good_code == 0
+    assert any(
+        finding.get("clave") == cba.LENTES_TR_CONFORME for finding in good_findings
+    )
+
+
+def test_mutation_ficha_contract_messages_are_distinct_in_function_and_cli(
+    tmp_path: Path, capsys
+) -> None:
+    """MUTATION: each contract cause has a distinct actionable CLI message."""
+    all_causes = (
+        cba.CAUSA_CLAVE_AUSENTE,
+        cba.CAUSA_CLAVE_DUPLICADA,
+        cba.CAUSA_VALOR_FUERA_VOCAB,
+    )
+    bare_key = "redactada_por\ntriador_modelo: kilo|nan/gemma4\n"
+    rc_bare, lines_bare, _bare_value, cause_bare = cba.check_ficha_contract(bare_key)
+    assert rc_bare == 1 and cause_bare == cba.CAUSA_CLAVE_AUSENTE
+    assert "':'" in "\n".join(lines_bare)
+    fichas = {
+        cba.CAUSA_CLAVE_AUSENTE: "redactado_por: co\n",
+        cba.CAUSA_CLAVE_DUPLICADA: "redactada_por: co\nredactada_por: co\n",
+        cba.CAUSA_VALOR_FUERA_VOCAB: "redactada_por: codex\n",
+    }
+    function_messages: list[str] = []
+    cli_messages: list[str] = []
+    for cause, text in fichas.items():
+        rc, lines, _value, actual = cba.check_ficha_contract(text)
+        assert rc == 1 and actual == cause
+        message = "\n".join(lines)
+        assert cba.FICHA_CONTRACT_REL in message
+        assert f"CAUSA {cause}" in message
+        assert not any(
+            f"CAUSA {other}" in message for other in all_causes if other != cause
+        )
+        function_messages.append(message)
+
+        path = tmp_path / f"{cause}.md"
+        path.write_text(text, encoding="utf-8")
+        assert cba.main(["--check-ficha", str(path)]) == 1
+        output = capsys.readouterr().out
+        assert cba.FICHA_CONTRACT_REL in output
+        cli_messages.append(output)
+    assert len(set(function_messages)) == len(function_messages)
+    assert len(set(cli_messages)) == len(cli_messages)
+
+    rc, lines, value, cause = cba.check_ficha_contract("redactada_por: CO\n")
+    assert rc == 0 and value == "co" and cause is None
+    assert len(lines) == 2
+    assert all("CAUSA" not in line for line in lines)
+
+
+def test_mutation_c14_reads_ficha_from_alta_commit_not_worktree(tmp_path, monkeypatch):
+    """MUTATION: c-14 uses the alta commit, including archive and absence cases."""
+    ticket = "WOT-2026-161x"
+
+    invalid = init_repo(tmp_path / "invalid")
+    cutoff = git(invalid, "rev-parse", "HEAD").strip()
+    commit_alta_with_ficha(
+        invalid, row(ticket), "alta", ticket, "redactada_por: codex\n"
+    )
+    _write_ficha(invalid, ticket, "redactada_por: co\n")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    rc, _lines, _skip, findings = cba._audit_closeout(invalid, cutoff_sha=cutoff)
+    assert rc == 1
+    assert any(f.get("causa") == cba.CAUSA_VALOR_FUERA_VOCAB for f in findings)
+
+    archived = init_repo(tmp_path / "archived")
+    archived_cutoff = git(archived, "rev-parse", "HEAD").strip()
+    archived_candidate = row(ticket)
+    archived_receipt = build_recibo(
+        archived, ticket, archived_candidate, [backlog_surface(archived)]
+    )
+    commit_alta_with_ficha(
+        archived,
+        archived_candidate,
+        msg_with_recibo("alta", archived_receipt),
+        ticket,
+        "redactada_por: co\n",
+    )
+    ficha = archived / ".agent" / "collaboration" / f"FICHA_{ticket}.md"
+    archive_path = archived / ".agent" / "collaboration" / "_archive" / ficha.name
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    ficha.replace(archive_path)
+    git(archived, "add", ".agent/collaboration")
+    git(archived, "commit", "-m", "archive ficha")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", archived_cutoff)
+    rc, _lines, _skip, findings = cba._audit_closeout(
+        archived, cutoff_sha=archived_cutoff
+    )
+    assert rc == 0
+    assert not any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings)
+
+    absent = init_repo(tmp_path / "absent")
+    absent_cutoff = git(absent, "rev-parse", "HEAD").strip()
+    commit_alta(absent, row(ticket), "alta sin ficha")
+    _write_ficha(absent, ticket, "redactada_por: co\n")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", absent_cutoff)
+    rc, _lines, _skip, findings = cba._audit_closeout(absent, cutoff_sha=absent_cutoff)
+    assert rc == 1
+    assert any(f.get("causa") == cba.CAUSA_FICHA_NO_PRESENTE for f in findings)
+
+
+def test_mutation_c14_and_cli_call_same_public_contract_function(tmp_path, monkeypatch):
+    """MUTATION: both production paths call the public contract function."""
+    repo = init_repo(tmp_path / "repo")
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-161x"
+    ficha_text = "redactada_por: co\n"
+    commit_alta_with_ficha(repo, row(ticket), "alta", ticket, ficha_text)
+    original = cba.check_ficha_contract
+    calls: list[str] = []
+
+    def spy(text: str):
+        calls.append(text)
+        return original(text)
+
+    monkeypatch.setattr(cba, "check_ficha_contract", spy)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    cba._audit_closeout(repo, cutoff_sha=cutoff)
+    assert ficha_text in calls
+
+    path = tmp_path / "ficha.md"
+    path.write_text(ficha_text, encoding="utf-8")
+    assert cba.main(["--check-ficha", str(path)]) == 0
+    assert calls[-1] == ficha_text
+
+
+def _definition_units(text: str) -> list[str]:
+    """Split markdown into lexical paragraphs/list items for m-04."""
+    units: list[str] = []
+    current: list[str] = []
+    for line in text.splitlines():
+        if not line.strip():
+            if current:
+                units.append(" ".join(current))
+                current = []
+            continue
+        if re.match(r"^\s*(?:[-*+] |\d+[.)] )", line) and current:
+            units.append(" ".join(current))
+            current = []
+        current.append(line.strip())
+    if current:
+        units.append(" ".join(current))
+    return units
+
+
+def test_mutation_redactada_por_has_one_lexical_source_and_derives_values():
+    """MUTATION: only the rule defines the vocabulary; pointers do not count.
+
+    DECLARED LIMIT: the detector is LEXICAL. A definition is a paragraph or list
+    item naming the key plus at least two of the three values as words; a
+    paraphrase that avoids those words is not seen.
+    """
+    root = Path(__file__).resolve().parents[2]
+    universe = [root / "AGENTS.md", root / "CLAUDE.md"]
+    for dirname in ("prompts", "skills", ".agent/rules"):
+        universe.extend((root / dirname).rglob("*.md"))
+    definition_files: set[Path] = set()
+    for path in universe:
+        if not path.is_file():
+            continue
+        for unit in _definition_units(path.read_text(encoding="utf-8")):
+            folded = unit.casefold()
+            if (
+                "redactada_por" in folded
+                and sum(
+                    bool(re.search(rf"\b{token}\b", folded))
+                    for token in cba.REDACTADA_POR_VALUES
+                )
+                >= 2
+            ):
+                definition_files.add(path)
+    contract = root / cba.FICHA_CONTRACT_REL
+    assert definition_files == {contract}
+    assert not any(
+        "redactada_por" in path.read_text(encoding="utf-8").casefold()
+        and any(
+            sum(
+                bool(re.search(rf"\b{token}\b", unit.casefold()))
+                for token in cba.REDACTADA_POR_VALUES
+            )
+            >= 2
+            for unit in _definition_units(path.read_text(encoding="utf-8"))
+        )
+        for path in (
+            root / "skills" / "backlog-admit" / "SKILL.md",
+            root / "prompts" / "backlog_admit.md",
+        )
+    )
+    for pointer in (
+        root / "skills" / "backlog-admit" / "SKILL.md",
+        root / "prompts" / "backlog_admit.md",
+    ):
+        assert cba.FICHA_CONTRACT_REL in pointer.read_text(encoding="utf-8")
+    contract_line = next(
+        line
+        for line in contract.read_text(encoding="utf-8").splitlines()
+        if line.startswith("Valores permitidos:")
+    )
+    assert tuple(re.findall(r"`([^`]+)`", contract_line)) == cba.REDACTADA_POR_VALUES
+
+    mutation = "redactada_por: tr, co, im"
+    assert any(
+        "redactada_por" in unit.casefold()
+        and sum(
+            bool(re.search(rf"\b{token}\b", unit.casefold()))
+            for token in cba.REDACTADA_POR_VALUES
+        )
+        >= 2
+        for unit in _definition_units(mutation)
+    )
+
+
+def test_backlog_ficha_contract_residual_rule_is_single_source():
+    """The m-06 residual rule appears once and only in its contract."""
+    root = Path(__file__).resolve().parents[2]
+    universe = [root / "AGENTS.md", root / "CLAUDE.md"]
+    for dirname in ("prompts", "skills", ".agent/rules"):
+        universe.extend((root / dirname).rglob("*.md"))
+    hits = [
+        path
+        for path in universe
+        if path.is_file()
+        and "no se difiere" in path.read_text(encoding="utf-8").casefold()
+        and "ticket" in path.read_text(encoding="utf-8").casefold()
+        and "dueno" in path.read_text(encoding="utf-8").casefold()
+    ]
+    assert hits == [root / cba.FICHA_CONTRACT_REL]
+
+
 def test_closeout_requires_redactada_por_marker_after_cutoff(tmp_path, monkeypatch):
-    repo = init_repo(tmp_path)
+    repo = init_repo(tmp_path / "bad")
     cutoff = git(repo, "rev-parse", "HEAD").strip()
     ticket = "WOT-2026-161v"
-    commit_alta(repo, row(ticket), "alta post corte")
-    _write_ficha(repo, ticket, "autor_modelo: codex|gpt-5.6-luna\n")
+    commit_alta_with_ficha(
+        repo,
+        row(ticket),
+        "alta post corte",
+        ticket,
+        "autor_modelo: codex|gpt-5.6-luna\n",
+    )
     monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     code_bad, lines_bad, skipped_bad, findings_bad = cba._audit_closeout(
         repo, cutoff_sha=cutoff
     )
-    _write_ficha(repo, ticket, "redactada_por: co\n")
+    repo_good = init_repo(tmp_path / "good")
+    cutoff_good = git(repo_good, "rev-parse", "HEAD").strip()
+    commit_alta_with_ficha(
+        repo_good, row(ticket), "alta post corte", ticket, "redactada_por: co\n"
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff_good)
     code_good, _lines_good, skipped_good, findings_good = cba._audit_closeout(
-        repo, cutoff_sha=cutoff
+        repo_good, cutoff_sha=cutoff_good
     )
 
     receipt_verdicts = {
@@ -300,22 +608,38 @@ def test_closeout_requires_redactada_por_marker_after_cutoff(tmp_path, monkeypat
 
 
 def test_closeout_lens_failure_is_rc1_with_coherent_receipt(tmp_path, monkeypatch):
-    repo = init_repo(tmp_path)
+    repo = init_repo(tmp_path / "bad")
     cutoff = git(repo, "rev-parse", "HEAD").strip()
     ticket = "WOT-2026-161v"
     candidate_row = row(ticket)
     surface = backlog_surface(repo)
     recibo = build_recibo(repo, ticket, candidate_row, [surface])
-    commit_alta(repo, candidate_row, msg_with_recibo("alta TR con recibo", recibo))
+    commit_alta_with_ficha(
+        repo,
+        candidate_row,
+        msg_with_recibo("alta TR con recibo", recibo),
+        ticket,
+        "redactada_por: TR\ntriador_modelo: kilo|nan/gemma4\n",
+    )
     monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
 
-    _write_ficha(repo, ticket, "redactada_por: TR\ntriador_modelo: kilo|nan/gemma4\n")
     bad_code, bad_lines, bad_skipped, bad_findings = cba._audit_closeout(
         repo, cutoff_sha=cutoff
     )
-    _write_ficha(repo, ticket, "redactada_por: co\n")
+    repo_good = init_repo(tmp_path / "good")
+    cutoff_good = git(repo_good, "rev-parse", "HEAD").strip()
+    surface_good = backlog_surface(repo_good)
+    recibo_good = build_recibo(repo_good, ticket, candidate_row, [surface_good])
+    commit_alta_with_ficha(
+        repo_good,
+        candidate_row,
+        msg_with_recibo("alta TR con recibo", recibo_good),
+        ticket,
+        "redactada_por: co\n",
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff_good)
     good_code, good_lines, good_skipped, good_findings = cba._audit_closeout(
-        repo, cutoff_sha=cutoff
+        repo_good, cutoff_sha=cutoff_good
     )
     receipt_verdicts = {
         cba.VER_COHERENTE,
@@ -348,8 +672,13 @@ def test_closeout_lens_failure_keeps_single_existing_global_failure(
     repo = init_repo(tmp_path)
     cutoff = git(repo, "rev-parse", "HEAD").strip()
     ticket = "WOT-2026-161v"
-    commit_alta(repo, row(ticket), "alta TR sin recibo")
-    _write_ficha(repo, ticket, "redactada_por: TR\ntriador_modelo: kilo|nan/gemma4\n")
+    commit_alta_with_ficha(
+        repo,
+        row(ticket),
+        "alta TR sin recibo",
+        ticket,
+        "redactada_por: TR\ntriador_modelo: kilo|nan/gemma4\n",
+    )
     monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
     globals_ = [line for line in lines if line.startswith("VEREDICTO GLOBAL")]
@@ -376,8 +705,13 @@ def test_closeout_tr_ficha_without_lens_lines(tmp_path, monkeypatch):
     repo = init_repo(tmp_path)
     cutoff = git(repo, "rev-parse", "HEAD").strip()
     ticket = "WOT-2026-161v"
-    commit_alta(repo, row(ticket), "alta TR sin lentes")
-    _write_ficha(repo, ticket, "redactada_por: Tr\ntriador_modelo: kilo|nan/gemma4\n")
+    commit_alta_with_ficha(
+        repo,
+        row(ticket),
+        "alta TR sin lentes",
+        ticket,
+        "redactada_por: Tr\ntriador_modelo: kilo|nan/gemma4\n",
+    )
     monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
     output = "\n".join(lines)
@@ -393,8 +727,13 @@ def test_closeout_im_marker_is_conforme_without_lenses(tmp_path, monkeypatch):
     candidate_row = row(ticket)
     surface = backlog_surface(repo)
     recibo = build_recibo(repo, ticket, candidate_row, [surface])
-    commit_alta(repo, candidate_row, msg_with_recibo("alta IM", recibo))
-    _write_ficha(repo, ticket, "redactada_por: im\n")
+    commit_alta_with_ficha(
+        repo,
+        candidate_row,
+        msg_with_recibo("alta IM", recibo),
+        ticket,
+        "redactada_por: im\n",
+    )
     monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
     output = "\n".join(lines)
@@ -410,8 +749,13 @@ def test_closeout_duplicate_marker_is_not_conforme(tmp_path, monkeypatch):
     candidate_row = row(ticket)
     surface = backlog_surface(repo)
     recibo = build_recibo(repo, ticket, candidate_row, [surface])
-    commit_alta(repo, candidate_row, msg_with_recibo("alta marcador duplicado", recibo))
-    _write_ficha(repo, ticket, "redactada_por: co\nredactada_por: co\n")
+    commit_alta_with_ficha(
+        repo,
+        candidate_row,
+        msg_with_recibo("alta marcador duplicado", recibo),
+        ticket,
+        "redactada_por: co\nredactada_por: co\n",
+    )
     monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
     output = "\n".join(lines)
@@ -421,28 +765,42 @@ def test_closeout_duplicate_marker_is_not_conforme(tmp_path, monkeypatch):
 
 
 def test_closeout_marker_without_separator_is_not_conforme(tmp_path, monkeypatch):
-    repo = init_repo(tmp_path)
+    repo = init_repo(tmp_path / "bad")
     cutoff = git(repo, "rev-parse", "HEAD").strip()
     ticket = "WOT-2026-161v"
     candidate_row = row(ticket)
     surface = backlog_surface(repo)
     recibo = build_recibo(repo, ticket, candidate_row, [surface])
-    commit_alta(
-        repo, candidate_row, msg_with_recibo("alta marcador sin separador", recibo)
-    )
-    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     body = (
         "triador_modelo: kilo|nan/gemma4\n"
         "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
         "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n"
     )
-    _write_ficha(repo, ticket, "redactada_por\n" + body)
+    commit_alta_with_ficha(
+        repo,
+        candidate_row,
+        msg_with_recibo("alta marcador sin separador", recibo),
+        ticket,
+        "redactada_por\n" + body,
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     bad_code, bad_lines, bad_skipped, bad_findings = cba._audit_closeout(
         repo, cutoff_sha=cutoff
     )
-    _write_ficha(repo, ticket, "redactada_por: TR\n" + body)
+    repo_good = init_repo(tmp_path / "good")
+    cutoff_good = git(repo_good, "rev-parse", "HEAD").strip()
+    surface_good = backlog_surface(repo_good)
+    recibo_good = build_recibo(repo_good, ticket, candidate_row, [surface_good])
+    commit_alta_with_ficha(
+        repo_good,
+        candidate_row,
+        msg_with_recibo("alta marcador sin separador", recibo_good),
+        ticket,
+        "redactada_por: TR\n" + body,
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff_good)
     good_code, good_lines, good_skipped, good_findings = cba._audit_closeout(
-        repo, cutoff_sha=cutoff
+        repo_good, cutoff_sha=cutoff_good
     )
     assert bad_code == 1 and not bad_skipped
     assert "LENTES_TR_NO_CONFORME" in "\n".join(bad_lines)
@@ -460,13 +818,17 @@ def test_closeout_malformed_tr_lens_is_captured_as_nonconforme(tmp_path, monkeyp
     candidate_row = row(ticket)
     surface = backlog_surface(repo)
     recibo = build_recibo(repo, ticket, candidate_row, [surface])
-    commit_alta(repo, candidate_row, msg_with_recibo("alta lente mal formada", recibo))
-    _write_ficha(
-        repo,
-        ticket,
+    ficha = (
         "redactada_por: TR\n"
         "triador_modelo: kilo|nan/gemma4\n"
-        "lente_1: nan_api|deepseek-v4-flash\n",
+        "lente_1: nan_api|deepseek-v4-flash\n"
+    )
+    commit_alta_with_ficha(
+        repo,
+        candidate_row,
+        msg_with_recibo("alta lente mal formada", recibo),
+        ticket,
+        ficha,
     )
     monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
@@ -480,43 +842,48 @@ def test_closeout_rejects_redactada_por_outside_allowed_values(tmp_path, monkeyp
     repo = init_repo(tmp_path)
     cutoff = git(repo, "rev-parse", "HEAD").strip()
     ticket = "WOT-2026-161v"
-    commit_alta(repo, row(ticket), "alta marcador invalido")
-    _write_ficha(
-        repo,
-        ticket,
+    ficha = (
         "redactada_por: foo\n"
         "triador_modelo: kilo|nan/gemma4\n"
         "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
-        "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n",
+        "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n"
+    )
+    commit_alta_with_ficha(
+        repo,
+        row(ticket),
+        "alta marcador invalido",
+        ticket,
+        ficha,
     )
     monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
     output = "\n".join(lines)
     assert code == 1 and not skipped
-    assert "redactada_por ausente o fuera" in output
+    assert cba.CAUSA_VALOR_FUERA_VOCAB in output
     assert any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings)
 
 
 def test_closeout_tr_conforme_is_positive_admission_control(tmp_path, monkeypatch):
-    repo = init_repo(tmp_path)
-    cutoff = git(repo, "rev-parse", "HEAD").strip()
     ticket = "WOT-2026-161v"
-    candidate_row = row(ticket)
-    surface = backlog_surface(repo)
-    recibo = build_recibo(repo, ticket, candidate_row, [surface])
-    commit_alta(repo, candidate_row, msg_with_recibo("alta TR conforme", recibo))
-    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     assert frozenset({"APPROVE"}) == cba.LENSES_VERDICTS
 
-    for marker in ("Tr", "TR", "tR"):
-        _write_ficha(
+    for index, marker in enumerate(("Tr", "TR", "tR")):
+        repo = init_repo(tmp_path / f"case_{index}")
+        cutoff = git(repo, "rev-parse", "HEAD").strip()
+        candidate_row = row(ticket)
+        surface = backlog_surface(repo)
+        recibo = build_recibo(repo, ticket, candidate_row, [surface])
+        commit_alta_with_ficha(
             repo,
+            candidate_row,
+            msg_with_recibo("alta TR conforme", recibo),
             ticket,
             f"redactada_por: {marker}\n"
             "triador_modelo: kilo|nan/gemma4\n"
             "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
             "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n",
         )
+        monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
         code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
         output = "\n".join(lines)
         assert code == 0 and not skipped
@@ -526,20 +893,24 @@ def test_closeout_tr_conforme_is_positive_admission_control(tmp_path, monkeypatc
 
 
 def test_closeout_tr_lens_verdict_set_and_pairwise_families(tmp_path, monkeypatch):
-    repo = init_repo(tmp_path)
+    repo = init_repo(tmp_path / "bad")
     cutoff = git(repo, "rev-parse", "HEAD").strip()
     ticket = "WOT-2026-161v"
     candidate_row = row(ticket)
     surface = backlog_surface(repo)
     recibo = build_recibo(repo, ticket, candidate_row, [surface])
-    commit_alta(repo, candidate_row, msg_with_recibo("alta TR lentes", recibo))
-    _write_ficha(
-        repo,
-        ticket,
+    bad_ficha = (
         "redactada_por: TR\n"
         "triador_modelo: kilo|nan/gemma4\n"
         "lente_1: nan_api|deepseek-v4-flash|RECHAZO\n"
-        "lente_2: opencode|glm5.3-flash|APPROVE\n",
+        "lente_2: opencode|glm5.3-flash|APPROVE\n"
+    )
+    commit_alta_with_ficha(
+        repo,
+        candidate_row,
+        msg_with_recibo("alta TR lentes", recibo),
+        ticket,
+        bad_ficha,
     )
     monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
@@ -547,15 +918,27 @@ def test_closeout_tr_lens_verdict_set_and_pairwise_families(tmp_path, monkeypatc
     assert code == 1
     assert "solo APPROVE cuenta" in output
 
-    _write_ficha(
-        repo,
-        ticket,
+    repo_good = init_repo(tmp_path / "good")
+    cutoff_good = git(repo_good, "rev-parse", "HEAD").strip()
+    surface_good = backlog_surface(repo_good)
+    recibo_good = build_recibo(repo_good, ticket, candidate_row, [surface_good])
+    good_ficha = (
         "redactada_por: TR\n"
         "triador_modelo: kilo|nan/gemma4\n"
         "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
-        "lente_2: kilo|nan/deepseek-v4-flash|APPROVE\n",
+        "lente_2: kilo|nan/deepseek-v4-flash|APPROVE\n"
     )
-    code, lines, _skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    commit_alta_with_ficha(
+        repo_good,
+        candidate_row,
+        msg_with_recibo("alta TR lentes", recibo_good),
+        ticket,
+        good_ficha,
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff_good)
+    code, lines, _skipped, findings = cba._audit_closeout(
+        repo_good, cutoff_sha=cutoff_good
+    )
     output = "\n".join(lines)
     globals_ = [line for line in lines if line.startswith("VEREDICTO GLOBAL")]
     assert code == 1
@@ -567,23 +950,26 @@ def test_closeout_tr_lens_verdict_set_and_pairwise_families(tmp_path, monkeypatc
 def test_closeout_tr_lens_verdict_set_and_pairwise_families_triador_control(
     tmp_path, monkeypatch
 ):
-    repo = init_repo(tmp_path)
+    repo = init_repo(tmp_path / "bad")
     cutoff = git(repo, "rev-parse", "HEAD").strip()
     ticket = "WOT-2026-161v"
     candidate_row = row(ticket)
     surface = backlog_surface(repo)
     recibo = build_recibo(repo, ticket, candidate_row, [surface])
-    commit_alta(repo, candidate_row, msg_with_recibo("alta TR control", recibo))
-    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
-
-    _write_ficha(
-        repo,
-        ticket,
+    bad_ficha = (
         "redactada_por: TR\n"
         "triador_modelo: kilo|nan/gemma4\n"
         "lente_1: kilo|nan/gemma4|APPROVE\n"
-        "lente_2: nan_api|deepseek-v4-flash|APPROVE\n",
+        "lente_2: nan_api|deepseek-v4-flash|APPROVE\n"
     )
+    commit_alta_with_ficha(
+        repo,
+        candidate_row,
+        msg_with_recibo("alta TR control", recibo),
+        ticket,
+        bad_ficha,
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
     code_bad, lines_bad, _skipped, findings_bad = cba._audit_closeout(
         repo, cutoff_sha=cutoff
     )
@@ -594,16 +980,26 @@ def test_closeout_tr_lens_verdict_set_and_pairwise_families_triador_control(
     assert any(f.get("veredicto") == cba.LENTES_TR_NO_CONFORME for f in findings_bad)
     assert len(globals_bad) == 1 and "FALLO" in globals_bad[0]
 
-    _write_ficha(
-        repo,
-        ticket,
+    repo_good = init_repo(tmp_path / "good")
+    cutoff_good = git(repo_good, "rev-parse", "HEAD").strip()
+    surface_good = backlog_surface(repo_good)
+    recibo_good = build_recibo(repo_good, ticket, candidate_row, [surface_good])
+    good_ficha = (
         "redactada_por: TR\n"
         "triador_modelo: kilo|nan/gemma4\n"
         "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
-        "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n",
+        "lente_2: kilo|nan/qwen3.8-flash|APPROVE\n"
     )
+    commit_alta_with_ficha(
+        repo_good,
+        candidate_row,
+        msg_with_recibo("alta TR control", recibo_good),
+        ticket,
+        good_ficha,
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff_good)
     code_good, lines_good, skipped_good, findings_good = cba._audit_closeout(
-        repo, cutoff_sha=cutoff
+        repo_good, cutoff_sha=cutoff_good
     )
     output_good = "\n".join(lines_good)
     assert code_good == 0 and not skipped_good
@@ -632,7 +1028,7 @@ def test_closeout_missing_ficha_cutoff_semantics(tmp_path, monkeypatch):
     code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
     output = "\n".join(lines)
     assert code == 1
-    assert "ficha no localizable" in output
+    assert cba.CAUSA_FICHA_NO_PRESENTE in output
     assert "LENTES_TR_NO_CONFORME" in output
 
 

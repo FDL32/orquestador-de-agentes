@@ -90,6 +90,7 @@ acumuladas>` o equivalente).
       mecanico lo emite ESTE generador, no `find_similar_signals`).
    b. Incluye el recibo en el mensaje del commit del alta, como linea
       `BACKLOG-ADMISSION-RECIBO: <json>`.
+   c. Antes de commitear, comprueba la ficha con `python scripts/check_backlog_admission.py --check-ficha <ruta>`; el contrato vive en `.agent/rules/common/backlog_ficha_contract.md`.
 
 4. **El guard contrasta** (fail-closed): si el recibo falta o es incoherente,
    `check_backlog_admission.py` rechaza con `SIN_RECIBO` o
