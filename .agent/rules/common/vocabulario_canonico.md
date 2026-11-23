@@ -29,7 +29,7 @@ El contrato de no-colision entre ambas vive en `<destino>/orchestrator_pipeline/
 
 ### Vuelo, pipeline, ticket y sesion (WOT-2026-219c)
 
-ESTADO: PENDIENTE DE RATIFICACION LITERAL DEL USUARIO. D-V = A (7dba5ae6-a7c1-4153-bba2-4c8b5dca94e8) y las cinco recomendaciones (a42a125d-b6fb-4d3f-a1e0-2d16cb137169); la redaccion de las enmiendas de la ronda de lentes forma parte de lo pendiente de ratificar; la ratificacion del literal se registra en un commit posterior.
+ESTADO: RATIFICADO POR EL USUARIO (mensaje 79a7252a-9bce-4f9c-a823-ae913b9373d9, web, 2026-11-23: "ratifico 219c"). D-V = A (7dba5ae6-a7c1-4153-bba2-4c8b5dca94e8) y las cinco recomendaciones (a42a125d-b6fb-4d3f-a1e0-2d16cb137169); el literal de esta seccion y las enmiendas de redaccion de la ronda de lentes quedan ratificados.
 
 Definiciones canonicas, cada una con su principio y su fin:
 
