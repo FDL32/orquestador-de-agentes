@@ -4913,6 +4913,58 @@ def run_sibling_commit_parity_check(
     )
 
 
+def run_pilares_views_fresh_check(project_root: Path) -> CheckResult:
+    """WOT-2026-219b: comprueba frescura de vistas derivadas de vuelo_pilares.md."""
+    name = "Pilares Views Freshness Check"
+    try:
+        from scripts.flight.check_pilares_views_fresh import verify_views_fresh
+    except ImportError:
+        try:
+            from flight.check_pilares_views_fresh import (
+                verify_views_fresh,  # type: ignore[no-redef]
+            )
+        except ImportError as exc:
+            return CheckResult(
+                name=name,
+                passed=False,
+                output=f"Error importando check_pilares_views_fresh: {exc}",
+                is_blocking=True,
+            )
+
+    try:
+        target_root = (
+            project_root
+            if (
+                project_root / ".agent" / "rules" / "common" / "vuelo_pilares.md"
+            ).exists()
+            else _MOTOR_ROOT
+        )
+        is_fresh = verify_views_fresh(project_root=target_root)
+        if not is_fresh:
+            return CheckResult(
+                name=name,
+                passed=False,
+                output=(
+                    "FAIL: vistas de pilares desactualizadas o ausentes respecto al canon. "
+                    "Ejecuta `python scripts/flight/check_pilares_views_fresh.py --generate` para regenerarlas."
+                ),
+                is_blocking=True,
+            )
+        return CheckResult(
+            name=name,
+            passed=True,
+            output="OK: vistas e indices de pilares estan frescos.",
+            is_blocking=True,
+        )
+    except Exception as exc:
+        return CheckResult(
+            name=name,
+            passed=False,
+            output=f"Error ejecutando check_pilares_views_fresh: {exc}",
+            is_blocking=True,
+        )
+
+
 def run_preflight_check(
     project_root: Path | None = None,
     expected_artifacts: list[str] | None = None,
@@ -4987,6 +5039,8 @@ def run_preflight_check(
     # 5-quinquies. Asignaciones derivadas (WOT-2026-229a; bloqueante solo en
     # el motor, WARN visible cuando este preflight audita un destino externo).
     results.append(run_asignaciones_check(project_root))
+    # 5-sexies. Pilares Views Freshness Check (WOT-2026-219b; bloqueante)
+    results.append(run_pilares_views_fresh_check(project_root))
 
     # 6. Backlog Contract Check (solo en cierre de sesion; bloqueante)
     if closeout_mode:

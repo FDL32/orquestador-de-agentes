@@ -452,6 +452,10 @@ guards:
     clase: external_targets
     skip_explicito: 'no'
     nota: --latido-file del llamador
+  scripts/flight/check_pilares_views_fresh.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: verifica frescura de vistas y canon; project_root del llamador
   scripts/flight/check_quota_index_drift.py:
     clase: external_targets
     skip_explicito: 'no'

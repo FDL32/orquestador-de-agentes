@@ -830,3 +830,16 @@ def test_closeout_wrapper_reads_the_targets_file_the_writer_writes(tmp_path):
     it.write_receipt(tmp_path, _receipt(tip))
     assert sc._step_integration_receipts(tmp_path, False).status == "PASS"
     assert sc._step_integration_receipts(tmp_path, True).status == "SKIP"
+
+
+def test_integrate_fails_when_pilares_views_stale(tmp_path):
+    """Verify integrate() aborts before merging when pilares views are not fresh (WOT-2026-219b)."""
+    w = _world(tmp_path)
+    views_dir = w.motor / "prompts" / "vuelo_pilares_views"
+    views_dir.mkdir(parents=True)
+    (views_dir / "vista_CO.md").write_text("corrupted content", encoding="utf-8")
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 1, lines
+    assert "vistas de pilares no frescas" in lines[0]
+    assert _git(w.motor, "rev-parse", "HEAD") == w.base
+    assert not it.receipt_path(w.destino, w.tip).exists()

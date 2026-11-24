@@ -371,6 +371,24 @@ def review_level_gate(classification: Classification) -> tuple[bool, dict[str, o
     }
 
 
+def check_pilares_views(motor_root: Path) -> tuple[int, list[str]]:
+    """Comprueba que las vistas del canon de pilares estan frescas antes de integrar (WOT-2026-219b)."""
+    views_dir = motor_root / "prompts" / "vuelo_pilares_views"
+    if not views_dir.exists():
+        return 0, []
+    try:
+        from scripts.flight.check_pilares_views_fresh import verify_views_fresh
+
+        if not verify_views_fresh(project_root=motor_root):
+            return 1, [
+                "FAIL vistas de pilares no frescas en motor. "
+                "Ejecuta `python scripts/flight/check_pilares_views_fresh.py --generate` antes de integrar."
+            ]
+        return 0, []
+    except Exception as exc:
+        return 2, [f"NO VERIFICABLE error comprobando vistas de pilares: {exc}"]
+
+
 def integrate(  # noqa: C901
     ticket: str,
     candidate: str,
@@ -422,6 +440,9 @@ def integrate(  # noqa: C901
         family_rc, family_lines = check_family(ticket, tip, project_root, motor_root)
         if family_rc != 0:
             return family_rc, family_lines
+        views_rc, views_lines = check_pilares_views(motor_root)
+        if views_rc != 0:
+            return views_rc, views_lines
     classification = None
     if not attest:
         classification = _run_review_level(ticket, head, tip, project_root, motor_root)
