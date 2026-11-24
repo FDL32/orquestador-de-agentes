@@ -60,24 +60,31 @@ P29_FIXTURE_ROW = (
 )
 
 
-def parse_row(line: str) -> dict[str, str]:
-    """Parse and validate one Markdown table row.
+def _validate_ambito(state: str, ambito: str) -> None:
+    """Validate the optional scope column for states that define it.
 
-    Before: ``line`` is one candidate Markdown table row.
-    During: split the row into its seven cells and validate the state/message
-    relationship and the UUID shape.
-    After: return named fields, or raise ``ValueError`` identifying the first
-    violated invariant.
+    Before: ``state`` and a stripped optional ``ambito`` value are supplied.
+    During: enforce the historical marker or ratified scope-token contract.
+    After: return normally when valid; otherwise raise ``ValueError``.
     """
-    cells = [cell.strip() for cell in line.strip().split("|")]
-    if cells and cells[0] == "":
-        cells.pop(0)
-    if cells and cells[-1] == "":
-        cells.pop()
-    if len(cells) != 7:
-        raise ValueError("row must have seven columns")
+    if not ambito:
+        return
+    if state == "SUPERADA" and ambito != "HISTORICO":
+        raise ValueError("SUPERADA rows require ambito HISTORICO")
+    if state == "RATIFICADA":
+        ambito_tokens = {token.strip() for token in re.split(r"[,/]", ambito)}
+        if not ambito_tokens.issubset({"G", "CO", "IM", "TR"}):
+            raise ValueError("RATIFICADA rows require valid ambito tokens")
 
-    pillar, phrase, state, message_id, source, mechanism, ask = cells
+
+def _validate_state_and_message(state: str, message_id: str) -> None:
+    """Validate the state and its message-id relationship.
+
+    Before: ``state`` and ``message_id`` are parsed, stripped cell values.
+    During: enforce the allowed states, UUID requirement, and empty-id rule.
+    After: return normally when the pair is valid; otherwise raise
+    ``ValueError``.
+    """
     if not state:
         raise ValueError("state is required")
     if state not in ALLOWED_STATES:
@@ -89,6 +96,32 @@ def parse_row(line: str) -> dict[str, str]:
             raise ValueError("messageId must be a UUID")
     elif message_id:
         raise ValueError("only ratified rows may carry messageId")
+
+
+def parse_row(line: str) -> dict[str, str]:
+    """Parse and validate one Markdown table row.
+
+    Before: ``line`` is one candidate Markdown table row.
+    During: split the row into seven or eight cells and validate the
+    state/message/ambito relationships and the UUID shape.
+    After: return named fields, or raise ``ValueError`` identifying the first
+    violated invariant.
+    """
+    cells = [cell.strip() for cell in line.strip().split("|")]
+    if cells and cells[0] == "":
+        cells.pop(0)
+    if cells and cells[-1] == "":
+        cells.pop()
+    if len(cells) not in (7, 8):
+        raise ValueError("row must have seven or eight columns")
+
+    if len(cells) == 8:
+        pillar, phrase, state, message_id, source, mechanism, ask, ambito = cells
+    else:
+        pillar, phrase, state, message_id, source, mechanism, ask = cells
+        ambito = ""
+    _validate_ambito(state, ambito)
+    _validate_state_and_message(state, message_id)
     return {
         "pillar": pillar,
         "phrase": phrase,
@@ -97,6 +130,7 @@ def parse_row(line: str) -> dict[str, str]:
         "source": source,
         "mechanism": mechanism,
         "ask": ask,
+        "ambito": ambito,
     }
 
 
@@ -429,7 +463,7 @@ def test_row_negative_mutates_one_unique_fragment(
 
 def test_row_with_six_columns_fails_explicitly() -> None:
     candidate = mutate_once(BASE_ROW, "| mecanismo |", "| mecanismo")
-    with pytest.raises(ValueError, match="row must have seven columns"):
+    with pytest.raises(ValueError, match="row must have seven or eight columns"):
         parse_row(candidate)
 
 
