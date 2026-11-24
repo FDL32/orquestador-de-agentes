@@ -51,7 +51,7 @@ operar y usa esta tabla como inventario mínimo del paquete CO.
 | artefacto | ruta | nota |
 |---|---|---|
 | autoridad de órdenes | `<motor>/docs/protocol/flight_supervision.md` | Existe; autoridad de órdenes. |
-| pilares y precedencia | `<motor>/.agent/rules/common/vuelo_pilares.md` | Existe; pilares y precedencia. |
+| pilares aplicables | `<motor>/prompts/vuelo_pilares_views/vista_CO.md` | Existe; vista de pilares aplicables a CO. |
 | estado de relevo | `<flight>/diseno/ESTADO_RELEVO_VIGENTE.json` | **NO EXISTE**; medido 2026-11-21, se genera en cada relevo. |
 | operación en curso | `<flight>/diseno/OPERACION_EN_CURSO_<CO>.md` | Existe; registro operativo, patrón medido. |
 | arranque CO | `<flight>/diseno/ARRANQUE_<CO>_<fecha>.md` | Existe; ejemplo `ARRANQUE_CO-141_20261120.md`. |
@@ -72,6 +72,7 @@ triage y usa esta tabla como inventario mínimo del paquete TR.
 | prompt de admisión | `<motor>/prompts/backlog_admit.md` | Existe. |
 | protocolo de findings | `<motor>/prompts/_shared/finding_triage_protocol.md` | Existe; ruta real. |
 | recibos de alta | `<flight>/backlog_admission_recibos_fixed/` | Existe; recibos de alta. |
+| pilares aplicables | `<motor>/prompts/vuelo_pilares_views/vista_TR.md` | Existe; vista de pilares aplicables a TR. |
 
 ### IM
 
@@ -85,3 +86,4 @@ implantar y usa esta tabla como inventario mínimo del paquete IM.
 | relevo de sesión | `<motor>/prompts/t3_role_session_relief.md` | Existe; alivio y relevo de sesión. |
 | jerarquía de memoria | `<motor>/.agent/rules/common/memory_hierarchy.md` | Existe; arquitectura de memoria para expansión. |
 | instancia del manifiesto | `<flight>/diseno/MANIFIESTO_ARRANQUE_ROLES_<fecha>.md` | **NO EXISTE** hasta que se genere. |
+| pilares aplicables | `<motor>/prompts/vuelo_pilares_views/vista_IM.md` | Existe; vista de pilares aplicables a IM. |
