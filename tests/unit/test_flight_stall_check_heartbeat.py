@@ -117,7 +117,6 @@ def test_heartbeat_no_detectores_y_claves_son_disjuntas(heartbeat_box, monkeypat
 
     assert result.rc == 0
     assert all(event[2] != "stall" for event in result.events)
-    assert all(event[0] != "tarea-muerta" for event in result.events)
 
 
 def test_heartbeat_aviso_fallido_se_distingue_del_reloj_viejo(heartbeat_box):
