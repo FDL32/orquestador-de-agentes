@@ -613,6 +613,34 @@ def test_real_templates_cite_p8_p9_with_its_real_state(pillar: str) -> None:
         assert_pillar_cited_with_state(path.read_text(encoding="utf-8"), pillar, state)
 
 
+def test_m07_latido_tracks_p2_and_removes_p16() -> None:
+    """m-07: LATIDO cites P2 as binding and no longer cites P16."""
+    text = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    assert "Aplica P2 (RATIFICADA, vinculante)." in text
+    assert "Aplica P2 (NO RATIFICADA, no vinculante)." not in text
+    assert "Aplica P16" not in text
+
+
+def test_mutation_m07_reintroduced_p2_no_ratificada_fails() -> None:
+    """mutation: re-introducing P2 as NO RATIFICADA fails m-07."""
+    mutated = (
+        TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+        + "\n   Aplica P2 (NO RATIFICADA, no vinculante)."
+    )
+    with pytest.raises(AssertionError):
+        assert "Aplica P2 (NO RATIFICADA, no vinculante)." not in mutated
+
+
+def test_mutation_m07_reintroduced_p16_fails() -> None:
+    """mutation: re-introducing P16 fails m-07."""
+    mutated = (
+        TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+        + "\n   Aplica P16 (NO RATIFICADA, no vinculante)."
+    )
+    with pytest.raises(AssertionError):
+        assert "Aplica P16" not in mutated
+
+
 def extract_latido_supervisora_block(text: str) -> str:
     """Extract LATIDO step 12b between steps 12 and 13.
 
