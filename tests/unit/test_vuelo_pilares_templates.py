@@ -791,3 +791,31 @@ def test_latido_supervisora_semantic_pins_mutant(literal: str) -> None:
     with pytest.raises(ValueError) as excinfo:
         assert_latido_supervisora_semantic_pin(candidate, literal)
     assert literal in str(excinfo.value)
+
+
+MANIFIESTO_ROLES_PATH = TEMPLATES_DIR / "MANIFIESTO_ARRANQUE_ROLES.md"
+
+
+def test_m07_templates_cite_views_and_not_full_canon() -> None:
+    """m-07: templates do not cite the full canon vuelo_pilares.md, but rather the role views."""
+    for tpath in TEMPLATES_DIR.glob("*.md"):
+        text = tpath.read_text(encoding="utf-8")
+        assert ".agent/rules/common/vuelo_pilares.md" not in text, (
+            f"{tpath.name} still cites full canon"
+        )
+
+    manifiesto = MANIFIESTO_ROLES_PATH.read_text(encoding="utf-8")
+    assert "prompts/vuelo_pilares_views/vista_CO.md" in manifiesto
+    assert "prompts/vuelo_pilares_views/vista_TR.md" in manifiesto
+    assert "prompts/vuelo_pilares_views/vista_IM.md" in manifiesto
+
+
+def test_mutation_m07_reintroducing_canon_citation_fails() -> None:
+    """Mutant m-07: restoring full canon citation in MANIFIESTO_ARRANQUE_ROLES.md fails."""
+    content = MANIFIESTO_ROLES_PATH.read_text(encoding="utf-8")
+    mutated = content.replace(
+        "prompts/vuelo_pilares_views/vista_CO.md",
+        ".agent/rules/common/vuelo_pilares.md",
+    )
+    with pytest.raises(AssertionError):
+        assert ".agent/rules/common/vuelo_pilares.md" not in mutated
