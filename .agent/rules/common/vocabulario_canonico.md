@@ -22,7 +22,7 @@ la ficha, el DAG), no una investigacion.
 
 | Termino | Que hace | Escribe en | Prompts (bootstrap / cierre) |
 |---------|----------|------------|------------------------------|
-| `sesion_diseno` | Tria el backlog, disena planes de vuelo (el flight plan, artefacto de diseno; no la capa vuelo de la seccion siguiente) y redacta fichas. READ-ONLY sobre el codigo: NO implementa, NO commitea codigo, NO escribe `backlog.md`. | `queued/`, `reports/`, `backlog_inbox/` | `orchestrator_session_bootstrap_design.md` / `orchestrator_session_close_full_audit_design.md` |
+| `sesion_diseno` | Tria el backlog, disena planes de vuelo (el flight plan, artefacto de diseno; no la capa vuelo de la seccion siguiente) y redacta fichas. READ-ONLY sobre el codigo: NO implementa, NO commitea codigo, NO escribe `backlog.md`. Enmienda P19: pueden modificar el backlog y los demas documentos de registro, activacion y cierres de tickets para mantener el estado actualizado. | `queued/`, `reports/`, `backlog_inbox/` | `orchestrator_session_bootstrap_design.md` / `orchestrator_session_close_full_audit_design.md` |
 | `sesion_desarrollo` | Ejecuta los pipelines de un vuelo: implementa, commitea, mueve `queued/ -> in_flight/ -> done/` y escribe `backlog.md`. | codigo, `backlog.md`, `in_flight/`, `done/` | `orchestrator_session_bootstrap.md` / `orchestrator_session_close_full_audit.md` |
 
 El contrato de no-colision entre ambas vive en `<destino>/orchestrator_pipeline/flight_plans/INDEX.md`.
@@ -38,7 +38,7 @@ Definiciones canonicas, cada una con su principio y su fin:
 | `vuelo` | Espacio de operacion autonoma CONTINUA sobre UN destino (`repo_destino` / `workspace_activo`), con id, rama, carpeta de estado, roster, registro de sesiones, cadena de relevo y conjunto de herramientas. | Se abre con una autorizacion tipo GO del usuario (regla de apertura abajo). | Lo cierra el usuario (regla de cierre abajo); NUNCA termina solo por un push. |
 | `pipeline` | Conjunto de tickets de un vuelo que se ejecuta y se cierra JUNTO: pasa por admision, implantacion y revision. | La coordinadora congela su cola. | UNA suite canonica verde sobre el HEAD final Y cada repo con commits del pipeline con su push autorizado (una frase por repo), o el descarte declarado por el usuario (el pipeline queda DESCARTADO); con un solo repo publicado el pipeline sigue ABIERTO. |
 | `ticket` | Ficha mas fila de backlog; se trabaja con cualquier combinacion de sesiones CO, IM y TR. | Alta con recibo. | Cierre con `commit:<sha>`. |
-| `sesion` | Hilo de T3 de clase CO, IM o TR. RELACION CLASE-TIPO: la clase (CO, IM o TR) identifica el hilo y su funcion en el vuelo, el tipo (DISENO o DESARROLLO) dice que escribe y que puede tocar, y ninguno sustituye al otro. | Creacion del hilo, con su codigo de sesion. | Hilo cerrado o relevado. |
+| `sesion` | Hilo de T3 de clase CO, IM o TR. `orquestadora` es el termino legacy de la coordinadora CO. RELACION CLASE-TIPO: la clase (CO, IM o TR) identifica el hilo y su funcion en el vuelo, el tipo (DISENO o DESARROLLO) dice que escribe y que puede tocar, y ninguno sustituye al otro. | Creacion del hilo, con su codigo de sesion. | Hilo cerrado o relevado. |
 
 Un vuelo contiene pipelines sucesivos: el cierre de un pipeline (fila `pipeline`) no cierra el vuelo, que continua.
 
