@@ -1195,131 +1195,6 @@ def test_reconcile_no_toca_claves_de_otro_owner(box):
     assert "event:cupo-97" in box.ca_state()
 
 
-# ------------------------------------------------------------------ filas 117 y 121: tarea (D25)
-def _tarea(box, ts=None, registrada=True):
-    if registrada:
-        (box.ops / "task_registered.json").write_text("{}", encoding="utf-8")
-    if ts is not None:
-        (box.ops / "task_state.json").write_text(
-            json.dumps({"ts_tarea": ts}), encoding="utf-8"
-        )
-
-
-def test_fila117_sin_marca_no_hay_aviso_de_tarea(box):
-    """Fila 117 (N83)."""
-    r = box.tick()
-    assert (
-        r.rc == 0 and "tarea-muerta" not in r.keys and "tarea_registrada" not in r.out
-    )
-
-
-def test_fila117_con_marca_y_sin_task_state_avisa(box):
-    _tarea(box)
-    r = box.tick()
-    assert r.rc == 1 and ("tarea-muerta", "AVISO", "stall") in r.events
-
-
-@pytest.mark.parametrize(
-    ("minutos", "avisa"),
-    [
-        (0, False),
-        (24, False),
-        (25, False),
-        (26, True),
-        (600, True),
-        (-4, False),
-        (-6, True),
-    ],
-)
-def test_fila117_umbral_de_25_min_y_futuro_acotado(box, minutos, avisa):
-    """El umbral es 25 min (no 2500) y un ts del futuro lejano es ilegible."""
-    _tarea(box, ts=box.clock.now - minutos * 60)
-    assert ("tarea-muerta" in box.tick().keys) is avisa
-
-
-@pytest.mark.parametrize(
-    "malo",
-    [
-        '"ayer"',
-        "null",
-        "true",
-        "NaN",
-        "Infinity",
-        "-Infinity",
-        "1e999",
-        "1" * 400,
-        "[]",
-        "{}",
-    ],
-)
-def test_fila117_ts_tarea_ilegible_avisa(box, malo):
-    """Un reloj ilegible se dice ilegible (ni "lleva N min", ni detector-roto por desbordar)."""
-    _tarea(box)
-    (box.ops / "task_state.json").write_text(
-        '{"ts_tarea": ' + malo + "}", encoding="utf-8"
-    )
-    r = box.tick()
-    assert "tarea-muerta" in r.keys and "detector-roto" not in r.keys
-    assert (
-        "falta o es ilegible" in r.sent[0][1] and "min sin correr" not in r.sent[0][1]
-    )
-
-
-def test_fila117_ts_tarea_antiguo_dice_cuantos_minutos(box):
-    _tarea(box, ts=box.clock.now - 600 * 60)
-    r = box.tick()
-    assert "lleva 600 min sin correr" in r.sent[0][1]
-
-
-@pytest.mark.parametrize("contenido", [b"", b"{no", b"[]", b"null", b"\xff\xfe"])
-def test_fila117_task_state_ilegible_avisa(box, contenido):
-    _tarea(box)
-    (box.ops / "task_state.json").write_bytes(contenido)
-    assert "tarea-muerta" in box.tick().keys
-
-
-def test_fila117_marca_como_directorio_cuenta_como_registrada(box, tmp_path):
-    (box.ops / "task_registered.json").mkdir()
-    assert "tarea-muerta" in box.tick().keys
-
-
-def test_fila117_marca_como_symlink_roto_cuenta_como_registrada(box, tmp_path):
-    """N83b: lexists, no exists: un enlace roto sigue siendo una marca puesta."""
-    try:
-        (box.ops / "task_registered.json").symlink_to(tmp_path / "no_existe")
-    except (OSError, NotImplementedError):
-        pytest.skip("sin permiso para crear symlinks")
-    assert "tarea-muerta" in box.tick().keys
-
-
-def test_fila121_tarea_muerta_se_resuelve_explicitamente_al_recuperarse(box):
-    """Fila 121 (N87): ts_tarea fresco (o marca retirada) = resolve explicito del dueno stall."""
-    _tarea(box)
-    box.tick()
-    assert box.ca_state()["event:tarea-muerta"]["owner"] == "stall"
-    box.resolved.clear()
-    _tarea(box, ts=box.clock.now)
-    r = box.tick()
-    assert (
-        "event:tarea-muerta" not in box.ca_state()
-        and box.resolved == ["tarea-muerta"]
-        and r.rc == 0
-    )
-    _tarea(box, ts=box.clock.now - 3600)
-    assert "tarea-muerta" in box.tick().keys  # la recaida avisa de nuevo
-    (box.ops / "task_registered.json").unlink()
-    box.tick()
-    assert "event:tarea-muerta" not in box.ca_state()
-
-
-def test_fila121_dry_run_no_resuelve(box):
-    _tarea(box)
-    box.tick()
-    _tarea(box, ts=box.clock.now)
-    box.tick("--dry-run")
-    assert "event:tarea-muerta" in box.ca_state()
-
-
 # ------------------------------------------------------------------ AST: higiene del modulo
 def test_modulo_sin_cargas_desde_ops_dir_ni_bypass():
     """D17/D19: ninguna forma de cargar o ejecutar codigo de ops-dir ni Bypass en el modulo."""
@@ -2311,12 +2186,90 @@ def test_n68b_el_recorte_a_60_no_parte_un_uuid_que_la_redaccion_ya_no_ve(box):
 def test_n80b_dry_run_no_concilia_ni_imprime_borrados(box):
     """--dry-run no resuelve claves: ni las borra ni anuncia que lo hizo."""
     box.ca.mark_seen("cupo-92", "AVISO", "stall")
-    box.ca.mark_seen("tarea-muerta", "AVISO", "stall")
     box.resolved.clear()
     r = box.tick("--dry-run")
-    assert "resueltas" not in r.out and "resuelta tarea-muerta" not in r.out
+    assert "resueltas" not in r.out
     assert box.resolved == []
     assert "event:cupo-92" in box.ca_state()
+
+
+BASE_DETECTOR_NAMES = {
+    "quota",
+    "cola",
+    "git",
+    "ocio-con-cola",
+    "disco",
+    "hook",
+    "tarea",
+    "im-ocioso",
+    "cola-despachable",
+    "celda",
+    "huerfano",
+    "presupuesto-nan",
+    "co-sin-asentar",
+}
+
+
+def test_m01_no_check_tarea_ni_evento_tarea_muerta(box):
+    """m-01: flight_stall_check no define check_tarea ni emite tarea-muerta."""
+    assert not hasattr(box.m, "check_tarea")
+    assert "tarea" not in box.m.DETECTOR_NAMES
+    assert "tarea-muerta" not in box.m.DETECTOR_NAMES
+    src = FSC_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    func_names = {
+        node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+    assert "check_tarea" not in func_names
+    r = box.tick()
+    assert "tarea-muerta" not in r.keys
+
+
+def test_m02_no_check_celda_ni_exentas_ni_evento_celda_no_conforme(box):
+    """m-02: flight_stall_check no define check_celda ni EXENTAS_CELDA_LENTES ni emite celda-no-conforme."""
+    assert not hasattr(box.m, "check_celda")
+    assert not hasattr(box.m, "EXENTAS_CELDA_LENTES")
+    assert "celda" not in box.m.DETECTOR_NAMES
+    assert "celda-no-conforme" not in box.m.DETECTOR_NAMES
+    src = FSC_PATH.read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    func_names = {
+        node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)
+    }
+    assert "check_celda" not in func_names
+    r = box.tick()
+    assert "celda-no-conforme" not in r.keys
+
+
+def test_m03_resto_de_detectores_sigue_registrado_igual(box):
+    """m-03: el resto de detectores sigue registrado exactamente igual a la BASE menos las dos retiradas."""
+    expected = BASE_DETECTOR_NAMES - {"tarea", "celda"}
+    assert set(box.m.DETECTOR_NAMES) == expected
+    assert len(box.m.DETECTOR_NAMES) == len(expected) == 11
+
+
+def test_m04_estado_con_eventos_abiertos_retirados_se_resuelven_y_otros_siguen_abiertos(
+    box,
+):
+    """m-04: un estado con tarea-muerta y celda-no-conforme abiertos los resuelve por main, dejando abiertos los demas."""
+    box.ca.mark_seen("tarea-muerta", "AVISO", "stall")
+    box.ca.mark_seen("celda-no-conforme", "AVISO", "stall")
+    box.ca.mark_seen("cupo-92", "AVISO", "stall")
+    assert "event:tarea-muerta" in box.ca_state()
+    assert "event:celda-no-conforme" in box.ca_state()
+    assert "event:cupo-92" in box.ca_state()
+
+    box.resolved.clear()
+    box.quota.write_text("QUOTA NO_MEDIDO | alvarovans weekly 40%", encoding="utf-8")
+    box.tick()
+
+    state = box.ca_state()
+    assert "event:tarea-muerta" not in state
+    assert "event:celda-no-conforme" not in state
+    assert "event:cupo-92" in state
+    assert "tarea-muerta" in box.resolved
+    assert "celda-no-conforme" in box.resolved
+    assert "cupo-92" not in box.resolved
 
 
 def test_go_tick_reconoce_clave_go_y_titulo_go_pendiente(box):
@@ -2679,345 +2632,6 @@ def test_cola_despachable_cupo_contraste_cuenta(box):
     )
     healthy_found = box.m.check_cola_despachable({}, {})
     assert "OTRO" in healthy_found[0][2] and "NO_MEDIDO" in healthy_found[0][2]
-
-
-def _set_celda_registry(box, sessions):
-    """Before: ``sessions`` describes a synthetic prospective registry.
-
-    During: write the registry in the temporary flight directory and resolve production paths.
-    After: return the configured module and leave all source fixtures untouched.
-    """
-    registry = box.flight / "session_registry.json"
-    registry.write_text(json.dumps({"sessions": sessions}), encoding="utf-8")
-    args = types.SimpleNamespace(
-        flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
-    )
-    box.m.CFG, _, _ = box.m._resolve_paths(args, box.ops)
-    return box.m
-
-
-def _prospective_tr(status="ASENTADA", started="2026-11-15T10:00:00+01:00", valid=True):
-    """Before: a status/date pair and a cell validity choice are supplied.
-
-    During: construct one realistic triaje session with the dual-read cell shape.
-    After: return a new dictionary suitable for a temporary registry.
-    """
-    return {
-        "code": "TR-TEST",
-        "role": "triaje",
-        "started": started,
-        "status": status,
-        "celda": {
-            "triador": "opencode nan/gemma4 hijo",
-            "revisor": "opencode nan/mimo-v2.6-flash",
-            "lentes": [],
-        }
-        if valid
-        else {
-            "triador": "opencode nan/qwen3.8-flash hijo",
-            "revisor": "mimo-v2.6-flash",
-        },
-        "lentes": [
-            {"modelo": "nan/deepseek-v4-flash"},
-            {"modelo": "nan/glm5.3-flash"},
-        ]
-        if valid
-        else [],
-    }
-
-
-@pytest.mark.parametrize(
-    ("session", "expected"),
-    [
-        (_prospective_tr(valid=False), "celda-no-conforme"),
-        (_prospective_tr(status="ACTIVA", valid=False), "celda-no-conforme"),
-        (_prospective_tr(valid=True), None),
-        (_prospective_tr(status="ACTIVA", valid=True), None),
-        (_prospective_tr(started="2026-11-14T10:00:00+01:00", valid=False), None),
-    ],
-)
-def test_celda_prospectivo_cubre_las_cinco_ramas(box, session, expected):
-    """Before: one real registry fixture represents each prospective branch.
-
-    During: run the celda detector with the production path resolver.
-    After: only red active-invalid branches emit the AVISO violation.
-    """
-    module = _set_celda_registry(box, [session])
-    found = module.check_celda({}, {})
-    assert (found[0][0] if found else None) == expected
-    if expected:
-        assert found[0][1] == "AVISO"
-        assert "--test-detector celda" in found[0][2]
-
-
-def test_celda_registry_ausente_e_ilegible_es_ceguera_visible(box):
-    """Before: the flight directory has no readable session registry.
-
-    During: invoke the detector once for absence and once for malformed JSON.
-    After: both invocations expose the dedicated celda blindness key.
-    """
-    args = types.SimpleNamespace(
-        flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
-    )
-    box.m.CFG, _, _ = box.m._resolve_paths(args, box.ops)
-    (box.flight / "session_registry.json").unlink()
-    out = {}
-    assert box.m.check_celda(out, {})[0][0] == "detector-ciego-celda"
-    assert out["ciego_celda"]
-    (box.flight / "session_registry.json").write_text("{bad", encoding="utf-8")
-    out = {}
-    assert box.m.check_celda(out, {})[0][0] == "detector-ciego-celda"
-    assert out["ciego_celda"]
-
-
-def test_celda_sin_prospectivos_no_es_ciega_ni_hallazgo(box):
-    """Before: a readable registry contains no sessions eligible for the detector.
-
-    During: run both checker modes through ``check_celda``.
-    After: the two NOT_MEASURED results produce no finding and no blindness flag.
-    """
-    module = _set_celda_registry(box, [])
-    out = {}
-    assert module.check_celda(out, {}) == []
-    assert "ciego_celda" not in out
-
-
-def test_celda_nombre_owner_y_blind_reconcile(box):
-    """Before: the celda detector is registered and marked blind for this tick.
-
-    During: reconcile the owned prefixes with a spy alert ledger.
-    After: celda is an owned prefix but blindness prevents clearing its alerts.
-    """
-    assert "celda" in box.m.DETECTOR_NAMES
-    assert "celda-" in box.m.OWNED_PREFIXES
-    calls = []
-
-    class Alert:
-        def reconcile(self, prefixes, found, dry, owner):
-            calls.append((prefixes, found, dry, owner))
-            return []
-
-        def load_state(self):
-            return {}
-
-        def resolve(self, key, dry):
-            raise AssertionError(key)
-
-    box.m._reconcile(
-        Alert(), {"ciego_celda": True}, [], types.SimpleNamespace(dry_run=True)
-    )
-    assert "celda-" not in calls[0][0]
-    box.m._reconcile(Alert(), {}, [], types.SimpleNamespace(dry_run=True))
-    assert "celda-" in calls[1][0]
-
-
-EXPECTED_IDS = [
-    "TR-61",
-    "TR-62",
-    "TR-63",
-    "TR-64",
-    "TR-65",
-    "TR-66",
-    "TR-67",
-    "TR-68",
-]
-EXPECTED_MOTIVES = {
-    "TR-61": "ENTREGADA Y ASENTADA EN T3 (fichas F1 y F2 de 176a, 176b y 176c); cerrada sin lentes registradas; asiento de correccion de deriva l.308",
-    "TR-62": "ENTREGADA Y ASENTADA EN T3 (triaje del segundo IM); cerrada sin lentes registradas; asiento de correccion de deriva l.309",
-    "TR-63": 'PARADA SIN BUILDER (CANCELLED en T3, sin entrega); asiento l.304; "asentada" en su status es el asiento de la sesion en T3 por CO-100, no una revision; segun su status no hay entrega que revisar',
-    "TR-64": "FALLIDA por content filter, sin secciones entregadas, HECHOS_T0 y BASE_T0 reutilizados por TR-65 (status del registry); asiento l.317; no consta revision",
-    "TR-65": "SETTLED con ficha 180a integrada ff-only; asiento l.329; sin lentes registradas",
-    "TR-66": "SETTLED con ficha 181a integrada ff-only; asiento l.330; sin lentes registradas",
-    "TR-67": "SETTLED a secas; solo entrada alta l.331; no se localizo asiento de cierre ni de status; mecanismo que escribio SETTLED no verificado; sin evidencia de entrega localizada",
-    "TR-68": "SETTLED a secas; solo entrada alta l.332; no se localizo asiento de cierre ni de status; mecanismo que escribio SETTLED no verificado; sin evidencia de entrega localizada",
-}
-
-
-def _celda_lens_session(code, status="SETTLED", started="2026-11-15T10:00:00+01:00"):
-    """Before: a code, status, and start value describe one synthetic TR.
-
-    During: build a valid TR pair with no measurable lenses.
-    After: return a frozen-registry-compatible session for celda tests.
-    """
-    session = _prospective_tr(status=status, started=started, valid=True)
-    session["code"] = code
-    session["lentes"] = []
-    session["celda"]["lentes"] = []
-    return session
-
-
-def test_celda_acuse_por_id_re_mide_y_conserva_check_tr(box):
-    """Before: the frozen fixture contains exactly the eight acknowledged IDs.
-
-    During: run production check_celda and compare the literal acknowledgement.
-    After: lens noise is acknowledged by object, while the TR check remains live.
-    """
-    module = _set_celda_registry(
-        box, [_celda_lens_session(code) for code in EXPECTED_IDS]
-    )
-    out = {}
-    found = module.check_celda(out, {})
-    expected = [
-        {"id": code, "motivo": EXPECTED_MOTIVES[code], "fecha": "2026-11-16"}
-        for code in EXPECTED_IDS
-    ]
-    assert found == []
-    assert out.get("celda_acuse") == expected
-    assert list(module.EXENTAS_CELDA_LENTES) == EXPECTED_IDS
-    assert module.FECHA_CIERRE_EXENTAS == "2026-11-16"
-    assert json.dumps(out)
-
-
-@pytest.mark.parametrize(
-    "scenario",
-    ["conforme_2_lentes", "activa", "sin_ids_del_mapa"],
-    ids=["conforme_2_lentes", "activa", "sin_ids_del_mapa"],
-)
-def test_celda_acuse_controls_do_not_publish_map_or_active_ids(box, scenario):
-    """Before: one isolated fixture represents one acknowledgement control.
-
-    During: run the selected fixture through production check_celda.
-    After: only the unknown lens violation emits celda-no-conforme, never an acuse.
-    """
-    if scenario == "conforme_2_lentes":
-        session = _celda_lens_session("TR-61")
-        session["lentes"] = [{"modelo": "a"}, {"modelo": "b"}]
-        expected = []
-    elif scenario == "activa":
-        session = _celda_lens_session("TR-62", status="ACTIVA")
-        expected = []
-    else:
-        session = _celda_lens_session("TR-9001")
-        expected = ["celda-no-conforme"]
-    module = _set_celda_registry(box, [session])
-    out = {}
-    found = module.check_celda(out, {})
-    assert [finding[0] for finding in found] == expected
-    assert "celda_acuse" not in out
-
-
-@pytest.mark.parametrize(
-    ("code", "status", "started"),
-    [
-        ("TR-9001", status, started)
-        for status in ("SETTLED", "ASENTADA", "FALLIDA")
-        for started in (
-            "2026-11-15T10:00:00+01:00",
-            "2026-11-16T10:00:00+01:00",
-            None,
-        )
-    ]
-    + [("TR-640", "SETTLED", "2026-11-15T10:00:00+01:00")],
-)
-def test_celda_nuevo_id_no_se_silencia_por_estado_ni_fecha(box, code, status, started):
-    """Before: a new ID varies across the status and date boundary matrix.
-
-    During: measure the single invalid-lens session through check_celda.
-    After: every new ID emits the production non-conformance alert.
-    """
-    module = _set_celda_registry(box, [_celda_lens_session(code, status, started)])
-    found = module.check_celda({}, {})
-    assert [finding[0] for finding in found] == ["celda-no-conforme"]
-    assert code not in EXPECTED_IDS
-    assert code not in module.EXENTAS_CELDA_LENTES
-
-
-def test_celda_id_anterior_al_corte_queda_fuera_de_medicion(box):
-    """Before: a new ID starts before the detector cutoff.
-
-    During: run the real date eligibility filter.
-    After: the historical session is not measured and emits no finding.
-    """
-    module = _set_celda_registry(
-        box, [_celda_lens_session("TR-9001", started="2026-11-14T10:00:00+01:00")]
-    )
-    assert module.check_celda({}, {}) == []
-
-
-@pytest.mark.parametrize(
-    ("with_control", "expected"),
-    [(False, (0, 3)), (True, (1, 0))],
-    ids=["sin_control", "con_control"],
-)
-def test_celda_acuse_aggregated_measurement_is_not_vacuous(box, with_control, expected):
-    """Before: the eight acknowledged IDs have an optional conforming control.
-
-    During: observe every real check_lenses call without changing its result.
-    After: the final aggregate call is empty for eight IDs and one conforming item otherwise.
-    """
-    sessions = [_celda_lens_session(code) for code in EXPECTED_IDS]
-    if with_control:
-        control = _prospective_tr()
-        control["code"] = "TR-9002"
-        control["lentes"] = [{"modelo": "a"}, {"modelo": "b"}]
-        control["celda"]["lentes"] = []
-        sessions.append(control)
-    module = _set_celda_registry(box, sessions)
-    calls = []
-    real = module._load_cell_checker().check_lenses
-
-    def observe(items, cutoff, checker=real, log=calls):
-        result = checker(items, cutoff)
-        log.append((len(items), result))
-        return result
-
-    module._load_cell_checker().check_lenses = observe
-    try:
-        out = {}
-        assert module.check_celda(out, {}) == []
-    finally:
-        module._load_cell_checker().check_lenses = real
-    assert calls[-1] == expected
-
-
-@pytest.mark.parametrize("bad_field", ["triador", "revisor"])
-def test_celda_acuse_no_ciega_check_tr(box, bad_field):
-    """Before: an acknowledged ID has one invalid TR pair component.
-
-    During: run check_celda without a conforming session to mask the result.
-    After: check_tr still emits celda-no-conforme for both invalid components.
-    """
-    session = _celda_lens_session("TR-61")
-    session["celda"][bad_field] = "invalid-model"
-    module = _set_celda_registry(box, [session])
-    found = module.check_celda({}, {})
-    assert [finding[0] for finding in found] == ["celda-no-conforme"]
-
-
-def test_celda_map_matches_independent_expected_ids(box):
-    """Before: the frozen fixture and its independent ID anchor are defined locally.
-
-    During: compare the production map and fixture dates with the closure constants.
-    After: the closed eight-ID universe and ISO date invariant are explicit.
-    """
-    sessions = [_celda_lens_session(code) for code in EXPECTED_IDS]
-    module = _set_celda_registry(box, sessions)
-    assert set(EXPECTED_IDS) == set(module.EXENTAS_CELDA_LENTES)
-    assert all(
-        session["started"][:10] <= module.FECHA_CIERRE_EXENTAS for session in sessions
-    )
-
-
-def test_celda_tick_reconciles_new_id_warning_after_two_lenses(box):
-    """Before: a new ID has a valid TR pair but no lenses in the frozen registry.
-
-    During: tick the real alert path, then add two distinct lenses and tick again.
-    After: the first tick warns and the second tick reconciles the warning away.
-    """
-    session = _prospective_tr()
-    session["code"] = "TR-9001"
-    session["lentes"] = []
-    session["celda"]["lentes"] = []
-    registry = box.flight / "session_registry.json"
-    registry.write_text(json.dumps({"sessions": [session]}), encoding="utf-8")
-    first = box.tick()
-    assert first.rc == 1
-    assert "celda-no-conforme" in first.keys
-    session["lentes"] = [{"modelo": "a"}, {"modelo": "b"}]
-    registry.write_text(json.dumps({"sessions": [session]}), encoding="utf-8")
-    second = box.tick()
-    assert second.rc == 0
-    assert "celda-no-conforme" not in second.keys
 
 
 def _ocio_fixture(
