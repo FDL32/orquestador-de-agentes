@@ -1740,20 +1740,30 @@ def _nan_sqlite_records(path, source):  # noqa: C901
                 now_ms = int((now_dt.timestamp() if now_dt else time.time()) * 1000)
 
                 pricing_map, meta_cfg = _nan_pricing_table()
-                agg_query = (
-                    'SELECT "model", SUM("tokens_input"), '
-                    'SUM(COALESCE("tokens_cache_read", 0)), SUM("tokens_output") '
-                    'FROM "session" WHERE "time_created" >= ? AND "time_created" <= ? '
-                    'GROUP BY "model"'
-                )
+                if "tokens_reasoning" in columns:
+                    agg_query = (
+                        'SELECT "model", SUM("tokens_input"), '
+                        'SUM(COALESCE("tokens_cache_read", 0)), SUM("tokens_output"), '
+                        'SUM(COALESCE("tokens_reasoning", 0)) '
+                        'FROM "session" WHERE "time_created" >= ? AND "time_created" <= ? '
+                        'GROUP BY "model"'
+                    )
+                else:
+                    agg_query = (
+                        'SELECT "model", SUM("tokens_input"), '
+                        'SUM(COALESCE("tokens_cache_read", 0)), SUM("tokens_output"), '
+                        "0 "
+                        'FROM "session" WHERE "time_created" >= ? AND "time_created" <= ? '
+                        'GROUP BY "model"'
+                    )
                 agg_rows = connection.execute(agg_query, (start_ms, now_ms)).fetchall()
 
                 def _compute_rows_cost(rows):
                     total = 0.0
-                    for model_raw, tin, tcache, tout in rows:
+                    for model_raw, tin, tcache, tout, treason in rows:
                         tin = tin or 0
                         tcache = tcache or 0
-                        tout = tout or 0
+                        tout = (tout or 0) + (treason or 0)
                         if tin + tcache + tout == 0:
                             continue
                         prov, mid = _nan_parse_model(model_raw)

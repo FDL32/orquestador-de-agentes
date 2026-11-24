@@ -4688,7 +4688,7 @@ def test_nan_m01_sqlite_session_real_y_formula_tokens(box, monkeypatch, tmp_path
     result = box.tick("--test-detector", "presupuesto-nan")
 
     assert '"nan_status": "MEASURED"' in result.out
-    assert '"nan_used": 9.1' in result.out
+    assert '"nan_used": 23.1' in result.out
 
 
 def test_nan_m02_sin_campo_de_creditos_superado(box, monkeypatch, tmp_path):
@@ -4965,3 +4965,36 @@ def test_nan_m08_ritmo_24h_separado_del_periodo(box, monkeypatch, tmp_path):
     exhaustion_dt = dt.datetime.fromisoformat(exhaustion_str)
     now_dt = dt.datetime.fromtimestamp(box.clock.now, tz=dt.timezone.utc)
     assert exhaustion_dt > now_dt + dt.timedelta(hours=100)
+
+
+def test_nan_m09_tokens_reasoning_facturado_como_salida(box, monkeypatch, tmp_path):
+    """230b m-09: tokens_reasoning se cobran a la tarifa de salida del modelo."""
+    now_ms = int(box.clock.now * 1000)
+    source = tmp_path / "opencode.db"
+    # nan/qwen3.8-max (BA29): in=2.10, cache=0.525, out=8.40 por M tokens
+    # 1M input = 2.10
+    # 500k output = 4.20
+    # 1M reasoning = 8.40 (a tarifa de salida)
+    # Total esperado = 2.10 + 4.20 + 8.40 = 550.00 creditos
+    _nan_sqlite_session_db(
+        source,
+        [
+            {
+                "time_created": now_ms - 3600 * 1000,
+                "model": json.dumps({"id": "qwen3.8-max", "providerID": "nan"}),
+                "tokens_input": 1_000_000,
+                "tokens_output": 500_000,
+                "tokens_reasoning": 1_000_000,
+                "metadata": json.dumps({"nivel": "alto"}),
+            },
+        ],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+
+    assert '"nan_status": "MEASURED"' in result.out
+    assert '"nan_used": 550.0' in result.out
+    assert '"ritmo_observado_24h": 550.0' in result.out
