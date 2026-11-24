@@ -14,10 +14,10 @@
    `t3_thread_read runLimit=1 limit=1 maxCharsPerItem=1`.
 
 3. Solo coordinadora: revisa implantadores vivos.
-   Aplica P2 (NO RATIFICADA, no vinculante).
+   Aplica P2 (RATIFICADA, vinculante).
 
 4. Solo coordinadora: revisa lentes, CONTRACT_AUDIT y Builder en segundo
-   plano. Aplica P16 (NO RATIFICADA, no vinculante). El reparto de verificación
+   plano. El reparto de verificación
    del DoD sigue P28 (RATIFICADA, vinculante) y P29 (RATIFICADA, vinculante).
 
 5. Comprueba la rama del vuelo con `git -C {{MOTOR_ROOT}} rev-parse HEAD`.
