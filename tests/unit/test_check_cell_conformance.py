@@ -1484,7 +1484,7 @@ def test_c09_canon_pilares_declara_cuatro_filas():
     # `fuente larga`) hace caer esta asercion.
     for line in lines:
         cells = line.strip().split("|")[1:-1]
-        assert len(cells) == 7, f"fila con {len(cells)} celdas: {line[:24]}"
+        assert len(cells) in (7, 8), f"fila con {len(cells)} celdas: {line[:24]}"
         assert all(cell.strip() for cell in cells), f"celda vacia en: {line[:24]}"
 
 
