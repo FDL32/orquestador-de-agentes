@@ -74,6 +74,9 @@ EXPOSICION_H = 24
 ILEGIBLES_MAX_FRAC = 0.5
 HUERFANO_CAP_TICK = 10
 CO_TOPE = 3
+# P10 de .agent/rules/common/vuelo_pilares.md: topes explicitos de 3 CO, 2 TR, 2 IM
+IM_TOPE = 2
+TR_TOPE = 2
 CO_GRACIA_MIN = 15
 CO_TITLE_RE = re.compile(r"^CO-\d{1,4}(?:\s|$)")
 CO_TERMINAL_RUNS = frozenset(
@@ -105,6 +108,7 @@ OWNED_PREFIXES = (
     "huerfano-",
     "gasto-",
     "co-sin-asentar",
+    "im-sin-asentar",
 )
 GIT_MARKERS = ("index.lock", "MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD")
 
@@ -123,6 +127,7 @@ DETECTOR_NAMES = (
 )
 DETECTOR_NAMES += ("presupuesto-nan",)
 DETECTOR_NAMES += ("co-sin-asentar",)
+DETECTOR_NAMES += ("im-sin-asentar",)
 RETIRED_EVENT_KEYS = ("tarea-muerta", "celda-no-conforme")
 NAN_POOL_CREDITS = 7000.0
 NAN_RESET_AT = "2026-12-07T00:00:00+00:00"
@@ -2471,6 +2476,193 @@ def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
     return [("co-sin-asentar", "AVISO", text)]
 
 
+def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrato
+    """Detect active IM/TR sessions whose integration is not settled.
+
+    Before: ``CFG.store`` points to the T3 projection and ``CFG.registry`` points to
+        the flight session registry; ``st`` is the heartbeat state.
+    During: read all live projection threads, their latest runs, the registry and
+        integration receipts without filtering by project or archive status.
+    After: return one AVISO per unsettled IM/TR session plus cap warnings, or one
+        observable fail-closed AVISO when the store or registry cannot be measured.
+    """
+    del st
+
+    def blind(cause):
+        """Return the fixed-key finding for an unreadable measurement.
+
+        Before: ``cause`` explains why IM/TR settlement cannot be measured.
+        During: store the cause in ``out`` and build the detector finding.
+        After: return one AVISO without changing external state.
+        """
+        out["im_sin_asentar_ciego"] = cause
+        return [("im-sin-asentar", "AVISO", f"IM/TR sin asentar: {cause}")]
+
+    if CFG.store is None or not CFG.store.is_file():
+        return blind("store no medido")
+    if CFG.registry is None or not CFG.registry.is_file():
+        return blind("registry no medido")
+
+    checker = _load_cell_checker()
+    connection = None
+    try:
+        connection, _, settled = checker._store_lookup(CFG.store)
+        rows = connection.execute(
+            "SELECT thread_id, payload_json FROM orchestration_v2_projection_threads "
+            "WHERE deleted_at IS NULL"
+        ).fetchall()
+        latest_runs = {}
+        for row in connection.execute(
+            "SELECT thread_id, status, ordinal FROM orchestration_v2_projection_runs"
+        ):
+            thread_id = row[0]
+            status = row[1]
+            ordinal = row[2]
+            if not isinstance(thread_id, str) or not isinstance(status, str):
+                raise checker.MeasurementError("run ilegible")
+            if isinstance(ordinal, bool) or not isinstance(ordinal, (int, float)):
+                raise checker.MeasurementError("ordinal de run ilegible")
+            if isinstance(ordinal, float) and not ordinal.is_integer():
+                raise checker.MeasurementError("ordinal de run ilegible")
+            ordinal = int(ordinal)
+            previous = latest_runs.get(thread_id)
+            if previous is None or ordinal > previous[0]:
+                latest_runs[thread_id] = (ordinal, status.casefold())
+        thread_state = {}
+        for row in rows:
+            thread_id = row[0]
+            payload_raw = row[1]
+            if not isinstance(thread_id, str):
+                raise checker.MeasurementError("thread_id ilegible")
+            try:
+                payload = json.loads(payload_raw)
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise checker.MeasurementError("payload IM/TR ilegible") from exc
+            if not isinstance(payload, dict):
+                raise checker.MeasurementError("payload IM/TR no es objeto")
+            thread_state[thread_id] = latest_runs.get(thread_id, (None, ""))[
+                1
+            ] == "completed" and not settled(thread_id)
+    except (checker.MeasurementError, sqlite3.Error, OSError, TypeError, ValueError):
+        return blind("store no medido")
+    finally:
+        if connection is not None:
+            connection.close()
+
+    try:
+        registry = json.loads(CFG.registry.read_text(encoding="utf-8"))
+        sessions = registry.get("sessions") if isinstance(registry, dict) else None
+        if not isinstance(sessions, list) or not all(
+            isinstance(session, dict) for session in sessions
+        ):
+            raise ValueError("registry sin sessions valida")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, RecursionError):
+        return blind("registry no medido")
+
+    receipt_roots = []
+    try:
+        receipt_roots.append(
+            CFG.registry.parent.parents[0]
+            / ".agent"
+            / "runtime"
+            / "integration_receipts"
+        )
+        receipt_roots.append(
+            CFG.registry.parent.parents[1]
+            / ".agent"
+            / "runtime"
+            / "integration_receipts"
+        )
+        receipt_roots.append(
+            CFG.registry.parent.parents[2]
+            / ".agent"
+            / "runtime"
+            / "integration_receipts"
+        )
+    except IndexError:
+        pass
+    receipt_roots.append(Path.cwd() / ".agent" / "runtime" / "integration_receipts")
+    integrated = set()
+    for root in receipt_roots:
+        try:
+            paths = root.glob("*.json")
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                receipt = json.loads(path.read_text(encoding="utf-8"))
+            except (
+                OSError,
+                ValueError,
+                TypeError,
+                json.JSONDecodeError,
+                RecursionError,
+            ):
+                continue
+            if isinstance(receipt, dict) and isinstance(receipt.get("ticket"), str):
+                integrated.add(receipt["ticket"])
+
+    unsettled = []
+    for session in sessions:
+        code = session.get("code")
+        role = session.get("role")
+        status = session.get("status")
+        if not isinstance(code, str) or not isinstance(status, str):
+            continue
+        if not (role in ("implantacion", "triaje") or code.startswith(("IM-", "TR-"))):
+            continue
+        if not status.startswith("ACTIVA"):
+            continue
+        thread_id = session.get("threadId")
+        if not isinstance(thread_id, str):
+            continue
+        slot = code.split("-", 1)[1] if "-" in code else code
+        ticket_candidates = {
+            value
+            for value in (session.get("ticket"), f"WOT-2026-{slot}", code)
+            if isinstance(value, str) and value
+        }
+        receipt_trigger = bool(ticket_candidates & integrated)
+        run_trigger = thread_state.get(thread_id, False)
+        if receipt_trigger or run_trigger:
+            unsettled.append(
+                {
+                    "code": code,
+                    "threadId": thread_id,
+                    "ticket": session.get("ticket") or f"WOT-2026-{slot}",
+                }
+            )
+
+    out["im_sin_asentar"] = unsettled
+    found = [
+        (
+            "im-sin-asentar",
+            "AVISO",
+            f"IM/TR sin asentar: {item['code']} ({item['threadId']})",
+        )
+        for item in unsettled
+    ]
+    total_im = sum(item["code"].startswith("IM-") for item in unsettled)
+    total_tr = sum(item["code"].startswith("TR-") for item in unsettled)
+    if total_im > IM_TOPE:
+        found.append(
+            (
+                "im-sin-asentar",
+                "AVISO",
+                f"IM sin asentar supera tope {IM_TOPE}: {total_im}",
+            )
+        )
+    if total_tr > TR_TOPE:
+        found.append(
+            (
+                "im-sin-asentar",
+                "AVISO",
+                f"TR sin asentar supera tope {TR_TOPE}: {total_tr}",
+            )
+        )
+    return found
+
+
 def _detect(out, st, only=None):
     """Ejecuta todos los detectores aislando el fallo de cada uno.
 
@@ -2492,6 +2684,7 @@ def _detect(out, st, only=None):
         "huerfano": lambda: check_huerfano(out, st),
         "presupuesto-nan": lambda: check_nan_budget(out, st),
         "co-sin-asentar": lambda: check_co_sin_asentar(out, st),
+        "im-sin-asentar": lambda: check_im_sin_asentar(out, st),
     }
     selected = [only] if only else list(DETECTOR_NAMES)
     for name in selected:
@@ -2564,6 +2757,7 @@ def _reconcile(ca, out, found, a):
         "gasto-": out.get("nan_status") == "UNKNOWN"
         or bool(out.get("nan_sources_unconfigured")),
         "co-sin-asentar": out.get("co_sin_asentar_ciego"),
+        "im-sin-asentar": out.get("im_sin_asentar_ciego"),
     }
     if out.get("ocio_con_cola_ciego"):
         blind["ocio-con-cola"] = True
