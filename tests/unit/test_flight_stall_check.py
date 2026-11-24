@@ -4998,3 +4998,291 @@ def test_nan_m09_tokens_reasoning_facturado_como_salida(box, monkeypatch, tmp_pa
     assert '"nan_status": "MEASURED"' in result.out
     assert '"nan_used": 550.0' in result.out
     assert '"ritmo_observado_24h": 550.0' in result.out
+
+
+def _im_tr_store(box, rows, runs=(), archived_at_map=None):
+    """Before: ``rows`` y ``runs`` describen sesiones IM/TR sintéticas.
+    During: crea el esquema mínimo de proyección y fija ``T3_STATE_DB``.
+    After: devuelve el store SQLite que leerá ``im-sin-asentar``.
+    """
+    import sqlite3
+
+    db = box.root / "im-tr-state.sqlite"
+    if db.exists():
+        db.unlink()
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_threads ("
+        "thread_id TEXT, project_id TEXT, title TEXT, default_provider TEXT, "
+        "runtime_mode TEXT, interaction_mode TEXT, active_provider_thread_id TEXT, "
+        "created_at TEXT, updated_at TEXT, archived_at TEXT, deleted_at TEXT, "
+        "payload_json TEXT, provider_instance_id TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_runs ("
+        "thread_id TEXT, status TEXT, ordinal INTEGER)"
+    )
+    connection.execute(
+        "CREATE TABLE projection_pending_approvals ("
+        "resolved_at TEXT, status TEXT, decision TEXT)"
+    )
+    archived_at_map = archived_at_map or {}
+    for row in rows:
+        payload = dict(row.get("payload", {}))
+        payload.setdefault("settled", False)
+        archived_at = archived_at_map.get(row["thread_id"], row.get("archived_at"))
+        connection.execute(
+            "INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                row["thread_id"],
+                row.get("project_id", "project"),
+                row.get("title", row["thread_id"]),
+                row.get("default_provider", "t3"),
+                row.get("runtime_mode", "auto"),
+                row.get("interaction_mode", "chat"),
+                row.get("active_provider_thread_id"),
+                row.get("created_at", "2026-11-24T10:00:00+00:00"),
+                row.get("updated_at", "2026-11-24T10:00:00+00:00"),
+                archived_at,
+                row.get("deleted_at"),
+                json.dumps(payload),
+                row.get("provider_instance_id"),
+            ),
+        )
+    for thread_id, status, ordinal in runs:
+        connection.execute(
+            "INSERT INTO orchestration_v2_projection_runs VALUES (?, ?, ?)",
+            (thread_id, status, ordinal),
+        )
+    connection.commit()
+    connection.close()
+    box.monkeypatch.setenv("T3_STATE_DB", str(db))
+    return db
+
+
+def _im_tr_registry(box, sessions):
+    """Before: ``sessions`` contiene las sesiones del vuelo.
+    During: serializa el registro canónico en ``box.flight``.
+    After: devuelve la ruta del registro escrito.
+    """
+    path = box.flight / "session_registry.json"
+    path.write_text(json.dumps({"sessions": sessions}), encoding="utf-8")
+    return path
+
+
+def _im_tr_receipts(box, tickets):
+    """Before: ``tickets`` identifica tickets integrados.
+    During: escribe un recibo JSON por ticket bajo la ruta de integración.
+    After: devuelve la carpeta de recibos.
+    """
+    directory = box.root / ".agent" / "runtime" / "integration_receipts"
+    directory.mkdir(parents=True, exist_ok=True)
+    for ticket in tickets:
+        if isinstance(ticket, dict):
+            ticket_id = ticket["ticket"]
+            receipt = ticket
+        else:
+            ticket_id = ticket
+            receipt = {"ticket": ticket_id, "merged": True, "audit_ok": True}
+        (directory / f"{ticket_id}.json").write_text(
+            json.dumps(receipt), encoding="utf-8"
+        )
+    return directory
+
+
+def _im_tr_cfg(box):
+    """Before: las rutas temporales del vuelo están listas.
+    During: resuelve CFG con la misma función usada por ``main``.
+    After: deja ``box.m.CFG`` preparado para la llamada directa al detector.
+    """
+    args = types.SimpleNamespace(
+        flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+    )
+    box.m.CFG, _causes, _fatal = box.m._resolve_paths(args, box.ops)
+    return box.m.CFG
+
+
+def _im_tr_session(code, thread_id, ticket=None, status="ACTIVA"):
+    return {
+        "code": code,
+        "threadId": thread_id,
+        "ticket": ticket or code,
+        "status": status,
+    }
+
+
+def _im_tr_row(thread_id, title=None, **kwargs):
+    return {
+        "thread_id": thread_id,
+        "title": title or f"{thread_id} implantacion",
+        "payload": {"settled": False},
+        **kwargs,
+    }
+
+
+def test_im_sin_asentar_mutation_m01_disparo_por_recibo_y_por_run_completed(box):
+    """M-01: un recibo y un run completed son dos disparadores independientes."""
+    rows = [_im_tr_row("im-thread"), _im_tr_row("tr-thread")]
+    _im_tr_store(
+        box, rows, [("im-thread", "running", 1), ("tr-thread", "completed", 1)]
+    )
+    _im_tr_registry(
+        box,
+        [
+            _im_tr_session("IM-101", "im-thread", "WOT-2026-101a"),
+            _im_tr_session("TR-102", "tr-thread", "WOT-2026-102b"),
+        ],
+    )
+    _im_tr_receipts(box, ["WOT-2026-101a"])
+    _im_tr_cfg(box)
+    out = {}
+
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-101", "TR-102"}
+    assert len(found) == 2
+    assert all(item[:2] == ("im-sin-asentar", "AVISO") for item in found)
+
+
+def test_im_sin_asentar_mutation_m01_sesion_activa_en_curso_no_dispara(box):
+    """M-01 negativo: una sesión activa en curso no es un residuo sin asentar."""
+    _im_tr_store(box, [_im_tr_row("im-thread")], [("im-thread", "running", 1)])
+    _im_tr_registry(box, [_im_tr_session("IM-249", "im-thread", "WOT-2026-249a")])
+    _im_tr_cfg(box)
+
+    assert box.m.check_im_sin_asentar({}, {}) == []
+
+
+def test_im_sin_asentar_mutation_m02_proyectos_ajenos_y_archivados(box):
+    """M-02: project_id y archived_at no excluyen una sesión IM/TR asentable."""
+    rows = [
+        _im_tr_row("other-thread", project_id="other-proj"),
+        _im_tr_row(
+            "arch-thread",
+            payload={"archivedAt": "2026-11-24T11:00:00+00:00"},
+        ),
+    ]
+    _im_tr_store(
+        box,
+        rows,
+        [("other-thread", "completed", 1), ("arch-thread", "completed", 1)],
+        {"arch-thread": "2026-11-24T11:00:00+00:00"},
+    )
+    _im_tr_registry(
+        box,
+        [
+            _im_tr_session("IM-201", "other-thread"),
+            _im_tr_session("IM-202", "arch-thread"),
+        ],
+    )
+    _im_tr_cfg(box)
+    out = {}
+
+    box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-201", "IM-202"}
+
+
+def test_im_sin_asentar_mutation_m03_tope_y_exceso_canonico(box, monkeypatch):
+    """M-03: el tope conserva avisos individuales y añade un único exceso."""
+    sessions = [_im_tr_session(f"IM-30{i}", f"thread-{i}") for i in range(3)]
+    _im_tr_store(
+        box,
+        [_im_tr_row(f"thread-{i}") for i in range(3)],
+        [(f"thread-{i}", "completed", 1) for i in range(3)],
+    )
+    _im_tr_registry(box, sessions)
+    _im_tr_cfg(box)
+    monkeypatch.setattr(box.m, "IM_TOPE", 2)
+    out = {}
+
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert len(out["im_sin_asentar"]) == 3
+    assert len(found) == 4
+    assert any("tope" in item[2].casefold() for item in found)
+    monkeypatch.setattr(box.m, "IM_TOPE", 5)
+    assert len(box.m.check_im_sin_asentar({}, {})) == 3
+
+
+def test_im_sin_asentar_mutation_m04_fail_closed_store_y_registry(box):
+    """M-04: store y registry ilegibles producen AVISO ciego observable."""
+    missing = box.root / "missing.sqlite"
+    box.monkeypatch.setenv("T3_STATE_DB", str(missing))
+    _im_tr_registry(box, [_im_tr_session("IM-401", "thread-401")])
+    _im_tr_cfg(box)
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_ciego"] == "store no medido"
+    assert found[0][:2] == ("im-sin-asentar", "AVISO")
+
+    missing.write_bytes(b"not sqlite")
+    _im_tr_cfg(box)
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_ciego"] == "store no medido"
+    assert found[0][:2] == ("im-sin-asentar", "AVISO")
+
+    _im_tr_store(box, [_im_tr_row("thread-401")], [("thread-401", "completed", 1)])
+    (box.flight / "session_registry.json").write_text("{invalid", encoding="utf-8")
+    _im_tr_cfg(box)
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+    assert found[0][:2] == ("im-sin-asentar", "AVISO")
+
+    (box.flight / "session_registry.json").unlink()
+    _im_tr_cfg(box)
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+    assert found[0][:2] == ("im-sin-asentar", "AVISO")
+
+
+def test_im_sin_asentar_mutation_m05_solo_lectura_y_m08_no_muta(box):
+    """M-05/M-08: medir IM/TR no modifica store, registry ni recibos."""
+    import hashlib
+
+    db = _im_tr_store(box, [_im_tr_row("thread-501")], [("thread-501", "completed", 1)])
+    registry = _im_tr_registry(box, [_im_tr_session("IM-501", "thread-501")])
+    receipts = _im_tr_receipts(box, ["WOT-2026-501a"])
+    _im_tr_cfg(box)
+
+    def digest(path):
+        return hashlib.sha256(path.read_bytes()).digest()
+
+    before = (
+        digest(db),
+        digest(registry),
+        sorted((p.name, digest(p)) for p in receipts.glob("*.json")),
+    )
+    box.m.check_im_sin_asentar({}, {})
+    after = (
+        digest(db),
+        digest(registry),
+        sorted((p.name, digest(p)) for p in receipts.glob("*.json")),
+    )
+    assert after == before
+
+
+def test_im_sin_asentar_mutation_m07_cableado_en_detect(box, monkeypatch):
+    """M-07: el dispatcher sin filtro evalúa el detector IM/TR."""
+    called = []
+
+    def probe(out, st):
+        called.append((out, st))
+        return []
+
+    monkeypatch.setattr(box.m, "check_im_sin_asentar", probe)
+    box.m._detect({}, {})
+
+    assert called
+
+
+def test_im_sin_asentar_mutation_asentada_en_registry_no_dispara(box):
+    """Una sesión ASENTADA no avisa aunque su último run esté completed."""
+    _im_tr_store(box, [_im_tr_row("thread-801")], [("thread-801", "completed", 1)])
+    _im_tr_registry(box, [_im_tr_session("IM-801", "thread-801", status="ASENTADA")])
+    _im_tr_cfg(box)
+
+    assert box.m.check_im_sin_asentar({}, {}) == []
