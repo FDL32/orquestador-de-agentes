@@ -46,8 +46,6 @@ FREE_GB_DEFAULT = 5.0
 QUOTA_STALE_MIN = 40
 QUOTA_SOFT_FALLBACK = 92
 QUOTA_HARD_FALLBACK = 97
-TASK_STALE_S = 25 * 60  # la tarea corre cada 10 min: mas de 2 ciclos
-TASK_FUTURE_S = 5 * 60  # un ts_tarea mas alla de esto en el futuro es ilegible
 HEARTBEAT_STALE_S = 35 * 60
 HEARTBEAT_KEY = "latido-muerto"
 HEARTBEAT_OWNER = "task"
@@ -105,7 +103,6 @@ OWNED_PREFIXES = (
     "disco",
     "hook-",
     "detector-",
-    "celda-",
     "huerfano-",
     "gasto-",
     "co-sin-asentar",
@@ -121,14 +118,13 @@ DETECTOR_NAMES = (
     "ocio-con-cola",
     "disco",
     "hook",
-    "tarea",
     "im-ocioso",
     "cola-despachable",
-    "celda",
     "huerfano",
 )
 DETECTOR_NAMES += ("presupuesto-nan",)
 DETECTOR_NAMES += ("co-sin-asentar",)
+RETIRED_EVENT_KEYS = ("tarea-muerta", "celda-no-conforme")
 NAN_POOL_CREDITS = 7000.0
 NAN_RESET_AT = "2026-12-07T00:00:00+00:00"
 NAN_UNKNOWN_KEY = "nan_unknown_streak"
@@ -136,40 +132,6 @@ NAN_SOURCE_ENV = ("NAN_OPENCODE_DB", "NAN_KILO_DB")
 NAN_AGENTS_ENV = "NAN_AGENTS_JSON"
 _CELL_CHECKER = None
 FECHA_CIERRE_EXENTAS = "2026-11-16"
-EXENTAS_CELDA_LENTES = {
-    "TR-61": {
-        "motivo": "ENTREGADA Y ASENTADA EN T3 (fichas F1 y F2 de 176a, 176b y 176c); cerrada sin lentes registradas; asiento de correccion de deriva l.308",
-        "fecha": "2026-11-16",
-    },
-    "TR-62": {
-        "motivo": "ENTREGADA Y ASENTADA EN T3 (triaje del segundo IM); cerrada sin lentes registradas; asiento de correccion de deriva l.309",
-        "fecha": "2026-11-16",
-    },
-    "TR-63": {
-        "motivo": 'PARADA SIN BUILDER (CANCELLED en T3, sin entrega); asiento l.304; "asentada" en su status es el asiento de la sesion en T3 por CO-100, no una revision; segun su status no hay entrega que revisar',
-        "fecha": "2026-11-16",
-    },
-    "TR-64": {
-        "motivo": "FALLIDA por content filter, sin secciones entregadas, HECHOS_T0 y BASE_T0 reutilizados por TR-65 (status del registry); asiento l.317; no consta revision",
-        "fecha": "2026-11-16",
-    },
-    "TR-65": {
-        "motivo": "SETTLED con ficha 180a integrada ff-only; asiento l.329; sin lentes registradas",
-        "fecha": "2026-11-16",
-    },
-    "TR-66": {
-        "motivo": "SETTLED con ficha 181a integrada ff-only; asiento l.330; sin lentes registradas",
-        "fecha": "2026-11-16",
-    },
-    "TR-67": {
-        "motivo": "SETTLED a secas; solo entrada alta l.331; no se localizo asiento de cierre ni de status; mecanismo que escribio SETTLED no verificado; sin evidencia de entrega localizada",
-        "fecha": "2026-11-16",
-    },
-    "TR-68": {
-        "motivo": "SETTLED a secas; solo entrada alta l.332; no se localizo asiento de cierre ni de status; mecanismo que escribio SETTLED no verificado; sin evidencia de entrega localizada",
-        "fecha": "2026-11-16",
-    },
-}
 
 
 def _load_alert():
@@ -816,29 +778,6 @@ def check_hook(out):
     return []
 
 
-def check_tarea(out):
-    """Detector de la tarea programada (D25): solo actua si existe la marca de registro.
-
-    Before: ``CFG.ops`` es el directorio de operacion. Sin ``task_registered.json`` la tarea
-        NO esta registrada y no se avisa de nada.
-    During: con marca lee ``task_state.json``; un ``ts_tarea`` ausente, ilegible, no finito,
-        mas de 5 min en el futuro o de mas de 25 min de antiguedad es tarea muerta.
-    After: lista con ``tarea-muerta`` AVISO (owner stall) o vacia.
-    """
-    if not os.path.lexists(CFG.ops / TASK_REGISTERED_NAME):
-        return []
-    out["tarea_registrada"] = True
-    ts = _load_json_dict(CFG.ops / TASK_STATE_NAME).get("ts_tarea")
-    now = time.time()
-    if _is_finite(ts) and ts <= now + TASK_FUTURE_S and now - ts <= TASK_STALE_S:
-        return []
-    if _is_finite(ts) and ts <= now + TASK_FUTURE_S:
-        why = f"lleva {int((now - ts) / 60)} min sin correr"
-    else:
-        why = "su reloj ts_tarea falta o es ilegible"
-    return [("tarea-muerta", "AVISO", f"La tarea programada de vigilancia: {why}")]
-
-
 def self_check(a):
     """Comprueba que existen y compilan los tres scripts (junto a ``__file__``), la cola y el motor.
 
@@ -1041,73 +980,6 @@ def check_im_ocioso(out, st):
         connection.close()
     if len(vivos) < 2:
         return [("im-ocioso", "AVISO", f"Hay {len(vivos)} IM vivos con cola apta")]
-    return []
-
-
-def check_celda(out, st):
-    """Checks prospective triaje cell conformance without mutating flight state.
-
-    Before: ``CFG.registry`` points to the registry selected by ``--flight-dir``.
-    During: loads the shared checker, measures only prospective triaje sessions, applies
-        TR checks to every status and lens checks only to non-active sessions.
-    After: returns an AVISO for blindness or non-conformance, otherwise no finding; all
-        checker exceptions outside registry readability are propagated to ``_detect``.
-        Known lens violations are exposed in ``out["celda_acuse"]`` as sorted objects;
-        the individual acknowledgement checks precede the aggregate lens measurement.
-    """
-    del st
-    if CFG.registry is None or not CFG.registry.is_file():
-        out["ciego_celda"] = True
-        return [
-            ("detector-ciego-celda", "AVISO", "Detector celda sin registry legible")
-        ]
-    checker = _load_cell_checker()
-    try:
-        sessions = checker._registry(CFG.registry)
-    except checker.MeasurementError as exc:
-        del exc
-        out["ciego_celda"] = True
-        return [
-            ("detector-ciego-celda", "AVISO", "Detector celda con registry ilegible")
-        ]
-    prospective = [
-        session
-        for session in checker._sessions_for_measure(sessions, "2026-11-15")
-        if session.get("role") == "triaje"
-    ]
-    tr_rc = checker.check_tr(prospective, "2026-11-15")
-    non_active = [
-        session
-        for session in prospective
-        if not checker.is_activa(session.get("status"))
-    ]
-    acuse = []
-    for session in non_active:
-        code = session.get("code")
-        if (
-            code in EXENTAS_CELDA_LENTES
-            and checker.check_lenses([session], "2026-11-15") == checker.RC_VIOLATION
-        ):
-            record = EXENTAS_CELDA_LENTES[code]
-            acuse.append(
-                {"id": code, "motivo": record["motivo"], "fecha": record["fecha"]}
-            )
-    if acuse:
-        out["celda_acuse"] = sorted(acuse, key=lambda item: item["id"])
-    remaining = [
-        session
-        for session in non_active
-        if session.get("code") not in EXENTAS_CELDA_LENTES
-    ]
-    lenses_rc = checker.check_lenses(remaining, "2026-11-15")
-    if tr_rc == checker.RC_VIOLATION or lenses_rc == checker.RC_VIOLATION:
-        return [
-            (
-                "celda-no-conforme",
-                "AVISO",
-                "Celda triaje no conforme; reproduzca con --test-detector celda",
-            )
-        ]
     return []
 
 
@@ -2263,7 +2135,7 @@ def _detect(out, st, only=None):
     """Ejecuta todos los detectores aislando el fallo de cada uno.
 
     Before: ``out`` es el acumulador y ``st`` el estado del tick.
-    During: invoca quota, cola, git, disco, hook, tarea e im-ocioso; captura
+    During: invoca quota, cola, git, disco, hook e im-ocioso; captura
         excepciones y anade ``detector-roto``.
     After: devuelve ``(hallazgos, roto)`` y conserva los resultados de detectores sanos.
     """
@@ -2275,10 +2147,8 @@ def _detect(out, st, only=None):
         "git": lambda: check_git(out, st),
         "disco": lambda: check_disk(out),
         "hook": lambda: check_hook(out),
-        "tarea": lambda: check_tarea(out),
         "im-ocioso": lambda: check_im_ocioso(out, st),
         "cola-despachable": lambda: check_cola_despachable(out, st),
-        "celda": lambda: check_celda(out, st),
         "huerfano": lambda: check_huerfano(out, st),
         "presupuesto-nan": lambda: check_nan_budget(out, st),
         "co-sin-asentar": lambda: check_co_sin_asentar(out, st),
@@ -2339,7 +2209,7 @@ def _reconcile(ca, out, found, a):
     """Reconcilia las claves propias que ya no corresponden al estado observado.
 
     Before: ``ca`` mantiene el ledger; ``out``, ``found`` y ``a`` describen ceguera, hallazgos y dry-run.
-    During: reconcilia solo prefijos no ciegos, borra claves ausentes y resuelve ``tarea-muerta`` recuperada.
+    During: reconcilia solo prefijos no ciegos, borra claves ausentes y resuelve las claves de ``RETIRED_EVENT_KEYS``.
     After: deja el ledger reconciliado para owner ``stall`` y no devuelve ningun valor.
     """
     blind = {
@@ -2348,7 +2218,6 @@ def _reconcile(ca, out, found, a):
         "ocio-con-cola": False,
         "git-": out.get("ciego_git"),
         "hook-": out.get("ciego_hook"),
-        "celda-": out.get("ciego_celda"),
         "huerfano-": out.get("huerfano_ciego"),
         # Un tick NaN en UNKNOWN (o con las fuentes sin configurar) no puede ver la
         # causa de sus claves gasto-*: no las reconcilia mientras este ciego.
@@ -2367,10 +2236,9 @@ def _reconcile(ca, out, found, a):
     cleared = ca.reconcile(prefixes, live_keys, a.dry_run, owner="stall")
     if cleared:
         print("resueltas (borradas, una recaida avisa de nuevo):", cleared)
-    if "tarea-muerta" not in {k for k, _, _ in found} and (
-        "event:tarea-muerta" in ca.load_state()
-    ):
-        ca.resolve("tarea-muerta", a.dry_run)
+    for key in RETIRED_EVENT_KEYS:
+        if f"event:{key}" in ca.load_state():
+            ca.resolve(key, a.dry_run)
 
 
 def run(a):  # noqa: C901 - detector legacy mas el modo heartbeat aislado
