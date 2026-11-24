@@ -8909,6 +8909,120 @@ def test_model_family_map_covers_all_ensemble_profiles():
     )
 
 
+# WOT-2026-229e: resolucion de la lente Gemini del panel unico.
+def _integrate_ticket_family_helpers():
+    """Before: este modulo no debe cargar integrate_ticket al importar tests.
+
+    During: asegura que el motor de este worktree esta en sys.path y carga los
+    helpers de ficha solo para los casos que prueban el contrato de familias.
+
+    After: devuelve los parsers reales de ficha y las violaciones reales.
+    """
+    if str(_MOTOR_ROOT) not in sys.path:
+        sys.path.insert(0, str(_MOTOR_ROOT))
+    from scripts.flight.integrate_ticket import family_violations, parse_ficha_models
+
+    return parse_ficha_models, family_violations
+
+
+def test_gemini_flash_high_pair_resolves_to_gemini_family():
+    assert ("gemini", "gemini-3.8-flash-high") in ed.MODEL_FAMILY_MAP
+    assert (
+        cle.model_family("gemini", "gemini-3.8-flash-high", ed.MODEL_FAMILY_MAP)
+        == "gemini"
+    )
+
+
+def test_gemini_flash_high_antigravity_alias_resolves_without_new_entry():
+    assert ("antigravity", "gemini-3.8-flash-high") not in ed.MODEL_FAMILY_MAP
+    assert (
+        cle.model_family("antigravity", "gemini-3.8-flash-high", ed.MODEL_FAMILY_MAP)
+        == "gemini"
+    )
+
+
+def test_gemini_unknown_pair_stays_fail_closed():
+    assert ("gemini", None) not in ed.MODEL_FAMILY_MAP
+    with pytest.raises(cle.FamilyResolutionError, match="sin familia"):
+        cle.model_family("gemini", "gemini-0", ed.MODEL_FAMILY_MAP)
+
+
+def test_ficha_with_gemini_reviewer_and_other_family_lenses_has_no_violations():
+    parse_ficha_models, family_violations = _integrate_ticket_family_helpers()
+    decl = parse_ficha_models(
+        "autor_modelo: codex|gpt-5.6-luna\n"
+        "revisor_modelo: gemini|gemini-3.8-flash-high\n"
+    )
+    author = cle.model_family(*decl["autor"], ed.MODEL_FAMILY_MAP)
+    reviewer = cle.model_family(*decl["revisor"], ed.MODEL_FAMILY_MAP)
+    lenses = [
+        {
+            "backend_key": "NA01",
+            "backend": backend,
+            "model": model,
+            "family": cle.model_family(backend, model, ed.MODEL_FAMILY_MAP),
+        }
+        for backend, model in (
+            ("nan_api", "qwen3.6"),
+            ("nan_api", "deepseek-v4-flash"),
+            ("mistral_api", "mistral-large-2512"),
+        )
+    ]
+    assert reviewer == "gemini"
+    assert family_violations(author, reviewer, lenses) == []
+
+
+def test_ficha_with_gemini_reviewer_and_same_family_lens_is_a_violation():
+    parse_ficha_models, family_violations = _integrate_ticket_family_helpers()
+    decl = parse_ficha_models(
+        "autor_modelo: codex|gpt-5.6-luna\n"
+        "revisor_modelo: gemini|gemini-3.8-flash-high\n"
+    )
+    author = cle.model_family(*decl["autor"], ed.MODEL_FAMILY_MAP)
+    reviewer = cle.model_family(*decl["revisor"], ed.MODEL_FAMILY_MAP)
+    lenses = [
+        {
+            "backend_key": "BA110",
+            "backend": "gemini_api",
+            "model": "gemini-3.8-flash",
+            "family": cle.model_family(
+                "gemini_api", "gemini-3.8-flash", ed.MODEL_FAMILY_MAP
+            ),
+        }
+    ]
+    violations = family_violations(author, reviewer, lenses)
+    assert len(violations) == 1
+    assert "revisor" in violations[0]
+
+
+def test_ficha_with_unknown_gemini_reviewer_pair_is_sin_familia():
+    parse_ficha_models, _ = _integrate_ticket_family_helpers()
+    decl = parse_ficha_models(
+        "autor_modelo: codex|gpt-5.6-luna\nrevisor_modelo: gemini|gemini-0\n"
+    )
+    with pytest.raises(cle.FamilyResolutionError, match="sin familia"):
+        cle.model_family(*decl["revisor"], ed.MODEL_FAMILY_MAP)
+
+
+def test_gemini_family_entry_mutation_removed_entry_is_caught():
+    mutated = dict(ed.MODEL_FAMILY_MAP)
+    del mutated[("gemini", "gemini-3.8-flash-high")]
+    assert (
+        cle.model_family("gemini", "gemini-3.8-flash-high", ed.MODEL_FAMILY_MAP)
+        == "gemini"
+    )
+    with pytest.raises(cle.FamilyResolutionError, match="sin familia"):
+        cle.model_family("gemini", "gemini-3.8-flash-high", mutated)
+
+
+def test_gemini_default_family_mutation_is_caught():
+    mutated = dict(ed.MODEL_FAMILY_MAP)
+    mutated[("gemini", None)] = "gemini"
+    assert cle.model_family("gemini", "gemini-0", mutated) == "gemini"
+    with pytest.raises(cle.FamilyResolutionError, match="sin familia"):
+        cle.model_family("gemini", "gemini-0", ed.MODEL_FAMILY_MAP)
+
+
 # ---------------------------------------------------------------------------
 # resolve_similar_fallback (WOT-2026-083a): fallback en cascada
 # familia -> rendimiento similar. Config y scorecard SINTETICOS (no el
