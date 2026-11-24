@@ -560,7 +560,7 @@ EXPECTED_CONFIRMED_PHRASES = {
         "de memoria); despues, tokens por pulso (228a) y contexto por ticket cerrado."
     ),
     "P21": (
-        "Supervision: latido de la coordinadora cada 15 minutos y de la "
+        "Supervisión: latido de la coordinadora cada 15 minutos y de la "
         "supervisora cada 30 minutos."
     ),
     "P22": (
