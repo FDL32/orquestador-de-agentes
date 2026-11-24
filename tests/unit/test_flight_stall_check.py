@@ -4625,3 +4625,297 @@ def test_co_sin_asentar_roster_valido_sin_ancestro_sigue_parcial(box):
         and "terna parcial: conserva el primero como ancestro directo hasta 194b"
         in found[0][2]
     )
+
+
+# ------------------------------------------------------------------ WOT-2026-230b: calculo de gasto Nan por tokens y tarifas
+
+
+def _nan_sqlite_session_db(path, rows):
+    import sqlite3
+
+    con = sqlite3.connect(path)
+    con.execute("DROP TABLE IF EXISTS session")
+    con.execute(
+        "CREATE TABLE session ("
+        "id TEXT, project_id TEXT, time_created INTEGER, "
+        "model TEXT, tokens_input INTEGER, tokens_output INTEGER, "
+        "tokens_cache_read INTEGER, tokens_cache_write INTEGER, "
+        "tokens_reasoning INTEGER, metadata TEXT)"
+    )
+    for r in rows:
+        con.execute(
+            "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                r.get("id", "s1"),
+                r.get("project_id", "p1"),
+                int(r.get("time_created", 0)),
+                r.get("model", ""),
+                int(r.get("tokens_input", 0)),
+                int(r.get("tokens_output", 0)),
+                int(r.get("tokens_cache_read", 0)),
+                int(r.get("tokens_cache_write", 0)),
+                int(r.get("tokens_reasoning", 0)),
+                r.get("metadata", "{}"),
+            ),
+        )
+    con.commit()
+    con.close()
+
+
+def test_nan_m01_sqlite_session_real_y_formula_tokens(box, monkeypatch, tmp_path):
+    """230b m-01: sesion con modelo tarifado calcula gasto = (in*tin + cache*tcache + out*tout)/1M."""
+    source = tmp_path / "opencode.db"
+    now_ms = int(box.clock.now * 1000)
+    _nan_sqlite_session_db(
+        source,
+        [
+            {
+                "time_created": now_ms,
+                "model": json.dumps({"id": "glm5.3-flash", "providerID": "nan"}),
+                "tokens_input": 1_000_000,
+                "tokens_cache_read": 2_000_000,
+                "tokens_output": 100_000,
+                "tokens_cache_write": 500_000,
+                "tokens_reasoning": 800_000,
+                "metadata": json.dumps({"nivel": "alto"}),
+            }
+        ],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+
+    assert '"nan_status": "MEASURED"' in result.out
+    assert '"nan_used": 9.1' in result.out
+
+
+def test_nan_m02_sin_campo_de_creditos_superado(box, monkeypatch, tmp_path):
+    """230b m-02: la ruta sqlite con tabla session supera 'sin-campo-de-creditos' y mide."""
+    source = tmp_path / "opencode.db"
+    kilo = tmp_path / "kilo.db"
+    now_ms = int(box.clock.now * 1000)
+    _nan_sqlite_session_db(
+        source,
+        [
+            {
+                "time_created": now_ms,
+                "model": json.dumps({"id": "deepseek-v4-flash", "providerID": "nan"}),
+                "tokens_input": 1_000_000,
+                "tokens_cache_read": 1_000_000,
+                "tokens_output": 100_000,
+                "metadata": json.dumps({"nivel": "medio"}),
+            }
+        ],
+    )
+    _nan_sqlite_session_db(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+
+    assert "sin-campo-de-creditos" not in result.out
+    assert '"nan_status": "MEASURED"' in result.out
+    assert '"nan_used": 14.91' in result.out
+
+
+def test_nan_m03_modelo_no_tarifado_unknown_y_modelo_gratuito_cero(
+    box, monkeypatch, tmp_path
+):
+    """230b m-03: modelo nan desconocido da UNKNOWN nombrando el modelo; modelos gratuitos/fuera de pool dan 0."""
+    source = tmp_path / "opencode.db"
+    now_ms = int(box.clock.now * 1000)
+    _nan_sqlite_session_db(
+        source,
+        [
+            {
+                "time_created": now_ms,
+                "model": json.dumps({"id": "modelo-fantasma-zzz", "providerID": "nan"}),
+                "tokens_input": 1000,
+                "tokens_output": 500,
+            }
+        ],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+
+    assert '"nan_status": "UNKNOWN"' in result.out
+    assert "modelo-fantasma-zzz" in result.out
+
+    _nan_sqlite_session_db(
+        source,
+        [
+            {
+                "time_created": now_ms,
+                "model": json.dumps({"id": "qwen3.6", "providerID": "nan"}),
+                "tokens_input": 50_000_000,
+                "tokens_output": 10_000_000,
+                "metadata": json.dumps({"nivel": "base"}),
+            },
+            {
+                "time_created": now_ms,
+                "model": json.dumps(
+                    {"id": "glm-5.3-flash", "providerID": "opencode-go"}
+                ),
+                "tokens_input": 20_000_000,
+                "tokens_output": 5_000_000,
+            },
+        ],
+    )
+    result_free = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_status": "MEASURED"' in result_free.out
+    assert '"nan_used": 0' in result_free.out
+
+
+def test_nan_m04_periodo_dinamico_limites_ms_y_cambios_calendario(
+    box, monkeypatch, tmp_path
+):
+    """230b m-04: periodo dinamico anterior a now; limite exacto ms; mes y ano cubiertos."""
+    start_ms = 1794076260000
+    source = tmp_path / "opencode.db"
+    _nan_sqlite_session_db(
+        source,
+        [
+            {
+                "time_created": start_ms - 1,
+                "model": json.dumps({"id": "glm5.3-flash", "providerID": "nan"}),
+                "tokens_input": 1_000_000,
+                "tokens_output": 0,
+            },
+            {
+                "time_created": start_ms,
+                "model": json.dumps({"id": "glm5.3-flash", "providerID": "nan"}),
+                "tokens_input": 1_000_000,
+                "tokens_output": 0,
+                "metadata": json.dumps({"nivel": "alto"}),
+            },
+        ],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+
+    now_dt = dt.datetime(2026, 11, 24, 10, 0, 0, tzinfo=dt.timezone.utc)
+    monkeypatch.setenv("NAN_NOW", now_dt.isoformat())
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_status": "MEASURED"' in result.out
+    assert '"nan_used": 5.25' in result.out
+
+    dt_before = dt.datetime(2026, 11, 7, 18, 30, 59, tzinfo=dt.timezone.utc)
+    start_before = box.m._nan_period_start(dt_before)
+    assert start_before == dt.datetime(2026, 10, 7, 18, 31, 0, tzinfo=dt.timezone.utc)
+
+    dt_after = dt.datetime(2026, 11, 7, 18, 31, 1, tzinfo=dt.timezone.utc)
+    start_after = box.m._nan_period_start(dt_after)
+    assert start_after == dt.datetime(2026, 11, 7, 18, 31, 0, tzinfo=dt.timezone.utc)
+
+    dt_jan = dt.datetime(2027, 1, 5, 12, 0, 0, tzinfo=dt.timezone.utc)
+    start_jan = box.m._nan_period_start(dt_jan)
+    assert start_jan == dt.datetime(2026, 12, 7, 18, 31, 0, tzinfo=dt.timezone.utc)
+
+
+def test_nan_m05_fuente_ilegible_o_sin_tokens_no_cero(box, monkeypatch, tmp_path):
+    """230b m-05: base corrupta o sin tokens/creditos es UNKNOWN, nunca cero silencioso."""
+    bad = tmp_path / "corrupt.db"
+    bad.write_bytes(b"not a valid sqlite file")
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, bad, kilo)
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_status": "UNKNOWN"' in result.out
+    assert '"nan_used"' not in result.out
+
+
+def test_nan_m06_pool_7000_constante_y_retrocompatibilidad(box, monkeypatch, tmp_path):
+    """230b m-06: NAN_POOL_CREDITS permanece en 7000.0 y las tablas con columna credits siguen funcionando."""
+    assert box.m.NAN_POOL_CREDITS == 7000.0
+
+    source = tmp_path / "opencode.db"
+    con = box.m.sqlite3.connect(source)
+    con.execute(
+        "CREATE TABLE message (id TEXT, time_created INTEGER, credits REAL, data TEXT)"
+    )
+    con.execute(
+        "INSERT INTO message VALUES ('m1', ?, 25.5, ?)",
+        (int(box.clock.now * 1000), json.dumps({"nivel": "medio"})),
+    )
+    con.commit()
+    con.close()
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_status": "MEASURED"' in result.out
+    assert '"nan_used": 25.5' in result.out
+
+
+def test_nan_m07_tarifas_declaradas_y_unbilled_tokens(box):
+    """230b m-07: verificacion de los modelos del panel en precios de agents.json."""
+    pricing, _ = box.m._nan_pricing_table()
+    assert "nan/deepseek-v4-flash" in pricing
+    assert "nan/mimo-v2.6-flash" in pricing
+    assert "nan/glm5.3" in pricing
+    assert "nan/glm5.3-flash" in pricing
+    assert "nan/qwen3.8-flash" in pricing
+    assert "nan/qwen3.8-max" in pricing
+    assert "nan/deepseek-v4-pro" in pricing
+    assert "nan/kimi-k3.1-pro" in pricing
+    assert "nan/hy4" in pricing
+    assert pricing["nan/glm5.3"][1] == 9.10
+
+
+def test_nan_mutation_tarifa_cache_vs_salida(box, monkeypatch, tmp_path):
+    """Mutante m-01: usar tarifa de salida en lugar de cache debe alterar el calculo."""
+    source = tmp_path / "opencode.db"
+    now_ms = int(box.clock.now * 1000)
+    _nan_sqlite_session_db(
+        source,
+        [
+            {
+                "time_created": now_ms,
+                "model": json.dumps({"id": "glm5.3-flash", "providerID": "nan"}),
+                "tokens_input": 0,
+                "tokens_cache_read": 1_000_000,
+                "tokens_output": 0,
+                "metadata": json.dumps({"nivel": "alto"}),
+            }
+        ],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_used": 1.05' in result.out
+
+
+def test_nan_mutation_modelo_desconocido_no_cero(box, monkeypatch, tmp_path):
+    """Mutante m-03: un modelo no tarifado bajo nan no debe silenciarse a 0 sino ser UNKNOWN."""
+    source = tmp_path / "opencode.db"
+    now_ms = int(box.clock.now * 1000)
+    _nan_sqlite_session_db(
+        source,
+        [
+            {
+                "time_created": now_ms,
+                "model": json.dumps(
+                    {"id": "modelo-no-registrado-x", "providerID": "nan"}
+                ),
+                "tokens_input": 1_000_000,
+                "tokens_output": 500_000,
+            }
+        ],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+    assert '"nan_status": "UNKNOWN"' in result.out
+    assert '"nan_used"' not in result.out

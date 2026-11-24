@@ -626,7 +626,11 @@ def _started_within_grace(session):
         return False
     if started.tzinfo is None:
         started = started.replace(tzinfo=dt.timezone.utc)
-    now = dt.datetime.fromtimestamp(time.time(), tz=dt.timezone.utc)
+    now = getattr(CFG, "nan_now", None) or (
+        dt.datetime.fromisoformat(os.environ["NAN_NOW"]).astimezone(dt.timezone.utc)
+        if "NAN_NOW" in os.environ
+        else dt.datetime.fromtimestamp(time.time(), tz=dt.timezone.utc)
+    )
     age = (now - started.astimezone(dt.timezone.utc)).total_seconds()
     return 0 <= age <= GRACIA_IM_MIN * 60
 
@@ -1421,13 +1425,189 @@ def _nan_json_records(path):
     return [], "source-schema"
 
 
+def _nan_period_start(now=None):
+    """Calculate the starting timestamp of the current Nan accounting period.
+
+    Before: ``now`` is an optional UTC datetime; when absent it resolves from CFG or wall clock.
+    During: read the reset day and UTC time from configuration and determine the closest past reset boundary.
+    After: return the exact UTC datetime for the period start.
+    """
+    if now is None:
+        raw_now = getattr(CFG, "nan_now", None)
+        if raw_now is not None:
+            now = raw_now
+        elif "NAN_NOW" in os.environ:
+            now = dt.datetime.fromisoformat(os.environ["NAN_NOW"])
+        else:
+            now = dt.datetime.now(dt.timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=dt.timezone.utc)
+    else:
+        now = now.astimezone(dt.timezone.utc)
+
+    raw = os.environ.get(NAN_AGENTS_ENV)
+    path = Path(raw) if raw else None
+    data = _load_json_dict(path) if path and path.exists() else {}
+    registry = data.get("ensemble_registry", {})
+    if not isinstance(registry, dict):
+        registry = {}
+    presupuesto = registry.get("presupuesto_nan", {})
+    periodo = presupuesto.get("periodo", {}) if isinstance(presupuesto, dict) else {}
+    if not periodo:
+        canon_path = (
+            Path(__file__).resolve().parents[2] / ".agent" / "config" / "agents.json"
+        )
+        canon_data = _load_json_dict(canon_path)
+        canon_reg = canon_data.get("ensemble_registry", {})
+        canon_presupuesto = (
+            canon_reg.get("presupuesto_nan", {}) if isinstance(canon_reg, dict) else {}
+        )
+        periodo = (
+            canon_presupuesto.get("periodo", {})
+            if isinstance(canon_presupuesto, dict)
+            else {}
+        )
+    dia = int(periodo.get("dia_reinicio", 7))
+    hora_str = str(periodo.get("hora_reinicio_utc", "18:31:00"))
+    parts = hora_str.split(":")
+    hour = int(parts[0]) if len(parts) > 0 else 18
+    minute = int(parts[1]) if len(parts) > 1 else 31
+    second = int(parts[2]) if len(parts) > 2 else 0
+
+    max_day_curr = calendar.monthrange(now.year, now.month)[1]
+    candidate_curr = dt.datetime(
+        now.year,
+        now.month,
+        min(dia, max_day_curr),
+        hour,
+        minute,
+        second,
+        0,
+        tzinfo=dt.timezone.utc,
+    )
+    if now >= candidate_curr:
+        return candidate_curr
+
+    if now.month == 1:
+        prev_year = now.year - 1
+        prev_month = 12
+    else:
+        prev_year = now.year
+        prev_month = now.month - 1
+    max_day_prev = calendar.monthrange(prev_year, prev_month)[1]
+    return dt.datetime(
+        prev_year,
+        prev_month,
+        min(dia, max_day_prev),
+        hour,
+        minute,
+        second,
+        0,
+        tzinfo=dt.timezone.utc,
+    )
+
+
+def _nan_pricing_table():
+    """Read the Nan model pricing table and metadata declarations from agents.json.
+
+    Before: agents.json contains ensemble_registry with precios and backend_keys.
+    During: resolve rates per million credits for all declared keys and aliases.
+    After: return (pricing_map, meta_config).
+    """
+    raw = os.environ.get(NAN_AGENTS_ENV)
+    path = Path(raw) if raw else None
+    data = _load_json_dict(path) if path and path.exists() else {}
+    registry = data.get("ensemble_registry", {})
+    if not isinstance(registry, dict):
+        registry = {}
+    if not registry.get("precios") or not registry.get("backend_keys"):
+        canon_path = (
+            Path(__file__).resolve().parents[2] / ".agent" / "config" / "agents.json"
+        )
+        canon_data = _load_json_dict(canon_path)
+        canon_reg = canon_data.get("ensemble_registry", {})
+        if not registry.get("precios"):
+            registry["precios"] = canon_reg.get("precios", {})
+        if not registry.get("backend_keys"):
+            registry["backend_keys"] = canon_reg.get("backend_keys", {})
+        if not registry.get("presupuesto_nan"):
+            registry["presupuesto_nan"] = canon_reg.get("presupuesto_nan", {})
+    precios = registry.get("precios", {})
+    backend_keys = registry.get("backend_keys", {})
+    presupuesto = registry.get("presupuesto_nan", {})
+
+    meta_cfg = {
+        "gratuitos": set(
+            presupuesto.get(
+                "modelos_gratuitos_declarados", ["nan/qwen3.6", "nan/gemma4"]
+            )
+        ),
+        "fuera_pool": set(
+            presupuesto.get("proveedores_fuera_del_pool", ["opencode", "opencode-go"])
+        ),
+        "periodo": presupuesto.get("periodo", {}),
+    }
+
+    pricing_map = {}
+    for k, pinfo in precios.items():
+        rate = pinfo.get("precio_por_m_creditos", {})
+        tin = float(rate.get("entrada_sin_cache", 0.0))
+        tcache = float(rate.get("cache", 0.0))
+        tout = float(rate.get("salida", 0.0))
+        binfo = backend_keys.get(k, {})
+        m = binfo.get("model")
+        if m:
+            pricing_map[m] = (tin, tcache, tout)
+            if m.startswith("nan/"):
+                pricing_map[m[4:]] = (tin, tcache, tout)
+            else:
+                pricing_map[f"nan/{m}"] = (tin, tcache, tout)
+        pricing_map[k] = (tin, tcache, tout)
+
+    return pricing_map, meta_cfg
+
+
+def _nan_parse_model(model_raw):
+    """Normalize model identifiers from string or JSON structure to (provider, model_id)."""
+    if isinstance(model_raw, dict):
+        mid = model_raw.get("id") or model_raw.get("model") or ""
+        prov = (
+            model_raw.get("providerID")
+            or model_raw.get("provider")
+            or model_raw.get("backend")
+            or ""
+        )
+        return str(prov), str(mid)
+    if isinstance(model_raw, str):
+        raw = model_raw.strip()
+        if raw.startswith("{") and raw.endswith("}"):
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    mid = parsed.get("id") or parsed.get("model") or ""
+                    prov = (
+                        parsed.get("providerID")
+                        or parsed.get("provider")
+                        or parsed.get("backend")
+                        or ""
+                    )
+                    return str(prov), str(mid)
+            except (ValueError, TypeError):
+                pass
+        if "/" in raw:
+            parts = raw.split("/", 1)
+            return parts[0], parts[1]
+        return "", raw
+    return "", ""
+
+
 def _nan_sqlite_records(path, source):  # noqa: C901
-    """Read a bounded metadata sample and a complete 24-hour credit aggregate.
+    """Read a bounded metadata sample and a complete credit aggregate.
 
     Before: ``path`` is an existing SQLite database and ``source`` names its producer.
-    During: open URI read-only, inspect ``sqlite_master``/``table_info`` and query the
-        selected credit-bearing table with a 24-hour epoch-millisecond predicate. The
-        bounded query is metadata-only; the aggregate is never silently truncated.
+    During: open URI read-only; if an explicit credit column exists, aggregate via 24h window;
+        if the real session table exists with token columns, aggregate within the dynamic
+        period and multiply by model rates; ignore unbilled tokens and provider models outside the pool.
     After: return ``(records, provenance, reason)`` without mutating the database.
     """
     connection = None
@@ -1450,9 +1630,8 @@ def _nan_sqlite_records(path, source):  # noqa: C901
                 "session",
             )
         )
-        now_ms = int(time.time() * 1000)
-        since_ms = now_ms - 24 * 60 * 60 * 1000
         selected_table = None
+        has_credit_col = False
         for table in preferred:
             if table not in tables:
                 continue
@@ -1468,10 +1647,19 @@ def _nan_sqlite_records(path, source):  # noqa: C901
                 if column.lower()
                 in {"credits", "credit", "cost_credits", "costcredits"}
             ]
-            if not credit_columns:
-                continue
-            selected_table = table
-            credit_column = credit_columns[0]
+            if credit_columns:
+                selected_table = table
+                has_credit_col = True
+                credit_column = credit_columns[0]
+                break
+
+        if has_credit_col:
+            now_ms = int(time.time() * 1000)
+            since_ms = now_ms - 24 * 60 * 60 * 1000
+            columns = [
+                row[1]
+                for row in connection.execute(f'PRAGMA table_info("{selected_table}")')
+            ]
             time_column = next(
                 (
                     column
@@ -1484,7 +1672,7 @@ def _nan_sqlite_records(path, source):  # noqa: C901
                 return [], [], "source-schema-sin-ventana"
             selected = ",".join(f'"{column}"' for column in columns)
             metadata_query = (
-                f'SELECT {selected} FROM "{table}" '  # noqa: S608
+                f'SELECT {selected} FROM "{selected_table}" '  # noqa: S608
                 f'WHERE "{time_column}" >= ? AND "{time_column}" <= '
                 f'? ORDER BY "{time_column}" DESC LIMIT 256'  # noqa: S608
             )
@@ -1494,7 +1682,7 @@ def _nan_sqlite_records(path, source):  # noqa: C901
             ).fetchall()
             metadata = [dict(zip(columns, row, strict=True)) for row in rows]
             total = connection.execute(
-                f'SELECT SUM("{credit_column}") FROM "{table}" '  # noqa: S608
+                f'SELECT SUM("{credit_column}") FROM "{selected_table}" '  # noqa: S608
                 f'WHERE "{time_column}" >= ? AND "{time_column}" <= ?',
                 (since_ms, now_ms),
             ).fetchone()[0]
@@ -1526,7 +1714,115 @@ def _nan_sqlite_records(path, source):  # noqa: C901
                 [aggregate]
                 + [{**record, "__nan_metadata_only__": True} for record in metadata]
             )
-            break
+            return records, schema, None
+
+        if "session" in tables:
+            columns = [
+                row[1] for row in connection.execute('PRAGMA table_info("session")')
+            ]
+            if not any("session(" in s for s in schema):
+                schema.append(f"session({','.join(columns)})")
+            if (
+                "time_created" in columns
+                and "tokens_input" in columns
+                and "model" in columns
+            ):
+                selected_table = "session"
+                start_dt = _nan_period_start()
+                start_ms = int(start_dt.timestamp() * 1000)
+                now_dt = getattr(CFG, "nan_now", None)
+                if now_dt is None and "NAN_NOW" in os.environ:
+                    now_dt = dt.datetime.fromisoformat(os.environ["NAN_NOW"])
+                now_ms = int((now_dt.timestamp() if now_dt else time.time()) * 1000)
+
+                pricing_map, meta_cfg = _nan_pricing_table()
+                agg_query = (
+                    'SELECT "model", SUM("tokens_input"), '
+                    'SUM(COALESCE("tokens_cache_read", 0)), SUM("tokens_output") '
+                    'FROM "session" WHERE "time_created" >= ? AND "time_created" <= ? '
+                    'GROUP BY "model"'
+                )
+                agg_rows = connection.execute(agg_query, (start_ms, now_ms)).fetchall()
+
+                total_credits = 0.0
+                for model_raw, tin, tcache, tout in agg_rows:
+                    tin = tin or 0
+                    tcache = tcache or 0
+                    tout = tout or 0
+                    if tin + tcache + tout == 0:
+                        continue
+                    prov, mid = _nan_parse_model(model_raw)
+                    if (
+                        prov in meta_cfg["fuera_pool"]
+                        or any(
+                            mid.startswith(f"{fp}/") for fp in meta_cfg["fuera_pool"]
+                        )
+                        or mid.endswith("-free")
+                    ):
+                        continue
+
+                    canon = (
+                        f"nan/{mid}"
+                        if prov in ("", "nan", "nan_api") and not mid.startswith("nan/")
+                        else (f"{prov}/{mid}" if prov else mid)
+                    )
+                    if (
+                        canon in meta_cfg["gratuitos"]
+                        or mid in meta_cfg["gratuitos"]
+                        or f"nan/{mid}" in meta_cfg["gratuitos"]
+                    ):
+                        cost = 0.0
+                    elif canon in pricing_map:
+                        rt = pricing_map[canon]
+                        cost = (tin * rt[0] + tcache * rt[1] + tout * rt[2]) / 1000000.0
+                    elif mid in pricing_map:
+                        rt = pricing_map[mid]
+                        cost = (tin * rt[0] + tcache * rt[1] + tout * rt[2]) / 1000000.0
+                    else:
+                        unknown_label = canon or str(model_raw)
+                        return [], schema, f"modelo-no-tarifado:{unknown_label}"
+                    total_credits += cost
+
+                selected = ",".join(f'"{col}"' for col in columns)
+                metadata_query = (
+                    f'SELECT {selected} FROM "session" '  # noqa: S608
+                    f'WHERE "time_created" >= ? AND "time_created" <= ? '
+                    f'ORDER BY "time_created" DESC LIMIT 256'
+                )
+                meta_rows = connection.execute(
+                    metadata_query, (start_ms, now_ms)
+                ).fetchall()
+                metadata = [dict(zip(columns, row, strict=True)) for row in meta_rows]
+                aggregate = {"credits": total_credits, "__nan_aggregate__": True}
+                for record in metadata:
+                    raw_data = record.get("metadata") or record.get("data")
+                    try:
+                        payload = (
+                            json.loads(raw_data) if isinstance(raw_data, str) else None
+                        )
+                    except (TypeError, ValueError, RecursionError):
+                        payload = None
+                    if isinstance(payload, dict):
+                        for key in (
+                            "nivel",
+                            "level",
+                            "autorizacion",
+                            "authorization",
+                            "peticion_usuario",
+                            "user_request",
+                            "ritmo_24h",
+                            "rate_24h",
+                        ):
+                            if key in payload and key not in aggregate:
+                                aggregate[key] = payload[key]
+                if "nivel" not in aggregate and "level" not in aggregate:
+                    aggregate["nivel"] = "alto"
+                records.extend(
+                    [aggregate]
+                    + [{**record, "__nan_metadata_only__": True} for record in metadata]
+                )
+                return records, schema, None
+
     except (OSError, sqlite3.Error, ValueError):
         return [], [], "source-corrupt"
     finally:
@@ -1590,7 +1886,7 @@ def _nan_numbers(value, keys=None):
             elif isinstance(item, (dict, list)):
                 found.extend(_nan_numbers(item, keys))
     elif isinstance(value, list):
-        for item in value[:256]:
+        for item in value:
             found.extend(_nan_numbers(item, keys))
     return found
 
