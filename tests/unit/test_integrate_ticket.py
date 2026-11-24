@@ -13,6 +13,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -34,6 +35,7 @@ TICKET = "WOT-2026-999z"
 WRAPPER = _MOTOR_ROOT / "scripts" / "flight" / "integrate_ticket.py"
 _TS_EMIT = "2026-10-11T10:00:00+00:00"
 _TS_ROUND = "2026-10-11T10:05:00+00:00"
+EVIDENCE_BACKEND_KEYS: tuple[str, ...] = ("BA04", "BA07")
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -72,7 +74,7 @@ def _write_evidence(destino: Path, sha: str) -> None:
             "output_chars": 2134,
             "evidencia": "veredicto de la lente",
         }
-        for bk in ("BA03", "BA07")
+        for bk in EVIDENCE_BACKEND_KEYS
     ]
     (ensemble / "scorecard.jsonl").write_text(
         "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8"
@@ -89,6 +91,34 @@ def _write_evidence(destino: Path, sha: str) -> None:
     (ensemble / "emitted_nonces.jsonl").write_text(
         json.dumps(emitted) + "\n", encoding="utf-8"
     )
+
+
+def _assert_keys_eligible(keys: tuple[str, ...], agents_data: dict[str, Any]) -> None:
+    coverage = (
+        agents_data.get("ensemble_registry", {})
+        .get("eligible_coverage", {})
+        .get("MANAGER_REVIEW:repo_motor", {})
+    )
+    eligible = set(coverage.get("backend_keys", []))
+    for k in keys:
+        assert k in eligible, f"backend_key {k} no es elegible en {eligible}"
+
+
+def test_evidence_fixture_backend_keys_are_eligible_in_agents_json() -> None:
+    agents_path = (
+        Path(__file__).resolve().parents[2] / ".agent" / "config" / "agents.json"
+    )
+    data = json.loads(agents_path.read_text(encoding="utf-8"))
+    _assert_keys_eligible(EVIDENCE_BACKEND_KEYS, data)
+
+
+def test_mutation_evidence_fixture_ineligible_keys_raise_error() -> None:
+    agents_path = (
+        Path(__file__).resolve().parents[2] / ".agent" / "config" / "agents.json"
+    )
+    data = json.loads(agents_path.read_text(encoding="utf-8"))
+    with pytest.raises(AssertionError):
+        _assert_keys_eligible(("BA03", "BA07"), data)
 
 
 def _world(tmp_path: Path, *, evidence: bool = True) -> World:
@@ -156,11 +186,14 @@ def _write_family_evidence(
 ) -> None:
     ensemble = destino / ".agent" / "runtime" / "ensemble"
     ensemble.mkdir(parents=True, exist_ok=True)
+    family_keys = (*EVIDENCE_BACKEND_KEYS, "BA08", "BA09", "BA150", "BA151")
     rows = [
         {
             "event": "ronda",
             "commit_sha": sha,
-            "backend_key": f"BA{index:02d}",
+            "backend_key": (
+                family_keys[index] if index < len(family_keys) else f"BA{index:02d}"
+            ),
             "backend": backend,
             "model": model,
             "challenge_nonce": "N-FAMILY",
@@ -168,7 +201,7 @@ def _write_family_evidence(
             "output_chars": 100,
             "evidencia": "veredicto",
         }
-        for index, (backend, model) in enumerate(lenses, 3)
+        for index, (backend, model) in enumerate(lenses)
     ]
     (ensemble / "scorecard.jsonl").write_text(
         "".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8"
