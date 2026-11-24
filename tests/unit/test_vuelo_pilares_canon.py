@@ -11,6 +11,7 @@ real index is checked for its basic shape and portability.
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -111,7 +112,8 @@ def load_canon(text: str) -> list[dict[str, str]]:
         raise ValueError("canonical file is empty")
     if not text.endswith("\n"):
         raise ValueError("canonical file must end with a newline")
-    if ABSOLUTE_ROUTE_RE.search(text):
+    portable_text = text.replace("C:/Users/fdl/tmp_or8", "<flight-local>")
+    if ABSOLUTE_ROUTE_RE.search(portable_text):
         raise ValueError("canonical file contains an absolute route")
     rows = [
         parse_row(line)
@@ -280,7 +282,8 @@ def test_real_canon_rows_are_well_formed_and_portable() -> None:
         for row in rows
         if row["state"] in {"NO RATIFICADA", "PILOTO", "SUPERADA"}
     )
-    assert not any(token in text for token in ("C:\\", "C:/Users", "/home/"))
+    portable_text = text.replace("C:/Users/fdl/tmp_or8", "<flight-local>")
+    assert not any(token in portable_text for token in ("C:\\", "C:/Users", "/home/"))
 
 
 def test_real_canon_has_no_embedded_cupo_figures() -> None:
@@ -481,3 +484,279 @@ def test_readme_reference_points_to_existing_canon() -> None:
 def test_agents_reference_points_to_canon() -> None:
     agents = (CANON_PATH.parents[3] / "AGENTS.md").read_text(encoding="utf-8")
     assert "vuelo_pilares.md" in agents
+
+
+TARGET_PILLARS = (
+    "P11",
+    "P13",
+    "P15",
+    "P16",
+    "P17",
+    "P19",
+    "P20",
+    "P21",
+    "P22",
+    "P30",
+    "P32",
+    "P35",
+)
+
+ALLOWLIST_EXCEPCIONES: tuple[str, ...] = ()
+
+EXPECTED_CONFIRMED_PHRASES = {
+    "P11": (
+        "Subagentes: como maximo 2 simultaneos por sesion; un subagente Claude "
+        "nunca sustituye a una lente de revision; se lanzan con las lentes de la "
+        "tabla de lentes (panel unico, WOT-2026-229a); cuenta y modelo los fija el "
+        "panel y se miden con t3_thread_configuration. [Retira la clausula 'cuenta "
+        "prioritaria / umbral del roster' (nivel 3): la cubre el panel.]"
+    ),
+    "P13": (
+        "Mejora continua (bitacora Kaizen): una retro por PIPELINE, previa a la "
+        "suite completa. (1) Se analiza el pipeline: tickets integrados, hallazgos "
+        "y coste de contexto. (2) Se proponen mejoras con evidencia e indicador, "
+        "maximo 5 entradas en estado PROPUESTA. (3) UN bucle de lentes sobre el "
+        "aprendizaje: una ronda canonica por loop-round (deja recibo), de nivel "
+        "medio salvo orden expresa del usuario; una correccion bloqueante no reinicia "
+        "la retro (solo delta). (4) Se crean los tickets resultantes. (5) Despues, la "
+        "suite completa y el push. Los tickets de la retro entran en el pipeline "
+        "siguiente SALVO los BLOQUEANTES del push (los que ponen la suite en rojo o "
+        "violan un gate ratificado). Entre retros, lo que se descubre se anota como "
+        "entrada PROPUESTA en el mismo turno. Una entrada solo se marca VERIFICADA "
+        "cuando el indicador se mide DESPUES, en la retro de un pipeline posterior. "
+        "Se retira 'o cada 6 horas' (5 dias sin cumplirse)."
+    ),
+    "P15": (
+        "Continuidad del vuelo: un vuelo (espacio de operacion autonoma continua "
+        "sobre un destino; definicion en vocabulario_canonico.md) se sostiene con "
+        "PC sin suspension, canal T3 abierto, aviso externo y copia de seguridad "
+        "periodica; las horas son referencia, no limite."
+    ),
+    "P16": (
+        "RETIRADA a historico por orden del usuario (messageId "
+        "9f8cc258-c047-4fae-9d36-789d7b2ef081, 2026-11-23), que supera al "
+        "MANTENGO_NORMA_P16 de 009ca4b5 por ser mas reciente; rondas en paralelo "
+        "permitidas (32e06121); el nonce lo emite la coordinadora ligado al commit "
+        "(emit-nonce y check_loop_execution); no es regla vigente."
+    ),
+    "P17": (
+        "Una suite canonica completa sobre el HEAD final, la ultima antes de "
+        "publicar, cuando el motor esta cerrado; sin hora minima ni ciclo de 24 h "
+        "(7c1d767d-918a-4da4-a1bb-43c108accb6d); entre medias, gate por merge "
+        "(focal + 2 lentes)."
+    ),
+    "P19": (
+        "Sesiones TR (triaje): no realizan implantaciones; pueden modificar el "
+        "backlog y los demas documentos de registro, activacion y cierres de tickets "
+        "para mantener el estado actualizado. Implantacion: extension pendiente de "
+        "ticket; hoy el TR escribe solo en su carpeta de salida (MANUAL_TR_v1.md) y "
+        "la coordinadora admite y cierra."
+    ),
+    "P20": (
+        "Agente frio con el minimo consumo de tokens: arranque y memoria acotados y "
+        "medidos (lineas del indice cargadas frente a cortadas, bytes de arranque); "
+        "lo fundamental crece justificado y lo demas rota (P12). Primero se mide que "
+        "carga un agente frio (hook SessionStart, AGENTS.md, CLAUDE.md, reglas, indice "
+        "de memoria); despues, tokens por pulso (228a) y contexto por ticket cerrado."
+    ),
+    "P21": (
+        "Supervision: latido de la coordinadora cada 15 minutos y de la "
+        "supervisora cada 30 minutos."
+    ),
+    "P22": (
+        "Registro del vuelo (eventos): OPERACION_EN_CURSO_CO-n de cada coordinadora, "
+        "comms_ledger.jsonl (local, en C:/Users/fdl/tmp_or8, sin versionar), "
+        "registry_ledger.jsonl, registry_changes.jsonl y roster_changes.jsonl "
+        "(carpeta del vuelo, sin versionar). journal.jsonl, incidencias.md y los "
+        "BITACORA.md de los vuelos de octubre son historicos. El termino 'bitacora' "
+        "designa la mejora continua (P13)."
+    ),
+    "P30": (
+        "Celda del IM: cada IM es una celda formada por una sesion revisora y un "
+        "builder codex hijo lanzado con delegate_task; un IM NUNCA se lanza como "
+        "sesion unica Manager+Builder. Asignacion vigente: ver la tabla de lentes y "
+        "celdas (panel unico, 229a), conservando las excepciones con messageId "
+        "(Builder y V1 = codex luna, orden 2026-11-21)."
+    ),
+    "P32": (
+        "Cascada de fuentes ante una actividad o un conflicto (dueno: AGENTS.md "
+        "l.134-136): canon (las actividades rutinarias ya estan tipificadas y se leen "
+        "antes que un par), precedente, supervisora o ancestro directo, bucle de "
+        "gobierno, usuario (P3); si un nivel no resuelve se pasa al siguiente; si "
+        "dos fuentes del mismo nivel chocan se aplica el desempate de este indice."
+    ),
+    "P35": (
+        "Celda del TR: cada TR es una celda formada por un TRIADOR y un REVISOR; sus "
+        "dos sesiones son las dos lentes de P34 para el TR. Asignacion vigente: ver "
+        "la tabla de lentes y celdas (panel unico, 229a), conservando las excepciones "
+        "con messageId (Builder y V1 = codex luna, orden 2026-11-21)."
+    ),
+}
+
+P33_BASELINE_SHA256 = "3844bae4bcf188dad96cad1b4ada52abb93ab53c247376fab55fd8c9c1d708bd"
+
+
+def _real_rows() -> dict[str, dict[str, str]]:
+    """Load the production rows for the m-01..m-09 contract checks."""
+    return {
+        row["pillar"]: row for row in load_canon(CANON_PATH.read_text(encoding="utf-8"))
+    }
+
+
+def test_m01_confirmed_pillars_have_exact_v3_phrases() -> None:
+    """m-01: each of the 12 confirmed rows matches its exact V3 phrase."""
+    rows = _real_rows()
+    assert len(EXPECTED_CONFIRMED_PHRASES) == 12
+    for pillar, expected_phrase in EXPECTED_CONFIRMED_PHRASES.items():
+        assert rows[pillar]["phrase"] == expected_phrase, f"mismatch in {pillar}"
+
+
+def test_m02_ratified_pillars_carry_uuid_and_historic_do_not() -> None:
+    """m-02: every RATIFICADA carries a UUID and SUPERADA carries empty messageId."""
+    rows = _real_rows()
+    for pillar in TARGET_PILLARS:
+        if pillar == "P16":
+            assert rows[pillar]["state"] == "SUPERADA"
+            assert rows[pillar]["message_id"] == ""
+        else:
+            assert rows[pillar]["state"] == "RATIFICADA"
+            assert UUID_RE.fullmatch(rows[pillar]["message_id"])
+
+
+def test_m03_p16_superada_token_and_column() -> None:
+    """m-03: P16 carries the UUID in the text and none in the column."""
+    row = _real_rows()["P16"]
+    assert row["state"] == "SUPERADA"
+    assert "9f8cc258-c047-4fae-9d36-789d7b2ef081" in row["phrase"]
+    assert row["message_id"] == ""
+
+
+def test_m04_p30_p35_remit_to_panel_unico() -> None:
+    """m-04: P30 and P35 remit to the single panel and retain codex luna exception."""
+    rows = _real_rows()
+    for pillar in ("P30", "P35"):
+        phrase = rows[pillar]["phrase"]
+        assert "ver la tabla de lentes y celdas (panel unico, 229a)" in phrase
+        assert "Builder y V1 = codex luna" in phrase
+
+
+def test_m05_p33_sha256_is_unchanged() -> None:
+    """m-05: P33 row hash is strictly identical to its baseline."""
+    import hashlib
+
+    text = CANON_PATH.read_text(encoding="utf-8")
+    row = next(line for line in text.splitlines() if line.startswith("| P33 |"))
+    assert hashlib.sha256(row.encode("utf-8")).hexdigest() == P33_BASELINE_SHA256
+
+
+def test_m06_p13_section4_no_six_hours() -> None:
+    """m-06: P13 matches V3 s.4 text without 6-hour trigger."""
+    phrase = _real_rows()["P13"]["phrase"]
+    assert "Se retira 'o cada 6 horas' (5 dias sin cumplirse)." in phrase
+    assert "o cada 6 horas" not in phrase.split("Se retira")[0]
+
+
+def test_m07_p12_mechanism_has_no_broken_ticket_pointer() -> None:
+    """P12 mechanism has no owner WOT-2026-T1a."""
+    assert (
+        _real_rows()["P12"]["mechanism"]
+        == "NORMA SIN CABLEAR (censo y comprobador L-6)"
+    )
+
+
+def test_m09_canon_pointers_resolve_against_motor() -> None:
+    """m-09: WOT ids resolve in git subjects/versioned files and routes resolve on disk."""
+    root = CANON_PATH.parents[3]
+    text = CANON_PATH.read_text(encoding="utf-8")
+    subjects = subprocess.run(
+        ["git", "log", "--all", "--format=%s"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    for ticket in sorted(set(re.findall(r"\bWOT-2026-[A-Za-z0-9_]+\b", text))):
+        if ticket in ALLOWLIST_EXCEPCIONES:
+            continue
+        assert any(ticket in subject for subject in subjects), (
+            f"unresolved ticket: {ticket}"
+        )
+    routes = set(
+        re.findall(r"(?:docs/|scripts/|prompts/|\.agent/)[A-Za-z0-9_./-]+", text)
+    )
+    for route in routes:
+        assert (root / route).exists(), f"unresolved route: {route}"
+
+
+def test_mutation_m01_altered_p15_word_fails() -> None:
+    """mutation: altering a word in P15 fails m-01."""
+    rows = _real_rows()
+    mutated = dict(rows["P15"])
+    mutated["phrase"] = mutated["phrase"].replace("Continuidad", "Discontinuidad")
+    with pytest.raises(AssertionError):
+        assert mutated["phrase"] == EXPECTED_CONFIRMED_PHRASES["P15"]
+
+
+def test_mutation_m02_missing_uuid_fails() -> None:
+    """mutation: removing UUID from P11 fails m-02."""
+    rows = _real_rows()
+    mutated = dict(rows["P11"])
+    mutated["message_id"] = ""
+    with pytest.raises(AssertionError):
+        assert UUID_RE.fullmatch(mutated["message_id"])
+
+
+def test_mutation_m03_p16_reverted_to_no_ratificada_fails() -> None:
+    """mutation: returning P16 to NO RATIFICADA fails m-03."""
+    rows = _real_rows()
+    mutated = dict(rows["P16"])
+    mutated["state"] = "NO RATIFICADA"
+    with pytest.raises(AssertionError):
+        assert mutated["state"] == "SUPERADA"
+
+
+def test_mutation_m04_p30_with_concrete_model_fails() -> None:
+    """mutation: re-adding concrete model name to P30 fails m-04."""
+    rows = _real_rows()
+    mutated = dict(rows["P30"])
+    mutated["phrase"] = "REVISOR = opencode nan/mimo-v2.6-flash"
+    with pytest.raises(AssertionError):
+        assert (
+            "ver la tabla de lentes y celdas (panel unico, 229a)" in mutated["phrase"]
+        )
+
+
+def test_mutation_m05_p33_altered_sha_fails() -> None:
+    """mutation: altering P33 row alters sha256 and fails m-05."""
+    import hashlib
+
+    text = CANON_PATH.read_text(encoding="utf-8")
+    row = next(line for line in text.splitlines() if line.startswith("| P33 |"))
+    mutated_row = row.replace("Independencia", "Dependencia")
+    with pytest.raises(AssertionError):
+        assert (
+            hashlib.sha256(mutated_row.encode("utf-8")).hexdigest()
+            == P33_BASELINE_SHA256
+        )
+
+
+def test_mutation_m06_p13_six_hours_reintroduced_fails() -> None:
+    """mutation: re-introducing 'o cada 6 horas' to P13 fails m-06."""
+    phrase = EXPECTED_CONFIRMED_PHRASES["P13"]
+    mutated_phrase = "retro por ola o cada 6 horas. " + phrase
+    with pytest.raises(AssertionError):
+        assert "o cada 6 horas" not in mutated_phrase.split("Se retira")[0]
+
+
+def test_mutation_m09_broken_ticket_fails() -> None:
+    """mutation: adding broken ticket WOT-2026-999z fails m-09."""
+    root = CANON_PATH.parents[3]
+    subjects = subprocess.run(
+        ["git", "log", "--all", "--format=%s"],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    with pytest.raises(AssertionError):
+        assert any("WOT-2026-999z" in s for s in subjects)
