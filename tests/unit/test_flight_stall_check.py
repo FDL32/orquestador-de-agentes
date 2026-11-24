@@ -2243,9 +2243,9 @@ def test_m02_no_check_celda_ni_exentas_ni_evento_celda_no_conforme(box):
 
 def test_m03_resto_de_detectores_sigue_registrado_igual(box):
     """m-03: el resto de detectores sigue registrado exactamente igual a la BASE menos las dos retiradas."""
-    expected = BASE_DETECTOR_NAMES - {"tarea", "celda"}
+    expected = (BASE_DETECTOR_NAMES - {"tarea", "celda"}) | {"im-sin-asentar"}
     assert set(box.m.DETECTOR_NAMES) == expected
-    assert len(box.m.DETECTOR_NAMES) == len(expected) == 11
+    assert len(box.m.DETECTOR_NAMES) == len(expected) == 12
 
 
 def test_m04_estado_con_eventos_abiertos_retirados_se_resuelven_y_otros_siguen_abiertos(
