@@ -121,7 +121,13 @@ def test_mutation_evidence_fixture_ineligible_keys_raise_error() -> None:
         _assert_keys_eligible(("BA03", "BA07"), data)
 
 
-def _world(tmp_path: Path, *, evidence: bool = True) -> World:
+def _world(
+    tmp_path: Path,
+    *,
+    evidence: bool = True,
+    views: bool = True,
+    stale_views: bool = False,
+) -> World:
     """Motor (rama del vuelo) + worktree candidato con 2 commits del ticket + destino."""
     motor = tmp_path / "motor"
     motor.mkdir()
@@ -129,12 +135,40 @@ def _world(tmp_path: Path, *, evidence: bool = True) -> World:
     _git(motor, "config", "user.email", "t@e.com")
     _git(motor, "config", "user.name", "T")
     base = _commit(motor, "README.md", "# vuelo", "init")
+    (motor / "docs").mkdir(parents=True, exist_ok=True)
+    _commit(motor, "docs/fuente.md", "# fuente\n", "docs fuente")
+    canon_text = (
+        "| Pilar | Frase | Estado | messageId | Fuente | Mecanismo | A quien preguntar | Ambito |\n"
+        "|---|---|---|---|---|---|---|---|\n"
+        "| P33 | familias | RATIFICADA | c38d20f3-796a-4f56-ae3d-50c09952ce25 | docs/fuente.md | script.py | CO | G |\n"
+    )
     base = _commit(
         motor,
         ".agent/rules/common/vuelo_pilares.md",
-        "| Pilar | Regla | Estado |\n|---|---|---|\n| P33 | familias | RATIFICADA |\n",
+        canon_text,
         "canon P33",
     )
+    if views:
+        views_dir = motor / "prompts" / "vuelo_pilares_views"
+        from scripts.flight.check_pilares_views_fresh import generate_views_and_indices
+
+        generate_views_and_indices(
+            motor / ".agent" / "rules" / "common" / "vuelo_pilares.md",
+            views_dir,
+            project_root=motor,
+        )
+        if stale_views:
+            (views_dir / "vista_CO.md").write_text(
+                "corrupted content", encoding="utf-8"
+            )
+        for p in sorted(views_dir.glob("*.md")):
+            _git(motor, "add", str(p))
+        base = _commit(
+            motor,
+            "prompts/vuelo_pilares_views/vista_CO.md",
+            (views_dir / "vista_CO.md").read_text(encoding="utf-8"),
+            "vistas pilares",
+        )
     cand = tmp_path / "cand"
     _git(motor, "worktree", "add", "-q", "-b", "candidate", str(cand))
     _commit(cand, "src/a.py", "x = 1", f"{TICKET}: paso 1")
@@ -834,12 +868,21 @@ def test_closeout_wrapper_reads_the_targets_file_the_writer_writes(tmp_path):
 
 def test_integrate_fails_when_pilares_views_stale(tmp_path):
     """Verify integrate() aborts before merging when pilares views are not fresh (WOT-2026-219b)."""
-    w = _world(tmp_path)
-    views_dir = w.motor / "prompts" / "vuelo_pilares_views"
-    views_dir.mkdir(parents=True)
-    (views_dir / "vista_CO.md").write_text("corrupted content", encoding="utf-8")
+    w = _world(tmp_path, stale_views=True)
     rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
     assert rc == 1, lines
     assert "vistas de pilares no frescas" in lines[0]
+    assert _git(w.motor, "rev-parse", "HEAD") == w.base
+    assert not it.receipt_path(w.destino, w.tip).exists()
+
+
+def test_integrate_fails_when_pilares_views_dir_missing(tmp_path):
+    """Verify integrate() aborts before merging when canon exists but views dir is missing (WOT-2026-219b)."""
+    w = _world(tmp_path, views=False)
+    assert not (w.motor / "prompts" / "vuelo_pilares_views").exists()
+    assert (w.motor / ".agent" / "rules" / "common" / "vuelo_pilares.md").exists()
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+    assert rc == 1, lines
+    assert "vistas de pilares no frescas o ausentes" in lines[0]
     assert _git(w.motor, "rev-parse", "HEAD") == w.base
     assert not it.receipt_path(w.destino, w.tip).exists()

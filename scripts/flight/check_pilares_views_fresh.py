@@ -53,7 +53,11 @@ def _defaults(
 
 
 def _cells(line: str) -> list[str]:
-    """Return stripped cells from a Markdown table row."""
+    """Return stripped cells from a Markdown table row.
+
+    Pipes literales en celdas del canon son ilegales y dan rc 1 (fail-closed;
+    no se soportan escapes ni pipes en campos de la tabla).
+    """
     cells = [cell.strip() for cell in line.strip().split("|")]
     if cells and not cells[0]:
         cells.pop(0)

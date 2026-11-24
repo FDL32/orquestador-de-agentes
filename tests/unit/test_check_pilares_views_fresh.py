@@ -17,6 +17,8 @@ from pathlib import Path
 import pytest
 import scripts.flight.check_pilares_views_fresh as views_fresh
 from scripts.flight.check_pilares_views_fresh import (
+    _cells,
+    _load_rows,
     generate_views_and_indices,
     resolve_alias,
     run_pilares_views_fresh_check,
@@ -360,3 +362,23 @@ def test_mutant_m06_removing_call_in_prepush_puts_wiring_in_red() -> None:
     )
     invocations = [base for base, _ln in cgw._python_invocations(mutated)]
     assert "check_pilares_views_fresh.py" not in invocations
+
+
+def test_literal_pipe_in_canon_cell_fails_load_rows(tmp_path: Path) -> None:
+    """A literal pipe within any canon cell breaks the 8-column invariant and fails closed with ValueError."""
+    canon = tmp_path / "vuelo_pilares.md"
+    canon.write_text(
+        "| Pilar | Frase | Estado | messageId | Fuente | Mecanismo | A quien preguntar | Ambito |\n"
+        "|---|---|---|---|---|---|---|---|\n"
+        "| P1 | regla | con | pipe | RATIFICADA | c38d20f3-796a-4f56-ae3d-50c09952ce25 | f.md | m.py | CO | G |\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    with pytest.raises(
+        ValueError, match="canonical pillar rows must have eight columns"
+    ):
+        _load_rows(canon)
+
+    # Also directly verify _cells splits on literal pipe without escape support
+    line = "| P1 | regla | con | pipe |"
+    assert len(_cells(line)) == 4

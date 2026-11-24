@@ -373,15 +373,15 @@ def review_level_gate(classification: Classification) -> tuple[bool, dict[str, o
 
 def check_pilares_views(motor_root: Path) -> tuple[int, list[str]]:
     """Comprueba que las vistas del canon de pilares estan frescas antes de integrar (WOT-2026-219b)."""
-    views_dir = motor_root / "prompts" / "vuelo_pilares_views"
-    if not views_dir.exists():
+    canon_path = motor_root / ".agent" / "rules" / "common" / "vuelo_pilares.md"
+    if not canon_path.exists():
         return 0, []
     try:
         from scripts.flight.check_pilares_views_fresh import verify_views_fresh
 
         if not verify_views_fresh(project_root=motor_root):
             return 1, [
-                "FAIL vistas de pilares no frescas en motor. "
+                "FAIL vistas de pilares no frescas o ausentes en motor. "
                 "Ejecuta `python scripts/flight/check_pilares_views_fresh.py --generate` antes de integrar."
             ]
         return 0, []
