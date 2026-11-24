@@ -217,6 +217,17 @@ repos:
         files: '^(prompts/.*\.md|\.claude/rules/.*\.md|\.agent/rules/common/.*\.md|AGENTS\.md|CLAUDE\.md)$'
         stages: [pre-commit]
 
+      # WOT-2026-231a: modo obligatorio (--mandatory). Exige recibo
+      # PRIMARY_SOURCE_CHECK valido con resolucion de universo medido y citas
+      # para artefactos de colaboracion y admision de fuentes primarias.
+      - id: check-primary-source-mandatory
+        name: check primary source mandatory receipt (PRIMARY_SOURCE_CHECK obligatorio)
+        entry: uv run python scripts/check_process_decision_search.py --mandatory
+        language: system
+        pass_filenames: true
+        files: '^(\.agent/collaboration/PRIMARY_SOURCE_.*\.md|\.agent/runtime/admission/.*_RECIBO_FP\.md)$'
+        stages: [pre-commit]
+
       - id: validate-agent-config
         name: validate agent config (agents.json, allowlist/denylist, skill triggers)
         entry: uv run python scripts/validate_agent_config.py
