@@ -811,6 +811,30 @@ m(
     "if (\n        not isinstance(destination, str)\n        or not destination\n        or not isinstance(accounts, list)\n    ):",
     "if False:",
 )
+m(
+    "IM1",
+    "2A",
+    "receipt_trigger = bool(ticket_candidates & integrated)",
+    "receipt_trigger = False",
+)
+m(
+    "IM2",
+    "2A",
+    "run_trigger = thread_state.get(thread_id, False)",
+    "run_trigger = False",
+)
+m(
+    "IM3",
+    "2A",
+    "if total_im > IM_TOPE:",
+    "if False:",
+)
+m(
+    "IM4",
+    "2A",
+    '"im-sin-asentar": lambda: check_im_sin_asentar(out, st),',
+    '"im-sin-asentar": lambda: [],',
+)
 
 
 def die(msg):
