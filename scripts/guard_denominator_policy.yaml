@@ -453,9 +453,9 @@ guards:
     skip_explicito: 'no'
     nota: --latido-file del llamador
   scripts/flight/check_pilares_views_fresh.py:
-    clase: external_targets
+    clase: no_denominator
     skip_explicito: 'no'
-    nota: verifica frescura de vistas y canon; project_root del llamador
+    nota: verifica correspondencia determinista entre canon fijo (.agent/rules/common/vuelo_pilares.md) y vistas/indices de prompts/vuelo_pilares_views/; no enumera conjunto variable ni publica N; ausente o desalineado => rc 1 fail-closed
   scripts/flight/check_quota_index_drift.py:
     clase: external_targets
     skip_explicito: 'no'
