@@ -41,6 +41,9 @@ HISTORIC_MAP_ONLY = {
     ("codex", "gpt-5.4-mini"),
     ("codex", "gpt-5.5"),
     ("codex", "gpt-6-astra"),
+    # WOT-2026-229e: t3_session antigravity (asignaciones.im.revisor), sin
+    # endpoint en el registro.
+    ("gemini", "gemini-3.8-flash-high"),
 }
 # Par con endpoint en el registro pero SIN clasificar: lab desconocido (stealth).
 REGISTRY_UNCLASSIFIED_PAIRS = {("openrouter_api", "stealth/space-bunny-alpha")}
