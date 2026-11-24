@@ -1688,7 +1688,11 @@ def _nan_sqlite_records(path, source):  # noqa: C901
             ).fetchone()[0]
             if total is None:
                 return [], [], "source-no-credits"
-            aggregate = {"credits": total, "__nan_aggregate__": True}
+            aggregate = {
+                "credits": total,
+                "credits_24h": total,
+                "__nan_aggregate__": True,
+            }
             for record in metadata:
                 raw_data = record.get("data")
                 try:
@@ -1744,44 +1748,64 @@ def _nan_sqlite_records(path, source):  # noqa: C901
                 )
                 agg_rows = connection.execute(agg_query, (start_ms, now_ms)).fetchall()
 
-                total_credits = 0.0
-                for model_raw, tin, tcache, tout in agg_rows:
-                    tin = tin or 0
-                    tcache = tcache or 0
-                    tout = tout or 0
-                    if tin + tcache + tout == 0:
-                        continue
-                    prov, mid = _nan_parse_model(model_raw)
-                    if (
-                        prov in meta_cfg["fuera_pool"]
-                        or any(
-                            mid.startswith(f"{fp}/") for fp in meta_cfg["fuera_pool"]
-                        )
-                        or mid.endswith("-free")
-                    ):
-                        continue
+                def _compute_rows_cost(rows):
+                    total = 0.0
+                    for model_raw, tin, tcache, tout in rows:
+                        tin = tin or 0
+                        tcache = tcache or 0
+                        tout = tout or 0
+                        if tin + tcache + tout == 0:
+                            continue
+                        prov, mid = _nan_parse_model(model_raw)
+                        if (
+                            prov in meta_cfg["fuera_pool"]
+                            or any(
+                                mid.startswith(f"{fp}/")
+                                for fp in meta_cfg["fuera_pool"]
+                            )
+                            or mid.endswith("-free")
+                        ):
+                            continue
 
-                    canon = (
-                        f"nan/{mid}"
-                        if prov in ("", "nan", "nan_api") and not mid.startswith("nan/")
-                        else (f"{prov}/{mid}" if prov else mid)
-                    )
-                    if (
-                        canon in meta_cfg["gratuitos"]
-                        or mid in meta_cfg["gratuitos"]
-                        or f"nan/{mid}" in meta_cfg["gratuitos"]
-                    ):
-                        cost = 0.0
-                    elif canon in pricing_map:
-                        rt = pricing_map[canon]
-                        cost = (tin * rt[0] + tcache * rt[1] + tout * rt[2]) / 1000000.0
-                    elif mid in pricing_map:
-                        rt = pricing_map[mid]
-                        cost = (tin * rt[0] + tcache * rt[1] + tout * rt[2]) / 1000000.0
-                    else:
-                        unknown_label = canon or str(model_raw)
-                        return [], schema, f"modelo-no-tarifado:{unknown_label}"
-                    total_credits += cost
+                        canon = (
+                            f"nan/{mid}"
+                            if prov in ("", "nan", "nan_api")
+                            and not mid.startswith("nan/")
+                            else (f"{prov}/{mid}" if prov else mid)
+                        )
+                        if (
+                            canon in meta_cfg["gratuitos"]
+                            or mid in meta_cfg["gratuitos"]
+                            or f"nan/{mid}" in meta_cfg["gratuitos"]
+                        ):
+                            cost = 0.0
+                        elif canon in pricing_map:
+                            rt = pricing_map[canon]
+                            cost = (
+                                tin * rt[0] + tcache * rt[1] + tout * rt[2]
+                            ) / 1000000.0
+                        elif mid in pricing_map:
+                            rt = pricing_map[mid]
+                            cost = (
+                                tin * rt[0] + tcache * rt[1] + tout * rt[2]
+                            ) / 1000000.0
+                        else:
+                            unknown_label = canon or str(model_raw)
+                            return None, f"modelo-no-tarifado:{unknown_label}"
+                        total += cost
+                    return total, None
+
+                total_credits, err = _compute_rows_cost(agg_rows)
+                if err is not None:
+                    return [], schema, err
+
+                since_24h_ms = now_ms - 24 * 60 * 60 * 1000
+                agg_24h_rows = connection.execute(
+                    agg_query, (since_24h_ms, now_ms)
+                ).fetchall()
+                total_credits_24h, _ = _compute_rows_cost(agg_24h_rows)
+                if total_credits_24h is None:
+                    total_credits_24h = total_credits
 
                 selected = ",".join(f'"{col}"' for col in columns)
                 metadata_query = (
@@ -1793,7 +1817,11 @@ def _nan_sqlite_records(path, source):  # noqa: C901
                     metadata_query, (start_ms, now_ms)
                 ).fetchall()
                 metadata = [dict(zip(columns, row, strict=True)) for row in meta_rows]
-                aggregate = {"credits": total_credits, "__nan_aggregate__": True}
+                aggregate = {
+                    "credits": total_credits,
+                    "credits_24h": total_credits_24h,
+                    "__nan_aggregate__": True,
+                }
                 for record in metadata:
                     raw_data = record.get("metadata") or record.get("data")
                     try:
@@ -2204,7 +2232,15 @@ def check_nan_budget(out, st):
     st[NAN_UNKNOWN_KEY] = 0
     if explicit_rate is not None:
         explicit_rate /= 24.0
-    rate = explicit_rate if explicit_rate is not None else used / 24.0
+    used_24h_candidates = [
+        float(record["credits_24h"])
+        for record in records
+        if isinstance(record, dict)
+        and "credits_24h" in record
+        and isinstance(record["credits_24h"], (int, float))
+    ]
+    used_24h = sum(used_24h_candidates) if used_24h_candidates else used
+    rate = explicit_rate if explicit_rate is not None else used_24h / 24.0
     now = dt.datetime.fromtimestamp(time.time(), tz=dt.timezone.utc)
     projection = _nan_projection(used, rate, now)
     out.update(

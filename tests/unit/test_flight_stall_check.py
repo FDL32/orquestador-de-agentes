@@ -4919,3 +4919,49 @@ def test_nan_mutation_modelo_desconocido_no_cero(box, monkeypatch, tmp_path):
     result = box.tick("--test-detector", "presupuesto-nan")
     assert '"nan_status": "UNKNOWN"' in result.out
     assert '"nan_used"' not in result.out
+
+
+def test_nan_m08_ritmo_24h_separado_del_periodo(box, monkeypatch, tmp_path):
+    """230b m-08: ritmo 24h usa solo tokens de las ultimas 24h, no el acumulado del periodo."""
+    now_ms = int(box.clock.now * 1000)
+    day_ms = 24 * 60 * 60 * 1000
+    source = tmp_path / "opencode.db"
+    _nan_sqlite_session_db(
+        source,
+        [
+            {
+                "time_created": now_ms - 3 * day_ms,
+                "model": json.dumps({"id": "qwen3.8-max", "providerID": "nan"}),
+                "tokens_input": 50_000_000,
+                "tokens_output": 0,
+                "metadata": json.dumps({"nivel": "alto"}),
+            },
+            {
+                "time_created": now_ms - 1000 * 3600,
+                "model": json.dumps({"id": "qwen3.8-max", "providerID": "nan"}),
+                "tokens_input": 240_000,
+                "tokens_output": 0,
+                "metadata": json.dumps({"nivel": "alto"}),
+            },
+        ],
+    )
+    kilo = tmp_path / "kilo.json"
+    _nan_source(kilo, [])
+    _enable_nan_sources(box, monkeypatch, source, kilo)
+
+    result = box.tick("--test-detector", "presupuesto-nan")
+
+    assert '"nan_status": "MEASURED"' in result.out
+    assert '"nan_used": 5024' in result.out
+    assert '"ritmo_observado_24h": 24' in result.out
+    import re
+
+    match = re.search(r"resumen:\s*(\{.*\})", result.out)
+    assert match is not None
+    data = json.loads(match.group(1))
+    proj = data.get("nan_projection", {})
+    exhaustion_str = proj.get("agotamiento_proyectado")
+    assert exhaustion_str is not None
+    exhaustion_dt = dt.datetime.fromisoformat(exhaustion_str)
+    now_dt = dt.datetime.fromtimestamp(box.clock.now, tz=dt.timezone.utc)
+    assert exhaustion_dt > now_dt + dt.timedelta(hours=100)
