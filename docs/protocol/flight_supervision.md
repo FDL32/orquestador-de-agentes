@@ -158,8 +158,8 @@ ejecutable (ningun codigo ni prompt los lee de aqui).
 
 | Campo de la politica | Valor | Fuente |
 |---|---|---|
-| soft_freeze_block_pct | 92 | roster `quota.soft_freeze_block_pct` (umbral soft: ver P1) |
-| hard_stop_block_pct | 97 | roster `quota.hard_stop_block_pct` (umbral hard: ver P1 y "Precedencia ante discrepancia") |
+| soft_freeze_block_pct | 101 | roster `quota.soft_freeze_block_pct` (umbral soft: ver P1) |
+| hard_stop_block_pct | 101 | roster `quota.hard_stop_block_pct` (umbral hard: ver P1 y "Precedencia ante discrepancia") |
 | enter_when_block_pct_le | 60 | roster `quota.account_policy.enter_when_block_pct_le` (P3 IR) |
 | harbor_block_pct_max | 80 | roster `quota.account_policy.harbor_block_pct_max` (P3 IR y refugio valido del umbral hard) |
 | leave_when_block_pct_ge | 90 | roster `quota.account_policy.leave_when_block_pct_ge` (P2 VOLVER) |
