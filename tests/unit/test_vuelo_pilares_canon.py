@@ -320,6 +320,73 @@ def test_real_canon_rows_are_well_formed_and_portable() -> None:
     assert not any(token in portable_text for token in ("C:\\", "C:/Users", "/home/"))
 
 
+def test_m01_real_canon_has_38_rows_with_eight_columns() -> None:
+    """m-01: the canonical table has 38 data rows, each with eight columns."""
+    text = _real_canon_text()
+    raw_rows = [
+        line
+        for line in text.splitlines()
+        if line.startswith("| P") and not line.startswith("| Pilar")
+    ]
+    assert len(raw_rows) == 38
+    assert all(len(_row_cells(line)) == 8 for line in raw_rows)
+
+
+def test_m10_ratified_rows_have_nonempty_operational_ambito() -> None:
+    """m-10: all 35 RATIFICADA rows use only operational ambito tokens."""
+    _assert_operational_ambito(load_canon(_real_canon_text()))
+
+
+def test_m11_superseded_rows_have_exact_historic_ambito() -> None:
+    """m-11: P5, P14, and P16 are the only SUPERADA rows and are HISTORICO."""
+    _assert_historic_ambito(load_canon(_real_canon_text()))
+
+
+def test_m13_p9_and_p38_have_valid_sin_fichero_sources() -> None:
+    """m-13: P9 and P38 use the long-source form (b)."""
+    _assert_sin_fichero_sources(load_canon(_real_canon_text()))
+
+
+def test_mutation_m01_missing_trailing_pipe_fails_shape_contract() -> None:
+    """m-01 mutant: a seven-column row is rejected by the eight-column check."""
+    text = _real_canon_text()
+    row = next(line for line in text.splitlines() if line.startswith("| P1 |"))
+    mutated = mutate_once(text, row, row.replace(" | IM |", " |"))
+    mutated_row = next(
+        line for line in mutated.splitlines() if line.startswith("| P1 |")
+    )
+    with pytest.raises(AssertionError):
+        assert len(_row_cells(mutated_row)) == 8
+
+
+def test_mutation_m10_empty_ratified_ambito_fails_contract() -> None:
+    """m-10 mutant: removing a RATIFICADA scope is rejected."""
+    rows = list(_real_rows().values())
+    mutated = [dict(row) for row in rows]
+    mutated[0]["ambito"] = ""
+    with pytest.raises(AssertionError):
+        _assert_operational_ambito(mutated)
+
+
+def test_mutation_m11_nonhistoric_superada_ambito_fails_contract() -> None:
+    """m-11 mutant: changing a SUPERADA scope to an operational one is rejected."""
+    rows = list(_real_rows().values())
+    mutated = [dict(row) for row in rows]
+    next(row for row in mutated if row["pillar"] == "P5")["ambito"] = "G"
+    with pytest.raises(AssertionError):
+        _assert_historic_ambito(mutated)
+
+
+def test_mutation_m13_file_source_fails_sin_fichero_contract() -> None:
+    """m-13 mutant: replacing P9's form (b) source with a file fails."""
+    text = _real_canon_text()
+    mutated = mutate_once(
+        text, "sin_fichero: declarado en el paso 11 del LATIDO", "LATIDO.md"
+    )
+    with pytest.raises(AssertionError):
+        _assert_sin_fichero_sources(load_canon(mutated))
+
+
 def test_real_canon_has_no_embedded_cupo_figures() -> None:
     text = CANON_PATH.read_text(encoding="utf-8")
     assert_no_cupo_figures(text)
@@ -627,7 +694,75 @@ EXPECTED_CONFIRMED_PHRASES = {
     ),
 }
 
-P33_BASELINE_SHA256 = "3844bae4bcf188dad96cad1b4ada52abb93ab53c247376fab55fd8c9c1d708bd"
+P33_BASELINE_SHA256 = "ca4959ad008565ec8950cbdd0da65c372a8aa1be9d75d8805b9c4192dce47523"
+OPERATIVE_AMBITO = {"G", "CO", "IM", "TR"}
+SIN_FICHERO_SOURCE_RE = re.compile(r"^sin_fichero:\s+\S")
+
+
+def _row_cells(line: str) -> list[str]:
+    """Return normalized cells from one canonical Markdown row.
+
+    Before: ``line`` is one row from the canonical Markdown table.
+    During: remove the framing pipes and trim each cell.
+    After: return the cells exactly as they are counted by the table contract.
+    """
+    cells = [cell.strip() for cell in line.strip().split("|")]
+    if cells and cells[0] == "":
+        cells.pop(0)
+    if cells and cells[-1] == "":
+        cells.pop()
+    return cells
+
+
+def _real_canon_text() -> str:
+    """Read the production canon using its declared UTF-8 contract.
+
+    Before: the repository contains the versioned canonical index.
+    During: read that index without an implicit platform encoding.
+    After: return the complete text for shape and mutation checks.
+    """
+    return CANON_PATH.read_text(encoding="utf-8")
+
+
+def _assert_operational_ambito(rows: list[dict[str, str]]) -> None:
+    """Require every ratified row to carry valid operational scope tokens.
+
+    Before: ``rows`` are parsed rows from the canonical index.
+    During: verify the ratified count, non-empty scope, and token vocabulary.
+    After: return only when all ratified rows satisfy the DoD invariant.
+    """
+    ratified = [row for row in rows if row["state"] == "RATIFICADA"]
+    assert len(ratified) == 35
+    for row in ratified:
+        assert row["ambito"]
+        assert {
+            token.strip() for token in re.split(r"[,/]", row["ambito"])
+        } <= OPERATIVE_AMBITO
+
+
+def _assert_historic_ambito(rows: list[dict[str, str]]) -> None:
+    """Require the three superseded pillars to be marked historical.
+
+    Before: ``rows`` are parsed rows from the canonical index.
+    During: select superseded rows and compare both their identity and scope.
+    After: return only when P5, P14, and P16 are exactly historical.
+    """
+    superseded = [row for row in rows if row["state"] == "SUPERADA"]
+    assert len(superseded) == 3
+    assert {row["pillar"] for row in superseded} == {"P5", "P14", "P16"}
+    assert all(row["ambito"] == "HISTORICO" for row in superseded)
+
+
+def _assert_sin_fichero_sources(rows: list[dict[str, str]]) -> None:
+    """Require P9 and P38 to use the valid source form (b).
+
+    Before: ``rows`` are parsed rows from the canonical index.
+    During: validate the ``sin_fichero:`` prefix and its non-empty explanation.
+    After: return only when both source cells have the required form.
+    """
+    by_pillar = {row["pillar"]: row for row in rows}
+    for pillar in ("P9", "P38"):
+        assert SIN_FICHERO_SOURCE_RE.match(by_pillar[pillar]["source"])
 
 
 def _real_rows() -> dict[str, dict[str, str]]:
