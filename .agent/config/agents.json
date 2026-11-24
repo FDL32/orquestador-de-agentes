@@ -2815,12 +2815,12 @@
         "nivel_decidido_por": "WOT-2026-221b: decision de registro v2"
       },
       "BA255": {
-        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
-        "fecha": "2026-11-15",
+        "procedencia": "panel Nan 2026-11-24, messageId 88fe6b5c",
+        "fecha": "2026-11-24",
         "nivel_decidido_por": "decision del usuario 2026-11-21 (DISENO s.8: glm5.3 completo premium)",
         "precio_por_m_creditos": {
           "entrada_sin_cache": 49,
-          "cache": 1.05,
+          "cache": 9.1,
           "salida": 154
         }
       },
@@ -2915,12 +2915,12 @@
         }
       },
       "BA268": {
-        "procedencia": "medido 2026-11-15 (DISENO_NIVELES s.0: regresion de coste por mensaje)",
-        "fecha": "2026-11-15",
+        "procedencia": "panel Nan 2026-11-24, messageId 88fe6b5c",
+        "fecha": "2026-11-24",
         "nivel_decidido_por": "decision del usuario 2026-11-21 (DISENO s.8: glm5.3 completo premium)",
         "precio_por_m_creditos": {
           "entrada_sin_cache": 49,
-          "cache": 1.05,
+          "cache": 9.1,
           "salida": 154
         }
       },
@@ -2928,6 +2928,46 @@
         "procedencia": "registro v2; informativo",
         "fecha": "2026-11-22",
         "nivel_decidido_por": "decision explicita de version del usuario 2026-11-22"
+      },
+      "BA27": {
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 66.0,
+          "cache": 2.2,
+          "salida": 198.0
+        },
+        "procedencia": "panel Nan 2026-11-24, messageId 88fe6b5c",
+        "fecha": "2026-11-24",
+        "nivel_decidido_por": "panel Nan 2026-11-24, messageId 88fe6b5c"
+      },
+      "BA28": {
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 41.7,
+          "cache": 2.1,
+          "salida": 125.05
+        },
+        "procedencia": "panel Nan 2026-11-24, messageId 88fe6b5c",
+        "fecha": "2026-11-24",
+        "nivel_decidido_por": "panel Nan 2026-11-24, messageId 88fe6b5c"
+      },
+      "BA29": {
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 100.0,
+          "cache": 12.5,
+          "salida": 300.0
+        },
+        "procedencia": "panel Nan 2026-11-24, messageId 88fe6b5c",
+        "fecha": "2026-11-24",
+        "nivel_decidido_por": "panel Nan 2026-11-24, messageId 88fe6b5c"
+      },
+      "BA32": {
+        "precio_por_m_creditos": {
+          "entrada_sin_cache": 100.0,
+          "cache": 10.0,
+          "salida": 500.0
+        },
+        "procedencia": "panel Nan 2026-11-24, messageId 88fe6b5c",
+        "fecha": "2026-11-24",
+        "nivel_decidido_por": "panel Nan 2026-11-24, messageId 88fe6b5c"
       }
     },
     "roles": {
@@ -2968,6 +3008,21 @@
         "nivel": "alto",
         "esfuerzo": "alto"
       }
+    },
+    "presupuesto_nan": {
+      "periodo": {
+        "dia_reinicio": 7,
+        "hora_reinicio_utc": "18:31:00"
+      },
+      "modelos_gratuitos_declarados": [
+        "nan/qwen3.6",
+        "nan/gemma4"
+      ],
+      "proveedores_fuera_del_pool": [
+        "opencode",
+        "opencode-go"
+      ],
+      "procedencia": "panel Nan 2026-11-24, messageId 88fe6b5c"
     }
   },
   "ensemble_private_roots": [],
