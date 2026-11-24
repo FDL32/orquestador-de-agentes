@@ -60,6 +60,7 @@ RC_LOCK = 5
 RC_LOCK_RELEASE = 6
 CUTOFF_DATE = "2026-11-10"  # espejo de check_cell_conformance.CUTOFF_DATE
 _CELL_CHECKER = None
+_ASSIGNMENT_RESOLVER = None
 LOCK_ATTEMPTS = 20
 LOCK_DELAY_S = 0.05
 MUTABLE_FIELDS = (
@@ -108,6 +109,27 @@ def _load_cell_checker():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     _CELL_CHECKER = module
+    return module
+
+
+def _load_assignment_resolver():
+    """Carga el resolvedor productivo de asignaciones.
+
+    Before: el modulo vecino contiene la declaracion y sus invariantes.
+    During: importa ese modulo por ruta y conserva una unica instancia.
+    After: devuelve el API de resolucion o eleva ``RuntimeError``.
+    """
+    global _ASSIGNMENT_RESOLVER
+    if _ASSIGNMENT_RESOLVER is not None:
+        return _ASSIGNMENT_RESOLVER
+    path = Path(__file__).resolve().with_name("resolver_asignacion.py")
+    spec = importlib.util.spec_from_file_location("resolver_asignacion", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"no se pudo cargar {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    _ASSIGNMENT_RESOLVER = module
     return module
 
 
@@ -517,6 +539,41 @@ def _session_for_alta(args, data):  # noqa: C901
             if field == "celda":
                 value = _parse_json_field(value, field, dict)
             item[field] = value
+    celda_de = getattr(args, "celda_de", None)
+    if celda_de is not None and args.celda is not None:
+        raise RegistryError(
+            "--celda y --celda-de son mutuamente excluyentes", RC_INVALID
+        )
+    if celda_de is not None:
+        agents_json = getattr(args, "agents_json", None)
+        order_id = getattr(args, "orden_message_id", None)
+        motivo = getattr(args, "motivo", None)
+        builder_thread = getattr(args, "builder_thread_id", None)
+        resolver = _load_assignment_resolver()
+        agents_json = agents_json or resolver.DEFAULT_AGENTS_JSON
+        if not resolver.UUID_RE.fullmatch(order_id or ""):
+            raise RegistryError(
+                "--orden-message-id debe ser un UUID valido", RC_INVALID
+            )
+        if celda_de != "im" and builder_thread is not None:
+            raise RegistryError(
+                "--builder-thread-id solo se admite con --celda-de im", RC_INVALID
+            )
+        if not isinstance(motivo, str) or not motivo.strip():
+            raise RegistryError(
+                "--celda-de exige --orden-message-id y --motivo",
+                RC_INVALID,
+            )
+        try:
+            item["celda"], item["celda_asignacion"] = _hashed_cell(
+                agents_json, celda_de, order_id, motivo, builder_thread
+            )
+        except (OSError, ValueError, KeyError, TypeError, RuntimeError) as exc:
+            raise RegistryError(
+                f"no se pudo resolver --celda-de: {exc}", RC_INVALID
+            ) from exc
+    elif args.celda is not None:
+        print("registry_ops: DEPRECADO --celda", file=sys.stderr)
     quota_gate_rc = getattr(args, "quota_gate_rc", None)
     quota_gate_waiver = getattr(args, "quota_gate_waiver", None)
     if quota_gate_waiver is not None:
@@ -589,7 +646,7 @@ def _validate_cell_requirements(item, *, require_cell=False):
         cell = item.get("celda")
         if not isinstance(cell, dict) or not cell:
             raise RegistryError("alta de IM/TR exige celda", RC_INVALID)
-        if item.get("role") == "triaje":
+        if item.get("role") == "triaje" and "celda_asignacion" not in item:
             checker = _load_cell_checker()
             triador = cell.get("triador")
             revisor = cell.get("revisor")
@@ -628,6 +685,73 @@ def _validate_cell_requirements(item, *, require_cell=False):
             or any(not _has_veredicto(lens) for lens in lenses)
         ):
             raise RegistryError("ASENTADA exige dos veredictos de lentes", RC_INVALID)
+
+
+def _hashed_cell(agents_json, kind, order_id, reason, builder_thread=None):
+    """Deriva una celda y su recibo desde ``asignaciones``.
+
+    Before: ``agents_json`` es una declaracion validada y ``kind`` es IM o TR.
+    During: resuelve los puestos sin consultar ``celdas`` y congela parametros.
+    After: devuelve la celda materializada y el recibo hashado de la resolucion.
+    """
+    resolver = _load_assignment_resolver()
+    document, assignments = resolver.load_declaration(agents_json)
+    backend_keys = document["ensemble_registry"]["backend_keys"]
+    posts = {
+        "im": ("im.builder", "im.revisor", "im.v1"),
+        "tr": ("tr.triador", "tr.revisor"),
+    }[kind]
+    resolved = [resolver.resolve(assignments, post, backend_keys) for post in posts]
+
+    def label(result):
+        info = result["info"]
+        return f"{info['familia']} {info['model']}"
+
+    resolution = {
+        post: {
+            "familia": result["info"]["familia"],
+            "model": result["info"]["model"],
+            "nivel": result["nivel_puesto"],
+            "esfuerzo": result["info"]["esfuerzo"],
+            "lanzamiento": result["info"]["lanzamiento"],
+            "orden": result["orden"],
+        }
+        for post, result in zip(posts, resolved, strict=True)
+    }
+    if kind == "im":
+        legacy = document["celdas"]["im"]
+        revisor = resolved[1]
+        nivel = revisor["nivel_puesto"]
+        esfuerzo = resolver.normalize_effort(revisor["info"]["esfuerzo"])
+        builder = {"name": label(resolved[0])}
+        if builder_thread is not None:
+            builder["threadId"] = builder_thread
+        cell = {
+            "builder": builder,
+            "revisor": label(resolved[1]),
+            "v1": label(resolved[2]),
+            "nivel": nivel,
+            "esfuerzo": esfuerzo,
+            "cuenta": legacy["cuenta"],
+            "fase": legacy["fase_aplicable"],
+        }
+        parameters = {
+            "nivel": nivel,
+            "esfuerzo": esfuerzo,
+            "cuenta": legacy["cuenta"],
+            "fase": legacy["fase_aplicable"],
+        }
+    else:
+        legacy = document["celdas"]["tr"]
+        cell = {"triador": label(resolved[0]), "revisor": label(resolved[1])}
+        parameters = {}
+    receipt = {
+        "hash": resolver.short_hash(assignments),
+        "resolucion": {"puestos": resolution, "parametros": parameters},
+        "orden": {"messageId": order_id},
+        "motivo": reason,
+    }
+    return cell, receipt
 
 
 def _handle_alta(args):
@@ -1013,6 +1137,11 @@ def _parser():
     alta.add_argument("--thread-id", dest="thread_id", required=True)
     alta.add_argument("--started", required=True)
     alta.add_argument("--status", required=True)
+    alta.add_argument("--agents-json", dest="agents_json", default=None)
+    alta.add_argument("--celda-de", choices=("im", "tr"), default=None)
+    alta.add_argument("--orden-message-id", dest="orden_message_id", default=None)
+    alta.add_argument("--motivo", default=None)
+    alta.add_argument("--builder-thread-id", dest="builder_thread_id", default=None)
     alta.add_argument(
         "--quota-gate-rc",
         dest="quota_gate_rc",

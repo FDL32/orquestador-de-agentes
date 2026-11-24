@@ -1,6 +1,7 @@
 """Pruebas hermeticas del comprobador de celdas WOT-2026-161l."""
 
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -98,6 +99,15 @@ def _run_new(registry, store, agents, flag):
             flag,
         ]
     )
+
+
+def _load_checker_from(path, name):
+    """Carga una copia del checker para verificar mutaciones sin tocar el modulo real."""
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 @pytest.fixture
@@ -1484,3 +1494,270 @@ def test_contract_error_is_explicit_registry_error():
     with pytest.raises(registry_ops.RegistryError) as caught:
         registry_ops._parse_json_field("{", "celda", dict)
     assert caught.value.code == registry_ops.RC_INVALID
+
+
+def _r3_hashed_session(tmp_path, kind, agents):
+    """Produce una sesion hashada mediante el CLI productivo de altas."""
+    from scripts.flight import registry_ops
+
+    registry = tmp_path / f"{kind}-registry.json"
+    roster = tmp_path / f"{kind}-roster.json"
+    _write_registry(registry, [])
+    roster.write_text(
+        json.dumps({"active_roles": {"orquestador": {"estado": "ACTIVO"}}}),
+        encoding="utf-8",
+    )
+    args = [
+        "alta",
+        "--registry",
+        str(registry),
+        "--roster",
+        str(roster),
+        "--agents-json",
+        str(agents),
+        "--code",
+        f"R3-{kind}",
+        "--role",
+        "implantacion" if kind == "im" else "triaje",
+        "--slot",
+        kind,
+        "--thread-id",
+        f"thread-{kind}",
+        "--started",
+        "2026-11-24T10:00:00+01:00",
+        "--status",
+        "ACTIVA",
+        "--by",
+        "test",
+        "--reason",
+        "r3",
+        "--orden-message-id",
+        "9c01c011-e0c0-414e-87a7-df5b5c02f32c",
+        "--motivo",
+        "alta r3",
+        "--celda-de",
+        kind,
+        "--apply",
+    ]
+    assert registry_ops.main(args) == 0
+    return registry, json.loads(registry.read_text(encoding="utf-8"))["sessions"][0]
+
+
+def test_m05_hashed_and_legacy_sessions_are_measured_from_frozen_resolution(tmp_path):
+    """Before: altas hashadas y legacy comparten el checker. During: mide IM/TR. After: vigente, vieja y legacy pasan."""
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    for kind in ("im", "tr"):
+        registry, current = _r3_hashed_session(tmp_path, kind, agents)
+        assert (
+            _run_new(registry, tmp_path / "store.sqlite", agents, f"--check-{kind}")
+            == 0
+        )
+        old_agents = tmp_path / f"{kind}-old.json"
+        old_agents.write_bytes(agents.read_bytes())
+        changed = json.loads(old_agents.read_text(encoding="utf-8"))
+        changed["asignaciones"]["im.revisor"]["candidatos"][0]["model"] = (
+            "gemini-old-declaration"
+        )
+        old_agents.write_text(json.dumps(changed), encoding="utf-8")
+        old_registry = tmp_path / f"{kind}-old-registry.json"
+        _write_registry(old_registry, [current])
+        assert (
+            _run_new(
+                old_registry,
+                tmp_path / "store-old.sqlite",
+                old_agents,
+                f"--check-{kind}",
+            )
+            == 0
+        )
+        legacy_registry = tmp_path / f"{kind}-legacy-registry.json"
+        legacy = _session(
+            f"legacy-{kind}",
+            role="implantacion" if kind == "im" else "triaje",
+            started="2026-11-23T10:00:00+01:00",
+            celda=_cell()
+            if kind == "im"
+            else {"triador": "nan/gemma4", "revisor": "mimo-v2.6-flash"},
+        )
+        post_cutoff = _session(
+            f"legacy-new-{kind}",
+            role=legacy["role"],
+            started="2026-11-24T10:00:00+01:00",
+            celda=legacy["celda"],
+        )
+        _write_registry(legacy_registry, [legacy, post_cutoff])
+        assert (
+            _run_new(
+                legacy_registry,
+                tmp_path / f"store-legacy-{kind}.sqlite",
+                agents,
+                f"--check-{kind}",
+            )
+            == 0
+        )
+
+
+def test_m05_hashed_negative_cases_fail_closed(tmp_path):
+    """Before: el recibo protege la alta. During: muta celda, fuente y recibo. After: cada dano devuelve violacion."""
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    registry, session = _r3_hashed_session(tmp_path, "im", agents)
+    cases = []
+    broken_cell = json.loads(json.dumps(session))
+    broken_cell["celda"]["v1"] = "otro"
+    cases.append(broken_cell)
+    malformed = json.loads(json.dumps(session))
+    malformed["celda_asignacion"].pop("resolucion")
+    cases.append(malformed)
+    changed_resolution = json.loads(json.dumps(session))
+    changed_resolution["celda_asignacion"]["resolucion"]["puestos"]["im.revisor"][
+        "model"
+    ] = "otro"
+    cases.append(changed_resolution)
+    unreadable = tmp_path / "unreadable.json"
+    unreadable.write_text("no es json", encoding="utf-8")
+    for index, candidate in enumerate(cases):
+        candidate_registry = tmp_path / f"broken-{index}.json"
+        _write_registry(candidate_registry, [candidate])
+        assert (
+            _run_new(
+                candidate_registry,
+                tmp_path / f"broken-{index}.sqlite",
+                agents,
+                "--check-im",
+            )
+            == 2
+        )
+    assert (
+        _run_new(registry, tmp_path / "unreadable.sqlite", unreadable, "--check-im")
+        == 2
+    )
+
+
+def test_m05_hashed_tr_negative_cases_fail_closed(tmp_path):
+    """Before: TR tambien conserva un recibo hashado. During: corrompe celda y recibo. After: el modo TR falla cerrado."""
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    _registry, session = _r3_hashed_session(tmp_path, "tr", agents)
+    broken_cell = json.loads(json.dumps(session))
+    broken_cell["celda"]["revisor"] = "otro"
+    malformed = json.loads(json.dumps(session))
+    malformed["celda_asignacion"].pop("hash")
+    for index, candidate in enumerate((broken_cell, malformed)):
+        candidate_registry = tmp_path / f"broken-tr-{index}.json"
+        _write_registry(candidate_registry, [candidate])
+        assert (
+            _run_new(
+                candidate_registry,
+                tmp_path / f"broken-tr-{index}.sqlite",
+                agents,
+                "--check-tr",
+            )
+            == 2
+        )
+
+
+def test_mutation_compare_against_current_hash_breaks_old_session(tmp_path):
+    """Before: el control real usa el hash guardado. During: muta copia a exigir hash actual. After: el mutante rechaza la sesion vieja."""
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    registry, _session_value = _r3_hashed_session(tmp_path, "im", agents)
+    changed = json.loads(agents.read_text(encoding="utf-8"))
+    changed["asignaciones"]["im.revisor"]["candidatos"][0]["model"] = "mutated-model"
+    agents.write_text(json.dumps(changed), encoding="utf-8")
+    assert _run_new(registry, tmp_path / "real.sqlite", agents, "--check-im") == 0
+    source = Path(checker.__file__).read_text(encoding="utf-8")
+    needle = 'if current_hash == receipt["hash"]:'
+    assert source.count(needle) == 1
+    mutant_path = tmp_path / "check_mutant.py"
+    mutant_path.write_text(source.replace(needle, "if True:"), encoding="utf-8")
+    spec = __import__("importlib.util").util.spec_from_file_location(
+        "checker_mutant", mutant_path
+    )
+    mutant = __import__("importlib.util").util.module_from_spec(spec)
+    spec.loader.exec_module(mutant)
+    assert (
+        mutant.main(
+            ["--registry", str(registry), "--agents-json", str(agents), "--check-im"]
+        )
+        == 2
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("orden.messageId", "no-es-uuid"),
+        ("orden.messageId", ""),
+        ("orden.messageId", 7),
+        ("orden.messageId", None),
+        ("hash", "abc"),
+        ("hash", "G" * 16),
+        ("motivo", ""),
+        ("motivo", "   "),
+    ],
+    ids=[
+        "orden-texto",
+        "orden-vacio",
+        "orden-int",
+        "orden-null",
+        "hash-corto",
+        "hash-no-hex",
+        "motivo-vacio",
+        "motivo-espacios",
+    ],
+)
+def test_hashed_receipt_fields_fail_closed_for_im_and_main(tmp_path, field, value):
+    """Before: el recibo hashado puede venir corrupto. During: altera un campo. After: check_im y CLI devuelven rc 2."""
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    _registry, session = _r3_hashed_session(tmp_path, "im", agents)
+    candidate = json.loads(json.dumps(session))
+    if field == "orden.messageId":
+        candidate["celda_asignacion"]["orden"]["messageId"] = value
+    else:
+        candidate["celda_asignacion"][field] = value
+    assert checker.check_im([candidate], "2026-11-24", agents_json=agents) == 2
+    registry = tmp_path / f"invalid-{field.replace('.', '-')}-{value!s}.json"
+    _write_registry(registry, [candidate])
+    assert (
+        _run_new(registry, tmp_path / f"store-{value!s}.sqlite", agents, "--check-im")
+        == 2
+    )
+
+
+def test_hashed_receipt_valid_order_hash_and_reason_remains_conformant(tmp_path):
+    """Before: una alta productiva contiene recibo valido. During: mide directo y por CLI. After: ambos devuelven rc 0."""
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    registry, session = _r3_hashed_session(tmp_path, "im", agents)
+    assert checker.check_im([session], "2026-11-24", agents_json=agents) == 0
+    assert _run_new(registry, tmp_path / "valid.sqlite", agents, "--check-im") == 0
+
+
+def test_mutation_receipt_orden_not_validated_accepts_non_uuid(tmp_path):
+    """Before: el checker real rechaza orden no UUID. During: copia sin esa validacion. After: el mutante acepta y el real rechaza."""
+    agents = tmp_path / "agents.json"
+    _write_agents(agents)
+    _registry, session = _r3_hashed_session(tmp_path, "im", agents)
+    candidate = json.loads(json.dumps(session))
+    candidate["celda_asignacion"]["orden"]["messageId"] = "no-es-uuid"
+    registry = tmp_path / "mutation-registry.json"
+    _write_registry(registry, [candidate])
+    assert _run_new(registry, tmp_path / "real.sqlite", agents, "--check-im") == 2
+    source = Path(checker.__file__).read_text(encoding="utf-8")
+    needle = (
+        "if not isinstance(order_id, str) or not resolver.UUID_RE.fullmatch(order_id):"
+    )
+    assert source.count(needle) == 1
+    mutant_path = tmp_path / "checker_order_mutant.py"
+    mutant_path.write_text(source.replace(needle, "if False:"), encoding="utf-8")
+    (tmp_path / "resolver_asignacion.py").write_text(
+        Path(checker.__file__)
+        .with_name("resolver_asignacion.py")
+        .read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    mutant = _load_checker_from(mutant_path, "checker_order_mutant")
+    assert mutant.check_im([candidate], "2026-11-24", agents_json=agents) == 0

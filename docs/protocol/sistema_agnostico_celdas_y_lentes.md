@@ -38,6 +38,28 @@ Residual explícito: coexisten `role_models.REVISOR` /
 y congelado por d-08, y `celdas.im.revisor = claude-sonnet-5`, aplicable a los
 siguientes despachos. La convergencia queda diferida a un ticket posterior.
 
+`celdas` es SOLO LEGACY para sesiones IM/TR dadas de alta SIN hash; `CELLS_CUTOFF` es la fecha de esa rama. Un cambio de lente, de modelo o de celda NO se hace en `celdas` sino en `asignaciones.<puesto>` + `render_asignaciones.py --apply`; `asignaciones` rige para las altas con hash.
+
+<!-- ASIGNACIONES:BEGIN sha=185377163b98eae4 -->
+**Asignaciones del vuelo**:
+refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
+- co [alto]: claude:claudeAgent/claude-sonnet-5-5
+- co_subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
+- supervisora [alto]: claude:claudeAgent/claude-sonnet-5-5 PENDIENTE
+- im.builder [alto]: codex gpt-5.6-luna
+- im.revisor [medio]: gemini:antigravity/gemini-3.8-flash-high
+- im.v1 [medio]: codex gpt-5.6-luna
+- im.subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
+- tr.triador [base]: gemma nan/gemma4
+- tr.revisor [medio]: codex gpt-5.6-luna
+- tr.subagentes [base]: gemma nan/gemma4 PENDIENTE > qwen nan/qwen3.6 PENDIENTE
+- lentes_p34 [medio]: codex gpt-5.6-luna > claude claude-sonnet-5 > mimo nan/mimo-v2.6-flash > deepseek nan/deepseek-v4-flash > qwen nan/qwen3.6 PENDIENTE > gemma nan/gemma4 PENDIENTE > mistral mistral-large-2512 PENDIENTE > codestral codestral-2508 PENDIENTE > qwen nan/qwen3.6 PENDIENTE > gemma nan/gemma4 PENDIENTE
+- lente_de_cierre [medio]: claude claude-sonnet-5 PENDIENTE
+- bucle_retro [medio]: codex gpt-5.6-luna PENDIENTE
+cambio: pega messageId; edita asignaciones.<puesto>.candidatos; ejecuta render_asignaciones.py --apply.
+no derivados: role_models.REVISOR, role_models.MANAGER, role_assignments.MANAGER, role_assignments.SUPERVISOR
+<!-- ASIGNACIONES:END -->
+
 ## 2. Diseno (3 declaraciones + 1 resolvedor; sin tocar el despachador)
 D1 CELDAS (im_cells en la config): cada celda = lista de SLOTS con selector, no con modelos. Ejemplo: celda IM_BILENTE = slot reviewer (backend opencode, family no claude, cuenta X) + slot builder_child (backend codex, cuenta Y, via delegate_task). Cambiar de modelo = editar el selector o su lista de preferencia con fallback; ARRANQUE, latido y briefs citan solo el NOMBRE de la celda.
 D2 PANELES (lens_panels): cada panel = lista de slots con selector por atributos del registro (channel agent o api, fs si/no, family, lab, tier, cuenta) y cantidad. Ejemplo: PANEL_TICKET = 1 lente fs de familia distinta a la del builder + 1 lente solo texto de otra familia + 1 lente de otro lab. Cambiar de lentes = editar el panel o pasar --panel otro.

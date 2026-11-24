@@ -465,7 +465,107 @@ def _builder_name(builder):
     return ""
 
 
-def check_im(sessions, cutoff, declaration=None):
+def _load_assignment_resolver():
+    """Carga el resolvedor de asignaciones vecino sin depender del cwd."""
+    path = Path(__file__).resolve().with_name("resolver_asignacion.py")
+    spec = importlib.util.spec_from_file_location("resolver_asignacion", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"no se pudo cargar {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _hashed_session_conforms(session, kind, agents_json):  # noqa: C901
+    """Valida una sesion hashada contra su recibo, no contra celdas actuales."""
+    receipt = session.get("celda_asignacion")
+    if not isinstance(receipt, dict):
+        return False
+    resolution = receipt.get("resolucion")
+    receipt_hash = receipt.get("hash")
+    motivo = receipt.get("motivo")
+    orden = receipt.get("orden")
+    if not isinstance(receipt_hash, str) or not re.fullmatch(
+        r"[0-9a-f]{16}", receipt_hash
+    ):
+        return False
+    if not isinstance(motivo, str) or not motivo.strip():
+        return False
+    if not isinstance(orden, dict):
+        return False
+    order_id = orden.get("messageId")
+    try:
+        resolver = _load_assignment_resolver()
+    except (OSError, ImportError, RuntimeError):
+        return False
+    if not isinstance(order_id, str) or not resolver.UUID_RE.fullmatch(order_id):
+        return False
+    if not isinstance(resolution, dict):
+        return False
+    posts = (
+        ("im.builder", "im.revisor", "im.v1")
+        if kind == "im"
+        else ("tr.triador", "tr.revisor")
+    )
+    stored = resolution.get("puestos")
+    if not isinstance(stored, dict) or set(stored) != set(posts):
+        return False
+    if any(
+        not isinstance(stored[post], dict)
+        or not all(
+            key in stored[post]
+            for key in ("familia", "model", "nivel", "esfuerzo", "lanzamiento", "orden")
+        )
+        for post in posts
+    ):
+        return False
+    cell = _cell(session) or {}
+    expected_labels = {
+        post: f"{stored[post]['familia']} {stored[post]['model']}" for post in posts
+    }
+    if kind == "im":
+        if _builder_name(cell.get("builder")) != expected_labels["im.builder"]:
+            return False
+        if (
+            cell.get("revisor") != expected_labels["im.revisor"]
+            or cell.get("v1") != expected_labels["im.v1"]
+        ):
+            return False
+        params = resolution.get("parametros")
+        if not isinstance(params, dict) or any(
+            cell.get(key) != params.get(key)
+            for key in ("nivel", "esfuerzo", "cuenta", "fase")
+        ):
+            return False
+    elif (
+        cell.get("triador") != expected_labels["tr.triador"]
+        or cell.get("revisor") != expected_labels["tr.revisor"]
+    ):
+        return False
+    try:
+        document, assignments = resolver.load_declaration(agents_json)
+        current_hash = resolver.short_hash(assignments)
+        if current_hash == receipt["hash"]:
+            backend_keys = document["ensemble_registry"]["backend_keys"]
+            for post in posts:
+                current = resolver.resolve(assignments, post, backend_keys)
+                info = current["info"]
+                expected = {
+                    "familia": info["familia"],
+                    "model": info["model"],
+                    "nivel": current["nivel_puesto"],
+                    "esfuerzo": info["esfuerzo"],
+                    "lanzamiento": info["lanzamiento"],
+                    "orden": current["orden"],
+                }
+                if stored[post] != expected:
+                    return False
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError):
+        return False
+    return True
+
+
+def check_im(sessions, cutoff, declaration=None, agents_json=None):
     """Comprueba IM legacy o los siete datos de la declaracion nueva.
 
     Before: ``sessions`` contiene IM medibles y ``declaration`` solo llega del
@@ -486,6 +586,12 @@ def check_im(sessions, cutoff, declaration=None):
         return RC_NOT_MEASURED
     resolved = _resolve_declaration(measured, "implantacion", declaration)
     for session in measured:
+        if "celda_asignacion" in session:
+            if not _hashed_session_conforms(
+                session, "im", agents_json or _default_agents_json_path()
+            ):
+                return RC_VIOLATION
+            continue
         cell = _cell(session)
         revisor, builder = (cell or {}).get("revisor"), (cell or {}).get("builder")
         builder_text = _builder_name(builder)
@@ -537,7 +643,7 @@ def check_im(sessions, cutoff, declaration=None):
     return RC_OK
 
 
-def check_tr(sessions, cutoff, declaration=None):
+def check_tr(sessions, cutoff, declaration=None, agents_json=None):
     """Comprueba TR legacy o los modelos de la declaracion nueva.
 
     Before: cada celda TR declara ``triador`` y ``revisor`` sin validar y el
@@ -557,6 +663,12 @@ def check_tr(sessions, cutoff, declaration=None):
         return RC_NOT_MEASURED
     resolved = _resolve_declaration(measured, "triaje", declaration)
     for session in measured:
+        if "celda_asignacion" in session:
+            if not _hashed_session_conforms(
+                session, "tr", agents_json or _default_agents_json_path()
+            ):
+                return RC_VIOLATION
+            continue
         cell = _cell(session) or {}
         triador = cell.get("triador")
         revisor = cell["revisor"] if "revisor" in cell else cell.get("supervisor")
@@ -883,9 +995,9 @@ def _run_mode(name, sessions, cutoff, store, agents_json):
         ):
             declaration = _load_cell_declaration(agents_json, (name,))
         if name == "im":
-            return check_im(sessions, cutoff, declaration)
+            return check_im(sessions, cutoff, declaration, agents_json)
         if name == "tr":
-            return check_tr(sessions, cutoff, declaration)
+            return check_tr(sessions, cutoff, declaration, agents_json)
         if name == "lenses":
             return check_lenses(sessions, cutoff)
         if name == "cutoff":

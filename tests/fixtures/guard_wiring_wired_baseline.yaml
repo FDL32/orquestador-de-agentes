@@ -67,3 +67,5 @@ wired_baseline:
     - .agent/agent_controller.py
     - scripts/closeout_steps/gates.py
     - scripts/preflight_codeonly_pipeline.py
+  render_asignaciones:
+    - scripts/prepush_check.py

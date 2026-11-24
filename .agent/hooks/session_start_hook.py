@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: ERA001
 """SessionStart hook: inyecta el indice de memoria al ABRIR sesion.
 
 WOT-2026-057b. Cierra la ultima deuda declarada de WOT-2026-057a.
@@ -434,7 +435,28 @@ def _health_line(root: Path) -> str:
 _LAYER_ROLES = ("orchestrator", "manager", "revisor", "builder")
 
 
-def _role_section(root: Path) -> str:
+# ASIGNACIONES:BEGIN sha=185377163b98eae4
+# **Asignaciones del vuelo**:
+# refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
+# - co [alto]: claude:claudeAgent/claude-sonnet-5-5
+# - co_subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
+# - supervisora [alto]: claude:claudeAgent/claude-sonnet-5-5 PENDIENTE
+# - im.builder [alto]: codex gpt-5.6-luna
+# - im.revisor [medio]: gemini:antigravity/gemini-3.8-flash-high
+# - im.v1 [medio]: codex gpt-5.6-luna
+# - im.subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
+# - tr.triador [base]: gemma nan/gemma4
+# - tr.revisor [medio]: codex gpt-5.6-luna
+# - tr.subagentes [base]: gemma nan/gemma4 PENDIENTE > qwen nan/qwen3.6 PENDIENTE
+# - lentes_p34 [medio]: codex gpt-5.6-luna > claude claude-sonnet-5 > mimo nan/mimo-v2.6-flash > deepseek nan/deepseek-v4-flash > qwen nan/qwen3.6 PENDIENTE > gemma nan/gemma4 PENDIENTE > mistral mistral-large-2512 PENDIENTE > codestral codestral-2508 PENDIENTE > qwen nan/qwen3.6 PENDIENTE > gemma nan/gemma4 PENDIENTE
+# - lente_de_cierre [medio]: claude claude-sonnet-5 PENDIENTE
+# - bucle_retro [medio]: codex gpt-5.6-luna PENDIENTE
+# cambio: pega messageId; edita asignaciones.<puesto>.candidatos; ejecuta render_asignaciones.py --apply.
+# no derivados: role_models.REVISOR, role_models.MANAGER, role_assignments.MANAGER, role_assignments.SUPERVISOR
+# ASIGNACIONES:END
+
+
+def _role_section(root: Path) -> str:  # noqa: C901
     """Backend/modelo por rol de capa, resuelto desde `agents.json`, o "".
 
     WOT-2026-098b. Hoy NADIE expone `role_mapping`/`role_models` al propio agente
@@ -472,6 +494,24 @@ def _role_section(root: Path) -> str:
         )
 
         config = load_agents_config(root)
+
+        assignments = config.get("asignaciones")
+        if isinstance(assignments, dict):
+            try:
+                render_path = motor / "scripts" / "flight" / "render_asignaciones.py"
+                render_spec = importlib.util.spec_from_file_location(
+                    "_render_asignaciones", render_path
+                )
+                if render_spec is None or render_spec.loader is None:
+                    raise ImportError(str(render_path))
+                render_module = importlib.util.module_from_spec(render_spec)
+                render_spec.loader.exec_module(render_module)
+                render_block = render_module.render_block
+                return render_block(
+                    assignments, config["ensemble_registry"]["backend_keys"]
+                )
+            except Exception:  # noqa: S110 - fail-open by contract
+                pass
 
         def _resolve_role(role: str) -> tuple[str, str | None] | None:
             """(backend, model) del rol, o ``None`` si no resuelve. Fail-open."""

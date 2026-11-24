@@ -100,14 +100,14 @@ def test_c03_new_nan_keys_are_not_eligible():
     assert not set(EXPECTED_NEW).intersection(eligible["backend_keys"])
 
 
-def test_c04_ba254_is_restricted_and_remains_eligible():
-    """c-04: BA254 queda restringida y conserva su elegibilidad."""
+def test_c04_ba254_is_restricted_and_not_in_derived_view():
+    """c-04: BA254 conserva su marca restringida, pero no es elegible."""
     config = _real_config()
     registry = config["ensemble_registry"]
     ba254 = registry["backend_keys"]["BA254"]
     eligible = registry["eligible_coverage"]["MANAGER_REVIEW:repo_motor"]
     assert ba254["uso_restringido"] is True
-    assert "BA254" in eligible["backend_keys"]
+    assert "BA254" not in eligible["backend_keys"]
 
 
 def test_c05_existing_backend_entries_are_unchanged():

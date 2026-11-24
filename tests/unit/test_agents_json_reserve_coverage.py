@@ -106,18 +106,14 @@ def test_real_entry_lists_extra_lenses_as_eligible():
         "MANAGER_REVIEW:repo_motor"
     ]
     assert entry["backend_keys"] == [
-        "BA03",
-        "BA07",
-        "BA254",
-        "BA02",
         "BA04",
-        "BA06",
-        "BA08",
-        "BA09",
+        "BA07",
         "BA258",
         "BA259",
         "BA150",
         "BA151",
+        "BA08",
+        "BA09",
     ]
 
 
@@ -148,112 +144,110 @@ def test_real_entry_keeps_other_keys_untouched():
     assert entry["policy"] == "declared"
     assert entry["excluded_backend_keys"] == ["BA05"]
     assert entry["exempt_tickets"] == ["WOT-2026-129d"]
-    assert entry["backend_keys"][:4] == ["BA03", "BA07", "BA254", "BA02"]
+    assert entry["backend_keys"][:4] == ["BA04", "BA07", "BA258", "BA259"]
 
 
-def test_ba03_and_ba09_cover_without_ba07_or_ba02(monkeypatch):
-    """c-04a: BA03 y BA09 respondidas cubren sin BA07 ni BA02."""
-    rows = [_rs_row("BA03"), _rs_row("BA09", sec=6)]
+def test_ba04_and_ba09_cover_without_ba07_or_ba08(monkeypatch):
+    """c-04a: BA04 y BA09 respondidas cubren sin BA07 ni BA08."""
+    rows = [_rs_row("BA04"), _rs_row("BA09", sec=6)]
     v = audit_real(monkeypatch, rows)
-    assert all(r["backend_key"] not in {"BA07", "BA02"} for r in rows)
+    assert all(r["backend_key"] not in {"BA07", "BA08"} for r in rows)
     assert v["ok"] is True
-    assert sorted(v["distinct_backends"]) == ["BA03", "BA09"]
+    assert sorted(v["distinct_backends"]) == ["BA04", "BA09"]
     assert v["min_aplicado"] == 2
 
 
-def test_ba03_and_ba02_cover_without_ba07(monkeypatch):
-    """c-04d: BA03 y BA02 respondidas cubren sin BA07."""
-    rows = [_rs_row("BA03"), _rs_row("BA02", sec=6)]
+def test_ba04_and_ba07_cover_without_ba08(monkeypatch):
+    """c-04d: BA04 y BA07 respondidas cubren sin BA08."""
+    rows = [_rs_row("BA04"), _rs_row("BA07", sec=6)]
     v = audit_real(monkeypatch, rows)
-    assert all(r["backend_key"] != "BA07" for r in rows)
+    assert all(r["backend_key"] != "BA08" for r in rows)
     assert v["ok"] is True
-    assert sorted(v["distinct_backends"]) == ["BA02", "BA03"]
+    assert sorted(v["distinct_backends"]) == ["BA04", "BA07"]
     assert v["min_aplicado"] == 2
 
 
-def test_ba02_alone_does_not_cover(monkeypatch):
-    """c-04e: BA02 sola no cubre min_distinct 2."""
-    rows = [_rs_row("BA02")]
+def test_ba07_alone_does_not_cover(monkeypatch):
+    """c-04e: BA07 sola no cubre min_distinct 2."""
+    rows = [_rs_row("BA07")]
     v = audit_real(monkeypatch, rows)
     assert v["ok"] is False
-    assert v["distinct_backends"] == ["BA02"]
+    assert v["distinct_backends"] == ["BA07"]
     assert v["min_aplicado"] == 2
 
 
-def test_hung_ba02_does_not_count(monkeypatch):
-    """c-04f: BA02 colgada no cuenta y no activa claves de reserva."""
+def test_hung_ba07_does_not_count(monkeypatch):
+    """c-04f: BA07 colgada no cuenta y no activa claves de reserva."""
     rows = [
-        _rs_row("BA03"),
-        _rs_row("BA02", hang=_RS_WATCHDOG_MODE, answered=False, sec=12),
+        _rs_row("BA04"),
+        _rs_row("BA07", hang=_RS_WATCHDOG_MODE, answered=False, sec=12),
     ]
     v = audit_real(monkeypatch, rows)
     assert v["ok"] is False
-    assert v["distinct_backends"] == ["BA03"]
-    assert "BA02" not in v["distinct_backends"]
+    assert v["distinct_backends"] == ["BA04"]
+    assert "BA07" not in v["distinct_backends"]
     assert "reserve_substitutions" not in v
     assert "reserve_exhausted" not in v
 
 
-def test_ba03_and_ba04_cover_without_ba07_or_ba02(monkeypatch):
-    """c-04g: BA03 y BA04 respondidas cubren sin BA07 ni BA02."""
-    rows = [_rs_row("BA03"), _rs_row("BA04", sec=6)]
+def test_ba04_and_ba08_cover_without_ba07_or_ba09(monkeypatch):
+    """c-04g: BA04 y BA08 respondidas cubren sin BA07 ni BA09."""
+    rows = [_rs_row("BA04"), _rs_row("BA08", sec=6)]
     v = audit_real(monkeypatch, rows)
     assert v["ok"] is True
-    assert sorted(v["distinct_backends"]) == ["BA03", "BA04"]
+    assert sorted(v["distinct_backends"]) == ["BA04", "BA08"]
     assert v["min_aplicado"] == 2
 
 
-def test_ba03_and_ba08_answered_counts(monkeypatch):
-    """c-04h: BA08 respondida cuenta junto a BA03."""
-    rows = [_rs_row("BA03"), _rs_row("BA08", sec=6)]
+def test_ba04_and_ba09_answered_counts(monkeypatch):
+    """c-04h: BA09 respondida cuenta junto a BA04."""
+    rows = [_rs_row("BA04"), _rs_row("BA09", sec=6)]
     v = audit_real(monkeypatch, rows)
     assert v["ok"] is True
-    assert sorted(v["distinct_backends"]) == ["BA03", "BA08"]
+    assert sorted(v["distinct_backends"]) == ["BA04", "BA09"]
     assert v["min_aplicado"] == 2
 
 
-def test_ba06_alone_does_not_cover(monkeypatch):
-    """c-04b: BA06 sola no cubre min_distinct 2."""
-    rows = [_rs_row("BA06")]
+def test_ba08_alone_does_not_cover(monkeypatch):
+    """c-04b: BA08 sola no cubre min_distinct 2."""
+    rows = [_rs_row("BA08")]
     v = audit_real(monkeypatch, rows)
     assert v["ok"] is False
-    assert v["distinct_backends"] == ["BA06"]
+    assert v["distinct_backends"] == ["BA08"]
     assert v["min_aplicado"] == 2
 
 
-def test_hung_ba08_does_not_count(monkeypatch):
-    """c-04c: BA08 colgada no cuenta y no activa claves de reserva."""
+def test_hung_ba09_does_not_count(monkeypatch):
+    """c-04c: BA09 colgada no cuenta y no activa claves de reserva."""
     rows = [
-        _rs_row("BA03"),
-        _rs_row("BA08", hang=_RS_WATCHDOG_MODE, answered=False, sec=12),
+        _rs_row("BA04"),
+        _rs_row("BA09", hang=_RS_WATCHDOG_MODE, answered=False, sec=12),
     ]
     v = audit_real(monkeypatch, rows)
     assert v["ok"] is False
-    assert v["distinct_backends"] == ["BA03"]
-    assert "BA08" not in v["distinct_backends"]
+    assert v["distinct_backends"] == ["BA04"]
+    assert "BA09" not in v["distinct_backends"]
     assert "reserve_substitutions" not in v
     assert "reserve_exhausted" not in v
 
 
-def test_note_documents_extra_lenses_and_family_rule():
-    """c-05: el note documenta las lentes extra, la regla de familias y 129r."""
+def test_note_documents_derived_view_and_family_rule():
+    """c-05: el note documenta la vista derivada, la regla de familias y 129r."""
     config = ed.load_motor_config()
     entry = config["ensemble_registry"]["eligible_coverage"][
         "MANAGER_REVIEW:repo_motor"
     ]
     note = entry["note"]
     for text in (
-        "BA02",
-        "2026-11-10",
-        "elegible",
-        "n=122",
-        "84",
-        "opcional",
-        "BA254",
-        "T1",
+        "VISTA DERIVADA de asignaciones.lentes_p34",
+        "scripts/flight/render_asignaciones.py --apply",
+        "BA05 excluida por WOT-2026-129r",
+        "WOT-2026-129d exento",
+        "min_distinct=2",
+        "NO se declara reserva",
+        "WOT-2026-152t",
+        "La independencia por familia la aplica la coordinadora",
     ):
         assert text in note
-    assert "BA04, BA06, BA08 y BA09 quedan elegibles" in note
-    assert "2026-11-11" in note
-    assert "La independencia por familia la aplica la coordinadora" in note
-    assert "BA05/129r sigue sin tocar" in note
+    for stale in ("BA02", "BA03", "BA06", "BA254"):
+        assert stale not in note

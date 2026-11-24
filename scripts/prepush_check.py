@@ -2931,6 +2931,25 @@ def run_ensemble_profile_catalog_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_asignaciones_check(project_root: Path) -> CheckResult:
+    """WOT-2026-229a: comprueba la vista derivada y sus snapshots marcados.
+
+    Before: el renderizador vive en el MOTOR y las superficies del motor pueden
+        declarar deriva.
+    During: ejecuta el CLI en modo pasivo, con cwd en `_MOTOR_ROOT`.
+    After: devuelve el resultado como bloqueante en el motor y como WARN visible
+        para un destino externo.
+    """
+    script = _MOTOR_ROOT / "scripts" / "flight" / "render_asignaciones.py"
+    result = run_subprocess_check(
+        [sys.executable, str(script), "--check"],
+        "Asignaciones del vuelo (WOT-2026-229a)",
+        _MOTOR_ROOT,
+    )
+    is_motor = project_root.resolve() == _MOTOR_ROOT.resolve()
+    return result._replace(is_blocking=is_motor)
+
+
 def run_flight_plan_collision_check(project_root: Path) -> CheckResult:
     """WOT-2026-027h: colision INTER-plan en queued/ (check HERMANO de validate_batch_dag).
 
@@ -4965,6 +4984,9 @@ def run_preflight_check(
     # si diff no toca triggers canonicos). FUERA de closeout_mode: corre en todo
     # push para capturar la ventana de fallo (DoD 3).
     results.append(run_settings_canonical_drift_check(project_root))
+    # 5-quinquies. Asignaciones derivadas (WOT-2026-229a; bloqueante solo en
+    # el motor, WARN visible cuando este preflight audita un destino externo).
+    results.append(run_asignaciones_check(project_root))
 
     # 6. Backlog Contract Check (solo en cierre de sesion; bloqueante)
     if closeout_mode:

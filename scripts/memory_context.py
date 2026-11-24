@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: ERA001
 """CLI de memoria: INDICE de arranque y puerta de EXPANSION.
 
 WT-2026-191 lo creo como comando determinista para no depender de prosa en el
@@ -61,6 +62,8 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.util
+import json
 import os
 import sys
 from pathlib import Path
@@ -998,6 +1001,50 @@ def _write_recall_log(
         )
 
 
+# ASIGNACIONES:BEGIN sha=185377163b98eae4
+# **Asignaciones del vuelo**:
+# refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
+# - co [alto]: claude:claudeAgent/claude-sonnet-5-5
+# - co_subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
+# - supervisora [alto]: claude:claudeAgent/claude-sonnet-5-5 PENDIENTE
+# - im.builder [alto]: codex gpt-5.6-luna
+# - im.revisor [medio]: gemini:antigravity/gemini-3.8-flash-high
+# - im.v1 [medio]: codex gpt-5.6-luna
+# - im.subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
+# - tr.triador [base]: gemma nan/gemma4
+# - tr.revisor [medio]: codex gpt-5.6-luna
+# - tr.subagentes [base]: gemma nan/gemma4 PENDIENTE > qwen nan/qwen3.6 PENDIENTE
+# - lentes_p34 [medio]: codex gpt-5.6-luna > claude claude-sonnet-5 > mimo nan/mimo-v2.6-flash > deepseek nan/deepseek-v4-flash > qwen nan/qwen3.6 PENDIENTE > gemma nan/gemma4 PENDIENTE > mistral mistral-large-2512 PENDIENTE > codestral codestral-2508 PENDIENTE > qwen nan/qwen3.6 PENDIENTE > gemma nan/gemma4 PENDIENTE
+# - lente_de_cierre [medio]: claude claude-sonnet-5 PENDIENTE
+# - bucle_retro [medio]: codex gpt-5.6-luna PENDIENTE
+# cambio: pega messageId; edita asignaciones.<puesto>.candidatos; ejecuta render_asignaciones.py --apply.
+# no derivados: role_models.REVISOR, role_models.MANAGER, role_assignments.MANAGER, role_assignments.SUPERVISOR
+# ASIGNACIONES:END
+
+
+def _assignment_fallback(root: Path) -> str:
+    """Before: el hook puede no cargar y el destino puede declarar asignaciones. During: las renderiza por ruta. After: devuelve el bloque o vacio."""
+    try:
+        config_path = root / ".agent" / "config" / "agents.json"
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+        assignments = config.get("asignaciones")
+        if not isinstance(assignments, dict):
+            return ""
+        render_path = _MOTOR_ROOT / "scripts" / "flight" / "render_asignaciones.py"
+        spec = importlib.util.spec_from_file_location(
+            "_render_assignments_fallback", render_path
+        )
+        if spec is None or spec.loader is None:
+            return ""
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.render_block(
+            assignments, config["ensemble_registry"]["backend_keys"]
+        )
+    except Exception:
+        return ""
+
+
 def _session_context() -> tuple[str, bool]:
     """Arranque ACOTADO completo, el MISMO que inyecta el hook SessionStart.
 
@@ -1032,7 +1079,9 @@ def _session_context() -> tuple[str, bool]:
         return hook.assemble_session_context(root, _index)
     except Exception:
         memory = _index(INDEX_BUDGET_CHARS)
-        return (memory or ""), memory is None
+        assignment = _assignment_fallback(root)
+        context = "\n\n".join(part for part in (memory or "", assignment) if part)
+        return context, memory is None
 
 
 def main() -> int:

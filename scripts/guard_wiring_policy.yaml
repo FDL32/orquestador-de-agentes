@@ -388,6 +388,7 @@ extra_guards:
   pretooluse_bash_wait_guard: .agent/hooks/pretooluse_bash_wait_guard.py
   review_level: scripts/flight/review_level.py
   flight_stall_check: scripts/flight/flight_stall_check.py
+  render_asignaciones: scripts/flight/render_asignaciones.py
 
 wired_via:
   # WOT-2026-161l: el detector de latido invoca el comprobador por ruta
