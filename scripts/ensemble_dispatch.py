@@ -793,6 +793,9 @@ MODEL_FAMILY_MAP: dict[tuple[str, str | None], str] = {
     # BA130-BA149). north-mini-code-1-0 es el MISMO modelo que BA50 (via
     # OpenRouter): misma familia, ruta directa y estable.
     ("gemini_api", "gemini-3.8-flash"): "gemini",
+    # WOT-2026-229e: pareja declarada por las fichas con revisor Gemini del
+    # panel unico; t3_session antigravity.
+    ("gemini", "gemini-3.8-flash-high"): "gemini",
     ("cohere_api", "command-a-plus-05-2026"): "command",
     ("cohere_api", "north-mini-code-1-0"): "northcode",
     # mistral_api BA150-BA169: IDs con fecha, nunca alias `-latest` (el
