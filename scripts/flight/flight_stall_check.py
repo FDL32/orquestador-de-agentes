@@ -93,7 +93,6 @@ QUEUE_MOTIVES = {
 }
 FLIGHT_ROSTER_NAME = "flight_roster.json"
 STATE_NAME = "stall_state.json"
-TASK_REGISTERED_NAME = "task_registered.json"
 TASK_STATE_NAME = "task_state.json"
 OWNED_PREFIXES = (
     "cupo-",
@@ -131,7 +130,6 @@ NAN_UNKNOWN_KEY = "nan_unknown_streak"
 NAN_SOURCE_ENV = ("NAN_OPENCODE_DB", "NAN_KILO_DB")
 NAN_AGENTS_ENV = "NAN_AGENTS_JSON"
 _CELL_CHECKER = None
-FECHA_CIERRE_EXENTAS = "2026-11-16"
 
 
 def _load_alert():
