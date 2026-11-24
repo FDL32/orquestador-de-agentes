@@ -428,35 +428,6 @@ m(
 m("Q7c", "2A", "        r = ca.event(\n", "        r = ca.resolve(\n")
 # --- tarea (D25) ---
 m(
-    "N83",
-    "2A",
-    "    if not os.path.lexists(CFG.ops / TASK_REGISTERED_NAME):\n        return []",
-    "    if False:\n        return []",
-)
-m(
-    "N83b",
-    "2A",
-    "    if not os.path.lexists(CFG.ops / TASK_REGISTERED_NAME):",
-    "    if not (CFG.ops / TASK_REGISTERED_NAME).exists():",
-)
-EQUIV["N83b"] = (
-    "una marca que es un symlink roto: .exists() y lexists difieren, pero la prueba de marca como directorio no lo distingue (ver Q6 del informe: la marca como symlink roto queda sin prueba en Windows sin permiso de symlink)"
-)
-m("T1", "2A", "TASK_STALE_S = 25 * 60", "TASK_STALE_S = 2500 * 60")
-m("T2", "2A", "TASK_FUTURE_S = 5 * 60", "TASK_FUTURE_S = 500 * 60")
-m(
-    "T3",
-    "2A",
-    "ts <= now + TASK_FUTURE_S and now - ts <= TASK_STALE_S",
-    "now - ts <= TASK_STALE_S",
-)
-m(
-    "T4",
-    "2A",
-    "    if _is_finite(ts) and ts <= now + TASK_FUTURE_S and",
-    "    if ts is not None and ts <= now + TASK_FUTURE_S and",
-)
-m(
     "T5",
     "2A",
     "    if not (isinstance(value, (int, float)) and not isinstance(value, bool)):",
@@ -467,13 +438,6 @@ m(
     "2A",
     "        return math.isfinite(value)\n    except OverflowError:",
     "        return True\n    except OverflowError:",
-)
-m("N87", "2A", '        ca.resolve("tarea-muerta", a.dry_run)', "        pass")
-m(
-    "T7",
-    "2A",
-    '    if "tarea-muerta" not in {k for k, _, _ in found} and (',
-    "    if False and (",
 )
 # --- configuracion (D1, D2) ---
 m(
@@ -812,24 +776,6 @@ m("A9d", "2A", "if toks\n", "if False\n")
 
 
 # ---------------- WOT-2026-163a P1/P4 controls ----------------
-m(
-    "F1a",
-    "2A",
-    '    "celda",\n',
-    "",
-)
-m(
-    "F1b",
-    "2A",
-    '        out["ciego_celda"] = True\n        return [\n            ("detector-ciego-celda", "AVISO", "Detector celda sin registry legible")\n        ]',
-    '        out["ciego_celda"] = True\n        return []',
-)
-m(
-    "F1c",
-    "2A",
-    '    "celda-",\n',
-    "",
-)
 q("P1A", '"QUOTA_JSON_SCHEMA": QUOTA_JSON_SCHEMA', '"QUOTA_JSON_SCHEMA": 1')
 q("P1B", "process_rc = 9 if missing else RC[state]", "process_rc = RC[state]")
 q("P1C", 'if quality not in ("OK", "RESERVA") or not _is_real(value):', "if False:")
@@ -849,8 +795,8 @@ q("P1G", 'limits = data["rateLimits"]', 'limits = payload["rateLimits"]')
 m(
     "P4A",
     "2A",
-    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "cola-despachable",\n    "celda",\n    "huerfano",\n)',
-    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "tarea",\n    "im-ocioso",\n    "celda",\n    "huerfano",\n)',
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "im-ocioso",\n    "cola-despachable",\n    "huerfano",\n)',
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "im-ocioso",\n    "huerfano",\n)',
 )
 m("P4B", "2A", "if len(streak) < DIAG_TICKS:", "if len(streak) < 1:")
 m(
