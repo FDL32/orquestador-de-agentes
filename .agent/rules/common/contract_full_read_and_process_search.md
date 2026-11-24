@@ -52,8 +52,8 @@ protocolo de escalado (P3, ESCALADO_VUELO_INFINITO_20261106.md s.1):
    implantador o triaje pregunta a su coordinadora y para (nunca a otra sesion).
 3. PUERTA: toda accion de clase B (consentimiento_accion_clase_b.md) solo por su puerta con consentimiento verificado.
    Hasta que la puerta de worktrees verifique la frase del usuario, borrar exige lista final con hash y la frase literal.
-4. ESCALA, en este orden y solo si 1-2 no resuelven: material secundario (tickets, bucles y sesiones anteriores) ->
-   supervisora (falta de contexto, sin exigir agotar fuentes primarias) -> bucle de gobierno (varias salidas o sin
+4. ESCALA, en este orden y solo si 1-2 no resuelven: supervisora (falta de contexto, sin agotar fuentes secundarias;
+   el material secundario es contraste dentro del analisis, no peldano obligatorio) -> bucle de gobierno (varias salidas o sin
    protocolo) -> usuario, documentando en CONSULTAS_DOCUMENTADAS.md y continuando con lo que no depende.
 5. BLOQUEO: si algo te frena, el mensaje repite 1-4 con el comando exacto y distingue tu rol (coordinadora decide;
    implantador o triaje pregunta a su coordinadora).
