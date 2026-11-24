@@ -20,7 +20,7 @@ ESTATUS: NORMA (no barrera). Ficha WOT-2026-160o (2026-11-08). Origen: P9 (vuelo
    - Lanzar mas de los topes. MEDIDO: `HALLAZGOS_protocolo_vuelos_autonomos.md:46` (H29: maximo 2 qwen3.6 concurrentes) y ficha WOT-2026-146a (topes 2/2/3, pendiente de asentar por el usuario).
    - Hacer commits en el motor antes de la suite final. Ver `AGENTS.md`, seccion "Orden de trabajo: AGRUPA los commits, la suite va la ULTIMA (WOT-2026-026t)".
    - Montar o traer la rama de preparacion tocando la rama probada, o hacerlo con una suite en curso en el worktree del vuelo. Regla preventiva, SIN incidente medido (C1, R2, R3, R4).
-7. Lo que NO esta en la norma: lanzar triaje si hay menos de 2 IM (H178, pendiente de ratificacion del usuario).
+7. Lo que NO esta en la norma: lanzar triaje si hay menos de 2 IM (H178, RATIFICADA en P8 del canon).
 8. Indicador: el de P9 (minutos de IM ocioso con cola pendiente) mas un contador nuevo (turnos de espera cerrados sin entrada sobre turnos de espera totales). Barrera futura: campo `idle_checklist` en `scripts/flight/tick_trace.py`, como ficha si el contador no baja a 0 en dos vuelos seguidos.
    Indicador O3: minutos de espera larga CON paquete listo al llegar el resultado / minutos de espera larga totales (se suma al de P9).
 
