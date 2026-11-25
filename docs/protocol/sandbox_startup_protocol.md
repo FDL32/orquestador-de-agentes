@@ -112,9 +112,8 @@ Sin `-NullStdin` (ACP usa stdin) y con los mensajes del lanzador en stderr. `ope
   (variables de desactivación sin efecto) y el repo git (el snapshot no tiene `.git`). **Sin admin no hay arreglo conocido**; con admin bastaría una
   ACE de solo lectura, *solo esta carpeta*, para el contenedor sobre `C:\` (ver la ficha). Mientras tanto: **`opencode` 1.18.x no es viable dentro del
   contenedor** y las lentes con ficheros siguen sin un candidato probado.
-- `claude -p` arranca dentro del contenedor y se queda parado justo tras su inicialización, sin error (causa sin aislar; sin credenciales no se
-  puede descartar el almacén de credenciales de Windows). `opencode` sí funciona sobre un snapshot, pero **no se ha probado una ronda con
-  credenciales**, que es lo que falta para llamarlo integrado.
+- La medición antigua de `claude -p` queda superada por la medición de la sección 10 (`PONG`, exit 0, commit `359870d8`); la prueba de
+  `opencode` con credenciales sigue pendiente, que es lo que falta para llamarlo integrado.
 - Un CLI de agente necesita su credencial y red a su proveedor, justo lo que el sandbox niega por defecto: la clave dedicada y `-Net` son una
   decisión del operador, y una lista de hosts exige admin (regla de firewall por contenedor o proxy).
 - El modo interactivo (`shell`) arranca y muestra el prompt dentro del contenedor, pero su uso real con teclado en un terminal de IDE **no se ha probado**.
@@ -189,8 +188,7 @@ documentado sin verificar hoy.
 
 ## 11. Acta (e): red completa y credencial dedicada (WOT-2026-089r)
 
-Esta acta documenta la decision del operador sobre la clave dedicada y la red
-completa. La red es todo o nada: `-Net` concede salida a Internet sin una
+Esta acta documenta la decision del operador sobre la clave dedicada y la red completa. La red es todo o nada: `-Net` concede salida a Internet sin una
 allowlist de hosts implementada por este lanzador. `-Net` queda apagado por
 defecto para shells, git, snapshots y pruebas locales, pero es el estado normal
 deliberado de toda ronda que necesite hablar con un modelo; no es una excepcion
@@ -212,8 +210,7 @@ La ejecucion fisica de estas corridas y la revocacion son responsabilidad
 humana. Tambien siguen siendo humanas la prueba de VS Code y la entrada por
 teclado real; el proxy de loopback o con allowlist queda diferido.
 
-El alcance de la proteccion es limitado: el sandbox protege lo que queda fuera
-de la raiz del sandbox y lo que nunca se introduce en ella. No promete proteger
+El alcance de la proteccion es limitado: el sandbox protege lo que queda fuera de la raiz del sandbox y lo que nunca se introduce en ella. No promete proteger
 secretos que se pasen dentro de `work` o por `-PassEnv`; esos datos quedan al
 alcance del proceso y pueden exfiltrarse si se concede `-Net`. Tampoco protege
 terminales, extensiones o agentes que no arranquen por este lanzador.
