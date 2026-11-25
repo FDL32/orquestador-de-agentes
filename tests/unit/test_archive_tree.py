@@ -19,6 +19,7 @@ import sys
 import time
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 from scripts.flight import archive_tree, p7_common
@@ -70,16 +71,16 @@ def _seed_retire_auth(
     *,
     text: str | None = None,
     created_at: str | None = None,
+    archive_root: Path | None = None,
 ) -> tuple[str, str]:
     """Before: archive index contains one ARCHIVADO family.
     During: create the isolated state store with one valid user anchor.
     After: return the thread and message identifiers used by retire subprocesses.
     """
+    archive_dir = archive_root if archive_root is not None else tmp_path / "archive"
     row = next(
         item
-        for item in reversed(
-            p7_common.load_jsonl_index(tmp_path / "archive" / "index.jsonl")
-        )
+        for item in reversed(p7_common.load_jsonl_index(archive_dir / "index.jsonl"))
         if item.get("status") == "ARCHIVADO"
     )
     thread_id = "11111111-1111-4111-8111-111111111111"
@@ -88,7 +89,7 @@ def _seed_retire_auth(
     text = expected if text is None else text
     created_at = "2026-11-20T12:00:00.000Z" if created_at is None else created_at
     store = home / ".t3" / "userdata" / "statev2.sqlite"
-    store.parent.mkdir(parents=True)
+    store.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(store)
     connection.executescript(_MESSAGES_DDL_189A + _THREADS_DDL_189A)
     connection.execute(
@@ -2165,3 +2166,865 @@ def test_b10_mixed_archive_tree_and_p7_retire_index(tmp_path: Path) -> None:
         )
         assert dry.returncode == 0, dry.stderr
         assert p7_common.reconcile_index(archive, rows, str(family)) == []
+
+
+# ==============================================================================
+# WOT-2026-190a Tests: Mode --tree, Git Deregistration (g-01), R1 checks (g-04),
+# and 15-case Negativas Table (g-05).
+# ==============================================================================
+
+
+def _create_worktree_fixture(tmp_path: Path) -> dict[str, Any]:
+    """Create a real git repo with an integrated, clean worktree fixture."""
+    main_repo = tmp_path / "main_repo"
+    main_repo.mkdir(parents=True, exist_ok=True)
+    for cmd in (
+        ["git", "init", "-q", "-b", "main", "."],
+        ["git", "config", "user.email", "test@example.invalid"],
+        ["git", "config", "user.name", "test"],
+    ):
+        subprocess.run(cmd, cwd=main_repo, check=True, capture_output=True)
+    (main_repo / "init.txt").write_text("initial", encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "init.txt"], cwd=main_repo, check=True, capture_output=True
+    )
+    subprocess.run(
+        ["git", "commit", "-qm", "init"],
+        cwd=main_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    wt = tmp_path / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", str(wt), "-b", "branch-190a"],
+        cwd=main_repo,
+        check=True,
+        capture_output=True,
+    )
+    (wt / "top.txt").write_text("top file", encoding="utf-8")
+    (wt / "sub").mkdir()
+    (wt / "sub" / "sub.txt").write_text("sub file", encoding="utf-8")
+    subprocess.run(["git", "-C", str(wt), "add", "."], check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-C", str(wt), "commit", "-qm", "add files"],
+        check=True,
+        capture_output=True,
+    )
+
+    # Merge into main so merge-base --is-ancestor succeeds
+    subprocess.run(
+        ["git", "-C", str(main_repo), "merge", "-q", "--ff-only", "branch-190a"],
+        check=True,
+        capture_output=True,
+    )
+
+    project_root = tmp_path / "project_root"
+    done_dir = project_root / ".agent" / "collaboration" / "_archive"
+    done_dir.mkdir(parents=True)
+    done_file = done_dir / "backlog_done.md"
+    done_file.write_text(
+        "| 2026-11-25 | WOT-2026-190a | Closed ticket |\n", encoding="utf-8"
+    )
+
+    registry = tmp_path / "session_registry.json"
+    registry.write_text(
+        json.dumps(
+            {"sessions": [{"code": "IM-190a", "status": "ASENTADA (conforme)"}]}
+        ),
+        encoding="utf-8",
+    )
+
+    archive_root = tmp_path / "archive"
+    archive_root.mkdir(parents=True, exist_ok=True)
+
+    approved = tmp_path / "approved.json"
+    approved_entry = [{"rel": ".", "sha256": archive_tree.tree_hash(wt)}]
+    approved.write_text(json.dumps(approved_entry), encoding="utf-8")
+    list_hash = hashlib.sha256(approved.read_bytes()).hexdigest()
+
+    return {
+        "main_repo": main_repo,
+        "wt": wt,
+        "project_root": project_root,
+        "registry": registry,
+        "archive_root": archive_root,
+        "approved": approved,
+        "list_hash": list_hash,
+        "ticket": "WOT-2026-190a",
+        "integrated_into": "main",
+        "owner_session": "IM-190a",
+    }
+
+
+def _worktree_cli_args(fix: dict[str, Any], *extra: str) -> list[str]:
+    return [
+        "--origin",
+        str(fix["wt"]),
+        "--tree",
+        "--archive-root",
+        str(fix["archive_root"]),
+        "--ticket",
+        fix["ticket"],
+        "--project-root",
+        str(fix["project_root"]),
+        "--integrated-into",
+        fix["integrated_into"],
+        "--registry",
+        str(fix["registry"]),
+        "--owner-session",
+        fix["owner_session"],
+        *extra,
+    ]
+
+
+def test_t01_characterization_and_mode_tree(tmp_path: Path) -> None:
+    """Before: without --tree, retiring a worktree fails with extra or missing files.
+    During: archive and retire with --tree.
+    After: with --tree the manifest covers the entire tree and origin is removed.
+    """
+    fix = _create_worktree_fixture(tmp_path)
+    wt = fix["wt"]
+    archive = fix["archive_root"]
+
+    # 1. State BEFORE: without --tree
+    # Approved list for subdirectories only
+    sub_approved = tmp_path / "sub_approved.json"
+    sub_approved.write_text(
+        json.dumps([{"rel": "sub", "sha256": archive_tree.tree_hash(wt / "sub")}]),
+        encoding="utf-8",
+    )
+    sub_hash = hashlib.sha256(sub_approved.read_bytes()).hexdigest()
+
+    # Dry-run without --tree lists only subdirectories
+    dry_without = _run(
+        "--origin",
+        str(wt),
+        "--archive-root",
+        str(archive),
+        "--list",
+        str(sub_approved),
+        "--list-sha256",
+        sub_hash,
+    )
+    assert dry_without.returncode == 0, dry_without.stderr
+    assert json.loads(dry_without.stdout)["candidates"] == ["sub"]
+
+    # Apply-archive without --tree succeeds for sub
+    arch_without = _run(
+        "--origin",
+        str(wt),
+        "--archive-root",
+        str(archive),
+        "--apply-archive",
+        "--list",
+        str(sub_approved),
+        "--list-sha256",
+        sub_hash,
+    )
+    assert arch_without.returncode == 0, arch_without.stderr
+
+    # Apply-retire without --tree MUST fail with rc 1 (extra or missing files/directories)
+    thread_id, message_id = _seed_retire_auth(tmp_path, tmp_path, archive_root=archive)
+    ret_without = _run(
+        "--origin",
+        str(wt),
+        "--archive-root",
+        str(archive),
+        "--apply-retire",
+        "--list",
+        str(sub_approved),
+        "--list-sha256",
+        sub_hash,
+        "--thread-id",
+        thread_id,
+        "--message-id",
+        message_id,
+        home=tmp_path,
+    )
+    assert ret_without.returncode == 1
+    assert "extra or missing files/directories" in ret_without.stderr
+    assert wt.exists() and (wt / "top.txt").exists() and (wt / ".git").exists()
+
+    # 2. State AFTER: WITH --tree in a fresh archive root
+    tree_archive = tmp_path / "tree_archive"
+    tree_archive.mkdir()
+    fix["archive_root"] = tree_archive
+
+    # Dry-run with --tree
+    dry_tree = _run(*_worktree_cli_args(fix))
+    assert dry_tree.returncode == 0, dry_tree.stderr
+    dry_payload = json.loads(dry_tree.stdout)
+    assert dry_payload["status"] == "DRY_RUN"
+    assert dry_payload["candidates"] == ["."]
+
+    # Apply-archive with --tree
+    arch_tree = _run(
+        *_worktree_cli_args(
+            fix,
+            "--apply-archive",
+            "--list",
+            str(fix["approved"]),
+            "--list-sha256",
+            fix["list_hash"],
+        )
+    )
+    assert arch_tree.returncode == 0, arch_tree.stderr
+
+    # Manifest rows MUST include .git and top.txt (full tree)
+    index_rows = p7_common.load_jsonl_index(tree_archive / "index.jsonl")
+    assert len(index_rows) >= 1
+    manifest_path = Path(index_rows[-1]["manifest"])
+    manifest_rows = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest_rels = {r["rel"] for r in manifest_rows}
+    assert ".git" in manifest_rels
+    assert "top.txt" in manifest_rels
+    assert "sub/sub.txt" in manifest_rels
+    expected_rows = archive_tree._tree_rows(fix["wt"])
+    assert sorted(manifest_rows, key=lambda x: x["rel"]) == sorted(
+        expected_rows, key=lambda x: x["rel"]
+    )
+
+    # Apply-retire with --tree
+    tree_home = tmp_path / "tree_home"
+    tree_thread, tree_message = _seed_retire_auth(
+        tmp_path, tree_home, archive_root=tree_archive
+    )
+    ret_tree = _run(
+        *_worktree_cli_args(
+            fix,
+            "--apply-retire",
+            "--list",
+            str(fix["approved"]),
+            "--list-sha256",
+            fix["list_hash"],
+            "--thread-id",
+            tree_thread,
+            "--message-id",
+            tree_message,
+        ),
+        home=tree_home,
+    )
+    assert ret_tree.returncode == 0, ret_tree.stderr
+    assert not wt.exists()
+
+
+def test_g01_git_deregistration_matrix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify git worktree deregistration: Case A, Case B, Case C, and un-registered origin."""
+    fix = _create_worktree_fixture(tmp_path)
+    wt = fix["wt"]
+
+    # Case A: Injected runner recording argv
+    recorded: list[list[str]] = []
+    real_run = subprocess.run
+
+    def recording_runner(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        recorded.append(cmd)
+        return real_run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+
+    archive_tree.set_git_runner(recording_runner)
+    try:
+        res_arch = archive_tree.main(
+            _worktree_cli_args(
+                fix,
+                "--apply-archive",
+                "--list",
+                str(fix["approved"]),
+                "--list-sha256",
+                fix["list_hash"],
+            )
+        )
+        assert res_arch == 0
+        thread_id, message_id = _seed_retire_auth(
+            tmp_path, tmp_path, archive_root=fix["archive_root"]
+        )
+        monkeypatch.setenv("USERPROFILE", str(tmp_path))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        recorded.clear()
+        res_ret = archive_tree.main(
+            _worktree_cli_args(
+                fix,
+                "--apply-retire",
+                "--list",
+                str(fix["approved"]),
+                "--list-sha256",
+                fix["list_hash"],
+                "--thread-id",
+                thread_id,
+                "--message-id",
+                message_id,
+            )
+        )
+        assert res_ret == 0
+        assert not wt.exists()
+
+        # Check probe
+        probe_calls = [
+            c
+            for c in recorded
+            if "worktree" in c and "list" in c and "--porcelain" in c
+        ]
+        assert len(probe_calls) >= 1
+
+        # Check baja commands
+        rem_calls = [c for c in recorded if "worktree" in c and "remove" in c]
+        prune_calls = [
+            c
+            for c in recorded
+            if "worktree" in c and "prune" in c and "--dry-run" not in c
+        ]
+        assert len(rem_calls) == 1
+        assert len(prune_calls) == 1
+        # Verification MB4: without force option
+        assert "--force" not in rem_calls[0]
+        # MB6: probe is not counted as baja
+        assert rem_calls[0] != probe_calls[0]
+        # Order: remove before prune
+        assert recorded.index(rem_calls[0]) < recorded.index(prune_calls[0])
+    finally:
+        archive_tree.set_git_runner(None)
+
+    # Case B: Real subprocess with real git
+    fix_b = _create_worktree_fixture(tmp_path / "b_suite")
+    arch_b = _run(
+        *_worktree_cli_args(
+            fix_b,
+            "--apply-archive",
+            "--list",
+            str(fix_b["approved"]),
+            "--list-sha256",
+            fix_b["list_hash"],
+        )
+    )
+    assert arch_b.returncode == 0, arch_b.stderr
+    thread_b, msg_b = _seed_retire_auth(tmp_path / "b_suite", tmp_path / "b_suite")
+    ret_b = _run(
+        *_worktree_cli_args(
+            fix_b,
+            "--apply-retire",
+            "--list",
+            str(fix_b["approved"]),
+            "--list-sha256",
+            fix_b["list_hash"],
+            "--thread-id",
+            thread_b,
+            "--message-id",
+            msg_b,
+        ),
+        home=tmp_path / "b_suite",
+    )
+    assert ret_b.returncode == 0, ret_b.stderr
+    assert not fix_b["wt"].exists()
+    proc_b = subprocess.run(
+        ["git", "-C", str(fix_b["main_repo"]), "worktree", "list", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert str(fix_b["wt"]) not in proc_b.stdout
+    assert "worktree " in proc_b.stdout  # main worktree still listed
+
+    # Case C: Remove fails with rc 1 -> prune still runs, exit != 0, tree retired
+    fix_c = _create_worktree_fixture(tmp_path / "c_suite")
+    res_arch_c = archive_tree.main(
+        _worktree_cli_args(
+            fix_c,
+            "--apply-archive",
+            "--list",
+            str(fix_c["approved"]),
+            "--list-sha256",
+            fix_c["list_hash"],
+        )
+    )
+    assert res_arch_c == 0
+    thread_c, msg_c = _seed_retire_auth(tmp_path / "c_suite", tmp_path / "c_suite")
+    monkeypatch.setenv("USERPROFILE", str(tmp_path / "c_suite"))
+    monkeypatch.setenv("HOME", str(tmp_path / "c_suite"))
+    recorded_c: list[list[str]] = []
+
+    def failing_remove_runner(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        recorded_c.append(cmd)
+        if "worktree" in cmd and "remove" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 1, stdout="", stderr="simulated remove failure"
+            )
+        return real_run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+
+    archive_tree.set_git_runner(failing_remove_runner)
+    try:
+        res_ret_c = archive_tree.main(
+            _worktree_cli_args(
+                fix_c,
+                "--apply-retire",
+                "--list",
+                str(fix_c["approved"]),
+                "--list-sha256",
+                fix_c["list_hash"],
+                "--thread-id",
+                thread_c,
+                "--message-id",
+                msg_c,
+            )
+        )
+        assert res_ret_c != 0
+        # MB5: prune must run even after remove failure
+        prune_c = [
+            c
+            for c in recorded_c
+            if "worktree" in c and "prune" in c and "--dry-run" not in c
+        ]
+        assert len(prune_c) == 1
+        # Tree is still retired
+        assert not fix_c["wt"].exists()
+        rows_c = p7_common.load_jsonl_index(fix_c["archive_root"] / "index.jsonl")
+        assert any(r.get("status") == "RETIRADO" for r in rows_c)
+    finally:
+        archive_tree.set_git_runner(None)
+
+    # Control positivo: Un-registered origin executes 0 remove and 0 prune
+    fix_unreg = _create_worktree_fixture(tmp_path / "unreg_wt")
+    arch_unreg = _run(
+        *_worktree_cli_args(
+            fix_unreg,
+            "--apply-archive",
+            "--list",
+            str(fix_unreg["approved"]),
+            "--list-sha256",
+            fix_unreg["list_hash"],
+        )
+    )
+    assert arch_unreg.returncode == 0, arch_unreg.stderr
+    thread_unreg, msg_unreg = _seed_retire_auth(
+        tmp_path / "unreg_wt",
+        tmp_path / "unreg_wt",
+        archive_root=fix_unreg["archive_root"],
+    )
+    recorded_unreg: list[list[str]] = []
+
+    def unreg_runner(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        recorded_unreg.append(cmd)
+        if "rev-parse" in cmd:
+            return real_run(
+                cmd,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        if "worktree" in cmd and "list" in cmd:
+            return subprocess.CompletedProcess(
+                cmd,
+                0,
+                stdout="worktree C:/some/other/path\nHEAD 1234\nbranch refs/heads/main\n\n",
+                stderr="",
+            )
+        return real_run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+        )
+
+    archive_tree.set_git_runner(unreg_runner)
+    try:
+        monkeypatch.setenv("USERPROFILE", str(tmp_path / "unreg_wt"))
+        monkeypatch.setenv("HOME", str(tmp_path / "unreg_wt"))
+        recorded_unreg.clear()
+        res_ret_unreg = archive_tree.main(
+            _worktree_cli_args(
+                fix_unreg,
+                "--apply-retire",
+                "--list",
+                str(fix_unreg["approved"]),
+                "--list-sha256",
+                fix_unreg["list_hash"],
+                "--thread-id",
+                thread_unreg,
+                "--message-id",
+                msg_unreg,
+            )
+        )
+        assert res_ret_unreg == 0
+        assert not fix_unreg["wt"].exists()
+        baja_unreg = [
+            c
+            for c in recorded_unreg
+            if "worktree" in c
+            and ("remove" in c or ("prune" in c and "--dry-run" not in c))
+        ]
+        assert len(baja_unreg) == 0
+    finally:
+        archive_tree.set_git_runner(None)
+
+
+def test_g04_six_rejection_conditions_and_positive(tmp_path: Path) -> None:
+    """Test the 6 rejection conditions and the positive control of g-04."""
+    # 1. Ticket ausente de backlog_done.md
+    fix1 = _create_worktree_fixture(tmp_path / "c1")
+    (
+        fix1["project_root"]
+        / ".agent"
+        / "collaboration"
+        / "_archive"
+        / "backlog_done.md"
+    ).write_text("| 2026-11-25 | WOT-2026-999z | Other |\n", encoding="utf-8")
+    r1 = _run(*_worktree_cli_args(fix1))
+    assert r1.returncode != 0 and fix1["wt"].exists()
+
+    # 2. No integrado
+    fix2 = _create_worktree_fixture(tmp_path / "c2")
+    (fix2["wt"] / "unmerged.txt").write_text("unmerged", encoding="utf-8")
+    subprocess.run(
+        ["git", "-C", str(fix2["wt"]), "add", "unmerged.txt"],
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(fix2["wt"]), "commit", "-qm", "unmerged"],
+        check=True,
+        capture_output=True,
+    )
+    r2 = _run(*_worktree_cli_args(fix2))
+    assert r2.returncode != 0 and fix2["wt"].exists()
+
+    # 3. Sucio (--ignored no vacio)
+    fix3 = _create_worktree_fixture(tmp_path / "c3")
+    (fix3["wt"] / ".gitignore").write_text("ignored.log\n", encoding="utf-8")
+    (fix3["wt"] / "ignored.log").write_text("dirty", encoding="utf-8")
+    r3 = _run(*_worktree_cli_args(fix3))
+    assert r3.returncode != 0 and fix3["wt"].exists()
+
+    # 4. Sesion no asentada (MB7 check casefold: accepted uppercase, rejected active)
+    fix4 = _create_worktree_fixture(tmp_path / "c4")
+    fix4["registry"].write_text(
+        json.dumps({"sessions": [{"code": "IM-190a", "status": "activa"}]}),
+        encoding="utf-8",
+    )
+    r4 = _run(*_worktree_cli_args(fix4))
+    assert r4.returncode != 0 and fix4["wt"].exists()
+
+    # 5a. Prune pendiente (entrada colgante)
+    fix5 = _create_worktree_fixture(tmp_path / "c5")
+    wt_stale = tmp_path / "c5" / "wt_stale"
+    subprocess.run(
+        [
+            "git",
+            "worktree",
+            "add",
+            "-q",
+            str(wt_stale),
+            "-b",
+            "stale-branch",
+        ],
+        cwd=fix5["main_repo"],
+        check=True,
+        capture_output=True,
+    )
+    shutil.rmtree(wt_stale)
+    r5 = _run(*_worktree_cli_args(fix5))
+    assert r5.returncode != 0 and fix5["wt"].exists()
+
+    # 5b. gc.log presente (MB8)
+    fix6 = _create_worktree_fixture(tmp_path / "c6")
+    (fix6["main_repo"] / ".git" / "gc.log").write_text(
+        "gc log file\n", encoding="utf-8"
+    )
+    r6 = _run(*_worktree_cli_args(fix6))
+    assert r6.returncode != 0 and fix6["wt"].exists()
+
+    # Control positivo: All 5 satisfied, uppercase ASENTADA accepted
+    fix_pos = _create_worktree_fixture(tmp_path / "c_pos")
+    r_pos = _run(*_worktree_cli_args(fix_pos))
+    assert r_pos.returncode == 0, r_pos.stderr
+
+    # Argument validation: multiple origins rejected with rc 2
+    r_multi = _run(*_worktree_cli_args(fix_pos), str(tmp_path))
+    assert r_multi.returncode == 2
+
+    # Verification: rejection by g-04 does not consume the authorization phrase
+    fix_nc = _create_worktree_fixture(tmp_path / "c_nc")
+    r_arch_nc = _run(
+        *_worktree_cli_args(
+            fix_nc,
+            "--apply-archive",
+            "--list",
+            str(fix_nc["approved"]),
+            "--list-sha256",
+            fix_nc["list_hash"],
+        )
+    )
+    assert r_arch_nc.returncode == 0, r_arch_nc.stderr
+    nc_home = tmp_path / "nc_home"
+    thread_nc, msg_nc = _seed_retire_auth(
+        tmp_path, nc_home, archive_root=fix_nc["archive_root"]
+    )
+    (
+        fix_nc["project_root"]
+        / ".agent"
+        / "collaboration"
+        / "_archive"
+        / "backlog_done.md"
+    ).write_text("| 2026-11-25 | WOT-2026-999z | Other |\n", encoding="utf-8")
+    cmd_nc = _worktree_cli_args(
+        fix_nc,
+        "--apply-retire",
+        "--list",
+        str(fix_nc["approved"]),
+        "--list-sha256",
+        fix_nc["list_hash"],
+        "--thread-id",
+        thread_nc,
+        "--message-id",
+        msg_nc,
+    )
+    r_fail = _run(*cmd_nc, home=nc_home)
+    assert r_fail.returncode != 0
+    assert fix_nc["wt"].exists()
+    (
+        fix_nc["project_root"]
+        / ".agent"
+        / "collaboration"
+        / "_archive"
+        / "backlog_done.md"
+    ).write_text(f"| 2026-11-25 | {fix_nc['ticket']} | Done |\n", encoding="utf-8")
+    r_succ = _run(*cmd_nc, home=nc_home)
+    assert r_succ.returncode == 0, r_succ.stderr
+    assert not fix_nc["wt"].exists()
+
+
+NEGATIVAS: list[dict[str, Any]] = [
+    # 8 filas de WOT-2026-189a
+    {
+        "id": "189a-apply-apply-retire",
+        "extra": ("--apply", "--apply-retire"),
+        "expected": "ERROR: --apply cannot be combined with --apply-archive or --apply-retire",
+    },
+    {
+        "id": "189a-apply-apply-retire-recover",
+        "extra": ("--apply", "--apply-retire", "--recover-retirement"),
+        "expected": "ERROR: --apply cannot be combined with --apply-archive or --apply-retire",
+    },
+    {
+        "id": "189a-apply-alone",
+        "extra": ("--apply",),
+        "expected": "ERROR: --apply is disabled; use --apply-archive or --apply-retire",
+    },
+    {
+        "id": "189a-recover-resume-retire",
+        "extra": ("--recover-retirement", "--resume", "--apply-retire"),
+        "expected": "ERROR: --recover-retirement is disabled",
+    },
+    {
+        "id": "189a-resume-apply-retire",
+        "extra": ("--resume", "--apply-retire"),
+        "expected": "ERROR: --resume cannot be used with --apply-retire",
+    },
+    {
+        "id": "189a-missing-thread-id",
+        "extra": ("--apply-retire",),
+        "expected": "ERROR: --thread-id es obligatorio",
+    },
+    {
+        "id": "189a-missing-message-id",
+        "extra": ("--apply-retire", "--thread-id", "T"),
+        "expected": "ERROR: --message-id es obligatorio",
+    },
+    {
+        "id": "189a-missing-list",
+        "extra": ("--apply-retire", "--thread-id", "T", "--message-id", "M"),
+        "expected": "ERROR: --apply requires --list and --list-sha256",
+    },
+    # 7 filas nuevas de WOT-2026-190a (tn1 + 6 casos de g-04)
+    {
+        "id": "tn1-tree-single-step",
+        "type": "tree-arg",
+        "extra": ("--tree", "--apply"),
+        "expected": "ERROR: --apply is disabled",
+    },
+    {
+        "id": "g04-ticket-ausente",
+        "type": "g04-c1",
+        "expected": "backlog",
+    },
+    {
+        "id": "g04-no-integrado",
+        "type": "g04-c2",
+        "expected": "ancestor",
+    },
+    {
+        "id": "g04-sucio",
+        "type": "g04-c3",
+        "expected": "clean",
+    },
+    {
+        "id": "g04-sesion-no-asentada",
+        "type": "g04-c4",
+        "expected": "settled",
+    },
+    {
+        "id": "g04-prune-pendiente",
+        "type": "g04-c5a",
+        "expected": "prune",
+    },
+    {
+        "id": "g04-gc-log-presente",
+        "type": "g04-c5b",
+        "expected": "gc",
+    },
+]
+
+
+def test_negativas_exact_ids_and_count() -> None:
+    """MB10: assert exact 15 rows and IDs in NEGATIVAS."""
+    assert len(NEGATIVAS) == 15
+    expected_ids = {
+        "189a-apply-apply-retire",
+        "189a-apply-apply-retire-recover",
+        "189a-apply-alone",
+        "189a-recover-resume-retire",
+        "189a-resume-apply-retire",
+        "189a-missing-thread-id",
+        "189a-missing-message-id",
+        "189a-missing-list",
+        "tn1-tree-single-step",
+        "g04-ticket-ausente",
+        "g04-no-integrado",
+        "g04-sucio",
+        "g04-sesion-no-asentada",
+        "g04-prune-pendiente",
+        "g04-gc-log-presente",
+    }
+    assert {row["id"] for row in NEGATIVAS} == expected_ids
+
+
+@pytest.mark.parametrize("row", NEGATIVAS, ids=[r["id"] for r in NEGATIVAS])
+def test_negativas_exit_nonzero_and_intact_tree(
+    tmp_path: Path, row: dict[str, Any]
+) -> None:
+    """MB11: each negative case exits with rc!=0 and leaves origin tree intact."""
+    row_type = row.get("type", "189a")
+    if row_type == "189a":
+        origin = tmp_path / "origin"
+        origin.mkdir()
+        (origin / "file.txt").write_text("intact", encoding="utf-8")
+        archive = tmp_path / "archive"
+        before_hash = archive_tree.tree_hash(origin)
+        result = _run(
+            "--origin",
+            str(origin),
+            "--archive-root",
+            str(archive),
+            *row["extra"],
+        )
+        assert result.returncode != 0
+        assert archive_tree.tree_hash(origin) == before_hash
+    elif row_type == "tree-arg":
+        fix = _create_worktree_fixture(tmp_path)
+        before_hash = archive_tree.tree_hash(fix["wt"])
+        result = _run(
+            "--origin",
+            str(fix["wt"]),
+            "--archive-root",
+            str(fix["archive_root"]),
+            *row["extra"],
+        )
+        assert result.returncode != 0
+        assert archive_tree.tree_hash(fix["wt"]) == before_hash
+    else:
+        fix = _create_worktree_fixture(tmp_path)
+        if row_type == "g04-c1":
+            (
+                fix["project_root"]
+                / ".agent"
+                / "collaboration"
+                / "_archive"
+                / "backlog_done.md"
+            ).write_text("| 2026-11-25 | OTHER-TICKET | x |\n", encoding="utf-8")
+        elif row_type == "g04-c2":
+            (fix["wt"] / "unmerged.txt").write_text("x", encoding="utf-8")
+            subprocess.run(
+                ["git", "-C", str(fix["wt"]), "add", "."],
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "-C", str(fix["wt"]), "commit", "-qm", "unmerged"],
+                check=True,
+                capture_output=True,
+            )
+        elif row_type == "g04-c3":
+            (fix["wt"] / ".gitignore").write_text("x.log\n", encoding="utf-8")
+            (fix["wt"] / "x.log").write_text("dirty", encoding="utf-8")
+        elif row_type == "g04-c4":
+            fix["registry"].write_text(
+                json.dumps({"sessions": [{"code": "IM-190a", "status": "activa"}]}),
+                encoding="utf-8",
+            )
+        elif row_type == "g04-c5a":
+            stale = tmp_path / "stale_wt"
+            subprocess.run(
+                ["git", "worktree", "add", "-q", str(stale), "-b", "stale"],
+                cwd=fix["main_repo"],
+                check=True,
+                capture_output=True,
+            )
+            shutil.rmtree(stale)
+        elif row_type == "g04-c5b":
+            (fix["main_repo"] / ".git" / "gc.log").write_text(
+                "gc log\n", encoding="utf-8"
+            )
+
+        before_hash = archive_tree.tree_hash(fix["wt"])
+        result = _run(*_worktree_cli_args(fix))
+        assert result.returncode != 0
+        assert archive_tree.tree_hash(fix["wt"]) == before_hash
+
+
+def test_negativas_positive_controls(tmp_path: Path) -> None:
+    """Verify positive controls of g-02 (tree mutated/retired) and g-04 (accepted)."""
+    # Positive of g-04: valid dry run accepted
+    fix = _create_worktree_fixture(tmp_path / "pos_g04")
+    res = _run(*_worktree_cli_args(fix))
+    assert res.returncode == 0, res.stderr
+
+    # Positive of g-02: valid retirement mutates tree (removes clone)
+    origin, archive, approved = _fixture(tmp_path / "pos_g02")
+    archive.mkdir()
+    list_hash = _approved(origin, approved)
+    _run(
+        "--origin",
+        str(origin),
+        "--archive-root",
+        str(archive),
+        "--apply-archive",
+        "--list",
+        str(approved),
+        "--list-sha256",
+        list_hash,
+    )
+    thread, message = _seed_retire_auth(tmp_path / "pos_g02", tmp_path / "pos_g02")
+    ret_res = _run(
+        *(_retire_args(origin, archive, approved, list_hash, thread, message)),
+        home=tmp_path / "pos_g02",
+    )
+    assert ret_res.returncode == 0
+    assert not (origin / "clone-a").exists()

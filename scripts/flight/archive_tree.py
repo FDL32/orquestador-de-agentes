@@ -13,13 +13,14 @@ import ctypes
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,6 +40,180 @@ CHAIN_LEDGER_NAME = "chain_authority_ledger.jsonl"
 
 class ArchiveTreeError(RuntimeError):
     """A fail-closed precondition or evidence check failed."""
+
+
+def _default_git_runner(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    """Before: git command needs execution without throwing subprocess errors.
+    During: execute subprocess.run capturing stdout and stderr in text mode.
+    After: return CompletedProcess for status inspection.
+    """
+    return subprocess.run(  # noqa: S603
+        cmd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+
+
+_git_runner = _default_git_runner
+
+
+def set_git_runner(
+    runner: Callable[[list[str]], subprocess.CompletedProcess[str]] | None,
+) -> None:
+    """Before: default runner invokes real subprocess git.
+    During: update the internal git invocation hook.
+    After: tests can inspect or control git commands.
+    """
+    global _git_runner
+    _git_runner = runner or _default_git_runner
+
+
+def _get_git_common_dir(origin: Path) -> Path | None:
+    """Before: worktree origin path is known but common repo dir may differ.
+    During: invoke git rev-parse --git-common-dir to obtain common dir.
+    After: return Path to common repository directory, or None if not git.
+    """
+    with suppress(Exception):
+        res = _git_runner(
+            [
+                "git",
+                "-C",
+                str(origin),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ]
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return Path(res.stdout.strip())
+    return None
+
+
+def _is_worktree_registered(origin: Path, common_dir: Path) -> bool:
+    """Before: worktree registration in common repo is unknown.
+    During: query git worktree list --porcelain and match origin path.
+    After: return True if registered, False otherwise.
+    """
+    with suppress(Exception):
+        res = _git_runner(
+            ["git", "-C", str(common_dir), "worktree", "list", "--porcelain"]
+        )
+        if res.returncode == 0:
+            target_norm = os.path.normcase(str(origin.resolve()))
+            for line in res.stdout.splitlines():
+                if line.startswith("worktree "):
+                    wt_path = line[len("worktree ") :].strip()
+                    if os.path.normcase(str(Path(wt_path).resolve())) == target_norm:
+                        return True
+    return False
+
+
+def _verify_tree_conditions(args: argparse.Namespace, origin: Path) -> None:  # noqa: C901
+    """Before: tree mode requires satisfying all five R1 conditions.
+    During: verify ticket in backlog_done, ancestor integration, clean worktree, settled session, and no gc or prune.
+    After: fail-closed with ArchiveTreeError on any violation without modifying origin.
+    """
+    if not origin.exists():
+        return
+    if not args.ticket:
+        raise ArchiveTreeError("missing --ticket argument for tree mode")
+    if not args.project_root:
+        raise ArchiveTreeError("missing --project-root argument for tree mode")
+    backlog_file = (
+        args.project_root / ".agent" / "collaboration" / "_archive" / "backlog_done.md"
+    )
+    if not backlog_file.is_file():
+        raise ArchiveTreeError(f"backlog_done.md is missing: {backlog_file}")
+    backlog_text = backlog_file.read_text(encoding="utf-8", errors="replace")
+    pattern = rf"^\| [^|]+ \| {re.escape(args.ticket)} \|"
+    if not re.search(pattern, backlog_text, re.MULTILINE):
+        raise ArchiveTreeError(
+            f"ticket {args.ticket} not found closed in backlog_done.md"
+        )
+
+    if not args.integrated_into:
+        raise ArchiveTreeError("missing --integrated-into argument for tree mode")
+    common_dir = _get_git_common_dir(origin)
+    if common_dir is None:
+        raise ArchiveTreeError(f"cannot resolve git common dir for origin: {origin}")
+    head_res = _git_runner(["git", "-C", str(origin), "rev-parse", "HEAD"])
+    if head_res.returncode != 0 or not head_res.stdout.strip():
+        raise ArchiveTreeError(f"cannot resolve HEAD for origin: {origin}")
+    head = head_res.stdout.strip()
+    mb_res = _git_runner(
+        [
+            "git",
+            "-C",
+            str(common_dir),
+            "merge-base",
+            "--is-ancestor",
+            head,
+            args.integrated_into,
+        ]
+    )
+    if mb_res.returncode != 0:
+        raise ArchiveTreeError(
+            f"origin HEAD {head} is not an ancestor of {args.integrated_into}"
+        )
+
+    st_res = _git_runner(
+        ["git", "-C", str(origin), "status", "--porcelain", "-uall", "--ignored"]
+    )
+    if st_res.returncode != 0 or st_res.stdout.strip():
+        raise ArchiveTreeError(
+            "worktree origin is not clean (modified, untracked, or ignored files present)"
+        )
+
+    if not args.registry:
+        raise ArchiveTreeError("missing --registry argument for tree mode")
+    if not args.owner_session:
+        raise ArchiveTreeError("missing --owner-session argument for tree mode")
+    if not args.registry.is_file():
+        raise ArchiveTreeError(f"registry file is missing: {args.registry}")
+    try:
+        registry_data = json.loads(args.registry.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise ArchiveTreeError(f"registry file is invalid: {exc}") from exc
+    if not isinstance(registry_data, dict) or not isinstance(
+        registry_data.get("sessions"), list
+    ):
+        raise ArchiveTreeError("registry must be an object with a sessions list")
+
+    seen_codes: set[str] = set()
+    owner_entry: dict[str, Any] | None = None
+    for entry in registry_data["sessions"]:
+        if not isinstance(entry, dict):
+            raise ArchiveTreeError("invalid session entry in registry")
+        code = str(entry.get("code", "")).strip()
+        if code in seen_codes:
+            raise ArchiveTreeError(f"duplicate session code in registry: {code}")
+        seen_codes.add(code)
+        if code == args.owner_session:
+            owner_entry = entry
+
+    if owner_entry is None:
+        raise ArchiveTreeError(
+            f"owner session {args.owner_session} not found in registry"
+        )
+    status_str = str(owner_entry.get("status", "")).strip().casefold()
+    if not (status_str.startswith("asentada") or status_str.startswith("settled")):
+        raise ArchiveTreeError(
+            f"owner session {args.owner_session} is not settled (status: {status_str})"
+        )
+
+    prune_res = _git_runner(
+        ["git", "-C", str(common_dir), "worktree", "prune", "--dry-run"]
+    )
+    prune_out = (prune_res.stdout + prune_res.stderr).strip()
+    if prune_res.returncode != 0 or prune_out:
+        raise ArchiveTreeError("pending worktree prune detected in git common dir")
+    if (common_dir / "gc.pid").exists() or (common_dir / "gc.log").exists():
+        raise ArchiveTreeError(
+            "git gc is in progress or pending (gc.pid or gc.log present in git common dir)"
+        )
 
 
 def _sha256_bytes(data: bytes) -> str:
@@ -112,18 +287,24 @@ def _candidate_dirs(origin: Path) -> list[Path]:
     return result
 
 
-def _approved_entries(
-    path: Path, expected: str | None, origin: Path
+def _approved_entries(  # noqa: C901
+    path: Path | None,
+    expected: str | None,
+    origin: Path,
+    *,
+    tree: bool = False,
 ) -> list[dict[str, Any]]:
     """Before: an optional approval file is supplied.
     During: verify its exact byte hash and every selected tree hash.
     After: return normalized approved entries or raise without writing.
     """
     if expected is None:
+        if tree:
+            return [{"rel": ".", "sha256": tree_hash(origin)}]
         return [
             {"rel": p.name, "sha256": tree_hash(p)} for p in _candidate_dirs(origin)
         ]
-    if not path.is_file():
+    if path is None or not path.is_file():
         raise ArchiveTreeError("approved list is missing")
     actual = p7_common.sha256_file(path)
     if actual.lower() != expected.lower():
@@ -139,7 +320,7 @@ def _approved_entries(
         if not isinstance(raw, dict) or not raw.get("rel") or not raw.get("sha256"):
             raise ArchiveTreeError("every approved entry needs rel and sha256")
         rel = str(raw["rel"])
-        target = origin / rel
+        target = origin if tree and rel in (".", origin.name) else origin / rel
         if Path(rel).is_absolute() or ".." in Path(rel).parts or not target.is_dir():
             raise ArchiveTreeError(f"invalid approved tree: {rel}")
         if p7_common.is_reparse_or_link(target) or tree_hash(target) != str(
@@ -320,12 +501,14 @@ def _verify_zip(zip_path: Path, manifest: list[dict[str, Any]]) -> None:
 
 
 def _manifest_for_entries(
-    origin: Path, entries: list[dict[str, Any]]
+    origin: Path, entries: list[dict[str, Any]], *, tree: bool = False
 ) -> list[dict[str, Any]]:
-    """Before: entries are approved clone directories.
+    """Before: entries are approved clone directories or tree.
     During: build one complete manifest with clone-relative names.
     After: return rows suitable for zip and independent restoration.
     """
+    if tree:
+        return _tree_rows(origin)
     result = []
     for entry in entries:
         clone = origin / str(entry["rel"])
@@ -429,6 +612,11 @@ def _retire(
     During: write an incomplete recovery record, remove files, then complete it.
     After: only a vanished origin receives a complete RETIRADO row.
     """
+    common_dir = _get_git_common_dir(origin)
+    is_registered = False
+    if common_dir is not None:
+        is_registered = _is_worktree_registered(origin, common_dir)
+
     _preflight_retirement(origin, manifest)
     ledger = archive_root / "retirement_recovery.json"
     if ledger.exists():
@@ -474,6 +662,16 @@ def _retire(
     )
     p7_common.write_jsonl_index_atomic(archive_root / "index.jsonl", rows)
     ledger.unlink(missing_ok=True)
+
+    if is_registered and common_dir is not None:
+        rem_res = _git_runner(
+            ["git", "-C", str(common_dir), "worktree", "remove", str(origin)]
+        )
+        prune_res = _git_runner(["git", "-C", str(common_dir), "worktree", "prune"])
+        if rem_res.returncode != 0 or prune_res.returncode != 0:
+            raise ArchiveTreeError(
+                f"git worktree deregistration failed: remove rc={rem_res.returncode}, prune rc={prune_res.returncode}"
+            )
 
 
 def _retire_existing(origin: Path, archive_root: Path, list_sha: str) -> None:
@@ -597,10 +795,12 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901
     if args.min_libre > 0 and not archive_root.is_dir() and not args.dry_run:
         return 4
     before_origin = tree_hash(origin)
-    candidates = _candidate_dirs(origin)
+    candidates = [origin] if getattr(args, "tree", False) else _candidate_dirs(origin)
     if not candidates:
         raise ArchiveTreeError("no candidates")
-    entries = _approved_entries(args.list_path, args.list_sha256, origin)
+    entries = _approved_entries(
+        args.list_path, args.list_sha256, origin, tree=getattr(args, "tree", False)
+    )
     selected = {entry["rel"] for entry in entries}
     if args.max_bytes >= 0:
         total = sum(
@@ -646,7 +846,9 @@ def run(args: argparse.Namespace) -> int:  # noqa: C901
         family_dir.mkdir()
         zip_path = family_dir / f"{family}.zip"
         manifest_path = family_dir / f"{family}.manifest.json"
-        manifest = _manifest_for_entries(origin, entries)
+        manifest = _manifest_for_entries(
+            origin, entries, tree=getattr(args, "tree", False)
+        )
         temp_zip = family_dir / f".{zip_path.name}.tmp"
         with zipfile.ZipFile(
             temp_zip, "x", compression=zipfile.ZIP_DEFLATED
@@ -799,6 +1001,12 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     parser.add_argument("--tamano-lote", type=int, default=0)
     parser.add_argument("--prefijo-familia", dest="prefix", default="clone_archive")
     parser.add_argument("--umbral-hilo", type=int, default=1024 * 1024)
+    parser.add_argument("--tree", action="store_true")
+    parser.add_argument("--ticket")
+    parser.add_argument("--project-root", type=Path)
+    parser.add_argument("--integrated-into")
+    parser.add_argument("--registry", type=Path)
+    parser.add_argument("--owner-session")
     args = parser.parse_args(argv)
     apply_plain = args.apply
     if apply_plain and (args.apply_archive or args.apply_retire):
@@ -851,6 +1059,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         print("ERROR: --apply requires --list and --list-sha256", file=sys.stderr)
         return 2
     try:
+        if args.tree:
+            _verify_tree_conditions(args, args.origin)
         if args.apply_retire:
             authorization = _authorize_retire(args)
             if authorization is not None:
