@@ -642,7 +642,9 @@ NOT_THE_LINK = {
 # 215 -> 216: WOT-2026-185a added scripts/check_user_order_authority.py (clean file: it never names motor_destination_link, so no new exemption).
 # 216 -> 218: WOT-2026-222a added the two catalog scripts (clean files: they never
 # name motor_destination_link, so no new exemptions).
-SCRIPTS_COUNT = 218
+# 218 -> 219: WOT-2026-214a added scripts/migrate_observations_schema.py (clean file:
+# never names motor_destination_link).
+SCRIPTS_COUNT = 219
 CENSUS_DENOMINATOR = SCRIPTS_COUNT + 1
 
 # MEASURED on the 212 files (211 scripts/*.py + .agent/motor_checkpoint.py), 2026-11-02:
