@@ -50,3 +50,10 @@ d74fa2e9cfa3302c6a4353a8739664be10bbaa55:tests/unit/test_comms_alert.py:generic-
 2590d9a9b653576050e3553f65531abbe48905f0:tests/unit/test_comms_alert.py:generic-api-key:3213
 3ba0541997c64034995cb710781b49468cade411:tests/unit/test_comms_alert.py:generic-api-key:3173
 3ba0541997c64034995cb710781b49468cade411:tests/unit/test_comms_alert.py:generic-api-key:3174
+# CO-175 2026-11-25: falso positivo en tests/unit/test_ensemble_dispatch.py:8968 (CI gitleaks
+# fallo tras el push del vuelo vuelo-20261026b). La linea son nombres de modelo de fixture
+# (nan_api/qwen3.6, nan_api/deepseek-v4-flash, mistral_api/mistral-large-2512) dentro de una
+# tupla de prueba para family_violations(); no hay credencial real. Verificado con
+# `git show 85d9925f6adb35b6514279523cabf30882997e96:tests/unit/test_ensemble_dispatch.py`
+# (lineas 8960-8972). Mismo patron que las entradas de MODEL_FAMILY_MAP ya listadas arriba.
+85d9925f6adb35b6514279523cabf30882997e96:tests/unit/test_ensemble_dispatch.py:generic-api-key:8968
