@@ -592,6 +592,25 @@ def test_dedupe_message_id_y_pulso_supervision(tmp_path: Path) -> None:
     assert _measure(tmp_path, [unrelated])["meta"]["n"] == 0
 
 
+def test_dedupe_apertura_no_crea_pulso_fantasma(tmp_path: Path) -> None:
+    """Before: repeat a heartbeat opening with the same message id.
+
+    During: measure the transcript through the public CLI.
+
+    After: the repeated opening contributes one pulse and one response only.
+    """
+    folder = tmp_path / "cuenta"
+    records = _turn(176, [_usage(100, cache_read=80)])
+    records[0]["message"]["id"] = "opening-1"
+    repeated_opening = json.loads(json.dumps(records[0]))
+    records.insert(1, repeated_opening)
+    _write_jsonl(folder, records)
+    result = _measure(tmp_path, [folder])
+    assert result["meta"]["n"] == 1
+    assert result["meta"]["n_sin_respuesta"] == 0
+    assert result["pulsos"][0]["vueltas"] == 1
+
+
 def test_pulso_sin_respuesta_es_despierta(tmp_path: Path) -> None:
     """Before: create a heartbeat opening without a usage-bearing response.
 
@@ -605,6 +624,20 @@ def test_pulso_sin_respuesta_es_despierta(tmp_path: Path) -> None:
     assert result["meta"]["n"] == 1
     assert result["meta"]["n_sin_respuesta"] == 1
     assert result["pulsos"][0]["estado_tick"] == "despierta"
+
+
+def test_pesos_por_defecto_quedan_declarados(tmp_path: Path) -> None:
+    """Before: create one pulse without overriding pricing parameters.
+
+    During: measure it through the public CLI using parser defaults.
+
+    After: the artifact exposes the declared default weights and cost.
+    """
+    folder = tmp_path / "cuenta"
+    _write_jsonl(folder, _turn(176, [_usage(100, cache_read=80, creation=20)]))
+    result = _measure(tmp_path, [folder])
+    assert result["meta"]["pesos_coste"] == {"cache_read": 0.1, "fresco": 1.0}
+    assert result["pulsos"][0]["coste_ponderado"] == pytest.approx(128)
 
 
 def test_coste_ponderado_usa_pesos_declarados(tmp_path: Path) -> None:

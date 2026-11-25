@@ -380,8 +380,7 @@ def _read_measurement(  # noqa: C901
         notices.append("carpetas con identico contenido: no sumar")
     for folder in actual:
         for path in sorted(folder.rglob("*.jsonl")):
-            records = _json_lines(path)
-            unique_records = _deduplicate_records(records)
+            records = _deduplicate_records(_json_lines(path))
             boundaries = [
                 index
                 for index, record in enumerate(records)
@@ -405,7 +404,7 @@ def _read_measurement(  # noqa: C901
             usage_pulses = 0
             previous_stamp: dt.datetime | None = None
             compactation_before = False
-            for record in unique_records:
+            for record in records:
                 if record.get("type") != "assistant":
                     continue
                 used = _usage(record)
