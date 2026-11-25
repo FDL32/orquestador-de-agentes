@@ -1091,6 +1091,68 @@ def test_phase_b_denied_without_phase_a_or_revalidation(tmp_path: Path) -> None:
         )
 
 
+@pytest.mark.parametrize("active_roles", [None, [], "invalid"])
+def test_phase_a_rejects_non_dict_active_roles_with_base_reason(
+    tmp_path: Path, active_roles
+) -> None:
+    from scripts.flight.rotate_coordinator import RotationRejectedError, rotate_phase_a
+    from scripts.flight.verify_user_authorization import Decision
+
+    _phase_a_files(tmp_path)
+    roster_path = tmp_path / "flight_roster.json"
+    roster = json.loads(roster_path.read_text(encoding="utf-8"))
+    if active_roles is None:
+        del roster["active_roles"]
+    else:
+        roster["active_roles"] = active_roles
+    roster_path.write_text(json.dumps(roster) + "\n", encoding="utf-8")
+    _write_snapshot(tmp_path, expires="2026-01-01T08:00:00+01:00")
+    (tmp_path / "autorizacion_cadena.ledger.jsonl").write_text("", encoding="utf-8")
+
+    with pytest.raises(
+        RotationRejectedError, match=r"^phase-a-outgoing-identity-mismatch$"
+    ):
+        rotate_phase_a(
+            tmp_path,
+            _request(),
+            message_id=MESSAGE_ID,
+            now=datetime(2026, 1, 1, 6, 52, tzinfo=timezone.utc),
+            decision=Decision(True, "authorized", message_id=MESSAGE_ID),
+            guard_rc=0,
+            window_open=True,
+            quota_hard_pct=50,
+            record=_phase_a_record(tmp_path),
+        )
+
+
+@pytest.mark.parametrize("active_roles", [None, [], "invalid"])
+def test_phase_b_rejects_non_dict_active_roles_with_base_reason(
+    tmp_path: Path, active_roles
+) -> None:
+    from scripts.flight.rotate_coordinator import RotationRejectedError, rotate_phase_b
+    from scripts.flight.verify_user_authorization import Decision
+
+    _phase_b_files(tmp_path)
+    roster_path = tmp_path / "flight_roster.json"
+    roster = json.loads(roster_path.read_text(encoding="utf-8"))
+    if active_roles is None:
+        del roster["active_roles"]
+    else:
+        roster["active_roles"] = active_roles
+    roster_path.write_text(json.dumps(roster) + "\n", encoding="utf-8")
+
+    with pytest.raises(RotationRejectedError, match=r"^phase-a-required$"):
+        rotate_phase_b(
+            tmp_path,
+            _request(),
+            decision=Decision(True, "authorized", message_id=MESSAGE_ID),
+            guard_rc=0,
+            window_open=True,
+            quota_hard_pct=50,
+            ack_age_seconds=0,
+        )
+
+
 def test_phase_b_rejects_other_message_and_roster_identity(tmp_path: Path) -> None:
     from scripts.flight.rotate_coordinator import RotationRejectedError, rotate_phase_b
     from scripts.flight.verify_user_authorization import Decision

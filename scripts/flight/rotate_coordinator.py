@@ -371,12 +371,13 @@ def _validate_phase_a_outgoing(flight_dir: Path, request: RotationRequest) -> No
     except Exception as exc:
         raise RotationRejectedError("phase-a-outgoing-identity-mismatch") from exc
     active_roles = roster.get("active_roles")
-    try:
-        orchestrator = orchestrator_entry(active_roles)
-    except RosterRoleKeyError as exc:
-        raise RotationRejectedError(
-            f"phase-a-outgoing-identity-mismatch: {exc}"
-        ) from exc
+    if not isinstance(active_roles, dict):
+        orchestrator = None
+    else:
+        try:
+            orchestrator = orchestrator_entry(active_roles)
+        except RosterRoleKeyError as exc:
+            raise RotationRejectedError("phase-a-outgoing-identity-mismatch") from exc
     sessions = registry.get("sessions")
     outgoing_sessions = (
         [
@@ -509,7 +510,7 @@ def _install_incoming_orchestrator(
     try:
         current_orchestrator = orchestrator_entry(active_roles)
     except RosterRoleKeyError as exc:
-        raise RotationRejectedError(f"roster-orchestrador-invalid: {exc}") from exc
+        raise RotationRejectedError("roster-orchestrador-invalid") from exc
     if not isinstance(current_orchestrator, dict):
         raise RotationRejectedError("roster-orchestrador-invalid")
     if current_orchestrator.get("estado") != "PENDIENTE_ACK":
@@ -749,10 +750,13 @@ def _rotate_phase_b_locked(  # noqa: C901
     log_path = flight_dir / "roster_changes.jsonl"
     roster = roster_writer._read_roster(roster_path)
     active_roles = roster.get("active_roles")
-    try:
-        orquestador = orchestrator_entry(active_roles)
-    except RosterRoleKeyError as exc:
-        raise RotationRejectedError(f"phase-a-required: {exc}") from exc
+    if not isinstance(active_roles, dict):
+        orquestador = None
+    else:
+        try:
+            orquestador = orchestrator_entry(active_roles)
+        except RosterRoleKeyError as exc:
+            raise RotationRejectedError("phase-a-required") from exc
     if (
         not isinstance(orquestador, dict)
         or orquestador.get("estado") != "PENDIENTE_ACK"
