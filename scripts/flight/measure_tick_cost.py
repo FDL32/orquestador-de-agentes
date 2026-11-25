@@ -24,7 +24,10 @@ from pathlib import Path
 from typing import Any
 
 
-PULSE_RE = re.compile(r"^\s*LATIDO CO-(\d+)")
+PULSE_RE = re.compile(r"^\s*LATIDO (?:SUPERVISION )?CO-(\d+)\b")
+DEFAULT_CACHE_READ_WEIGHT = 0.1
+DEFAULT_FRESH_WEIGHT = 1.0
+DEFAULT_CACHE_COLD_THRESHOLD = 100_000
 METRICS = (
     "llamadas",
     "vueltas",
@@ -195,10 +198,34 @@ def _usage(record: dict[str, Any]) -> tuple[str, dict[str, int]] | None:
     return str(model or "desconocido"), values
 
 
+def _deduplicate_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Before: receive bounded transcript records.
+
+    During: retain the first record for every non-empty ``message.id`` while
+    preserving records without an id because they cannot be proven duplicates.
+
+    After: return records in transcript order without repeated messages.
+    """
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for record in records:
+        message = record.get("message")
+        message_id = message.get("id") if isinstance(message, dict) else None
+        if message_id is not None:
+            key = str(message_id)
+            if key in seen:
+                continue
+            seen.add(key)
+        unique.append(record)
+    return unique
+
+
 def _pulse(  # noqa: C901
     records: list[dict[str, Any]],
     folder: Path,
     windows: list[tuple[dt.datetime, dt.datetime, str]],
+    cache_read_weight: float = DEFAULT_CACHE_READ_WEIGHT,
+    fresh_weight: float = DEFAULT_FRESH_WEIGHT,
 ) -> dict[str, Any]:
     """Before: receive one pulse's bounded records.
 
@@ -206,6 +233,7 @@ def _pulse(  # noqa: C901
 
     After: return one complete pulse mapping, including nulls for absent data.
     """
+    records = _deduplicate_records(records)
     opening = records[0]
     message = opening.get("message", {})
     stamp = _timestamp(opening.get("timestamp"))
@@ -281,9 +309,21 @@ def _pulse(  # noqa: C901
             for item in usages
         ),
         "cache_read": sum(item[1]["cache_read_input_tokens"] for item in usages),
+        "coste_ponderado": sum(
+            item[1]["input_tokens"] + item[1]["cache_creation_input_tokens"]
+            for item in usages
+        )
+        * fresh_weight
+        + sum(item[1]["cache_read_input_tokens"] for item in usages)
+        * cache_read_weight,
         "timestamp": opening.get("timestamp"),
         "estado": _pulse_state(stamp, windows),
         "compact_boundary": compact,
+        "estado_tick": "despierta"
+        if not usages
+        else "quieto"
+        if len(tools) <= 1
+        else "activo",
         "ordenes": orders,
     }
     return pulse
@@ -310,6 +350,8 @@ def _read_measurement(  # noqa: C901
     co_from: int | None,
     co_to: int | None,
     windows: list[tuple[dt.datetime, dt.datetime, str]],
+    cache_read_weight: float = DEFAULT_CACHE_READ_WEIGHT,
+    fresh_weight: float = DEFAULT_FRESH_WEIGHT,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[str], bool, int, int]:
     """Before: receive validated folders and filters.
 
@@ -339,6 +381,7 @@ def _read_measurement(  # noqa: C901
     for folder in actual:
         for path in sorted(folder.rglob("*.jsonl")):
             records = _json_lines(path)
+            unique_records = _deduplicate_records(records)
             boundaries = [
                 index
                 for index, record in enumerate(records)
@@ -360,7 +403,9 @@ def _read_measurement(  # noqa: C901
             session_total = 0
             session_pulse = 0
             usage_pulses = 0
-            for _index, record in enumerate(records):
+            previous_stamp: dt.datetime | None = None
+            compactation_before = False
+            for record in unique_records:
                 if record.get("type") != "assistant":
                     continue
                 used = _usage(record)
@@ -383,7 +428,7 @@ def _read_measurement(  # noqa: C901
                     continue
                 pulse_usages = [
                     used
-                    for record in pulse_records
+                    for record in _deduplicate_records(pulse_records)
                     if record.get("type") == "assistant"
                     for used in [_usage(record)]
                     if used is not None
@@ -395,7 +440,22 @@ def _read_measurement(  # noqa: C901
                 total_candidates += 1
                 if not pulse_usages:
                     no_response += 1
-                pulse = _pulse(pulse_records, folder, windows)
+                pulse = _pulse(
+                    pulse_records,
+                    folder,
+                    windows,
+                    cache_read_weight,
+                    fresh_weight,
+                )
+                stamp = _timestamp(pulse["timestamp"])
+                pulse["segundos_desde_pulso_anterior"] = (
+                    None
+                    if previous_stamp is None
+                    else int((stamp - previous_stamp).total_seconds())
+                )
+                pulse["compactacion_previa"] = compactation_before
+                previous_stamp = stamp
+                compactation_before = compactation_before or pulse["compact_boundary"]
                 pulses.append(pulse)
             sessions.append(
                 {
@@ -623,6 +683,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--co-from", type=int)
     parser.add_argument("--co-to", type=int)
     parser.add_argument("--estados")
+    parser.add_argument(
+        "--peso-cache-read", type=float, default=DEFAULT_CACHE_READ_WEIGHT
+    )
+    parser.add_argument("--peso-fresco", type=float, default=DEFAULT_FRESH_WEIGHT)
+    parser.add_argument(
+        "--cache-fria-umbral", type=int, default=DEFAULT_CACHE_COLD_THRESHOLD
+    )
     parser.add_argument("--out")
     return parser
 
@@ -674,7 +741,14 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 raise ValueError("carpeta inexistente")
             windows = _state_windows(Path(args.estados) if args.estados else None)
             pulses, sessions, notices, identical, total_candidates, no_response = (
-                _read_measurement(folders, args.co_from, args.co_to, windows)
+                _read_measurement(
+                    folders,
+                    args.co_from,
+                    args.co_to,
+                    windows,
+                    args.peso_cache_read,
+                    args.peso_fresco,
+                )
             )
             compacted = sum(1 for pulse in pulses if pulse["compact_boundary"])
             accounts = [folder for folder in folders]
@@ -699,6 +773,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 "n_compactados": compacted,
                 "cuenta": account,
                 "sesiones": sessions,
+                "pesos_coste": {
+                    "cache_read": args.peso_cache_read,
+                    "fresco": args.peso_fresco,
+                },
             }
             if non_separable:
                 meta["cuenta_motivo"] = "cuenta no separable"
@@ -706,6 +784,23 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 "meta": meta,
                 "pulsos": pulses,
                 "agregados": _group_aggregates(pulses),
+                "cache_fria": {
+                    "umbral_fresco_tokens": args.cache_fria_umbral,
+                    "pulsos": [
+                        {
+                            "co": pulse["co"],
+                            "timestamp": pulse["timestamp"],
+                            "fresco": pulse["fresco"],
+                            "coste_ponderado": pulse["coste_ponderado"],
+                            "segundos_desde_pulso_anterior": pulse[
+                                "segundos_desde_pulso_anterior"
+                            ],
+                            "compactacion_previa": pulse["compactacion_previa"],
+                        }
+                        for pulse in pulses
+                        if pulse["fresco"] >= args.cache_fria_umbral
+                    ],
+                },
             }
             qualifying = [
                 session["fraccion"]

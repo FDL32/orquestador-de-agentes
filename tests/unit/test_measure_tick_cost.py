@@ -547,3 +547,122 @@ def test_usage_fail_closed_y_cli(tmp_path: Path) -> None:
     existing = tmp_path / "existing.json"
     existing.write_text("old", encoding="utf-8")
     assert main(["--project-dir", str(folder), "--out", str(existing)]) == 2
+
+
+def test_dedupe_message_id_y_pulso_supervision(tmp_path: Path) -> None:
+    """Before: repeat one assistant message and add a supervision heartbeat.
+
+    During: measure both transcript shapes through the public CLI.
+
+    After: the repeated message is counted once and the supervision heartbeat is measured.
+    """
+    folder = tmp_path / "cuenta"
+    duplicate = _turn(176, [_usage(100, cache_read=80, creation=20)])
+    duplicate.append(duplicate[-1].copy())
+    duplicate[-1]["message"] = dict(duplicate[-1]["message"])
+    duplicate[-1]["message"]["id"] = "message-1"
+    duplicate[-2]["message"]["id"] = "message-1"
+    _write_jsonl(folder, duplicate)
+    duplicate_result = _measure(tmp_path, [folder])
+    assert duplicate_result["pulsos"][0]["vueltas"] == 1
+    assert duplicate_result["pulsos"][0]["cache_read"] == 80
+
+    supervision = tmp_path / "supervision"
+    _write_jsonl(supervision, _turn(175, [_usage(100, cache_read=80)]))
+    records = json.loads(
+        "["
+        + ",".join(supervision.joinpath("session.jsonl").read_text().splitlines())
+        + "]"
+    )
+    records[0]["message"]["content"] = "LATIDO SUPERVISION CO-175"
+    _write_jsonl(supervision, records)
+    supervision_result = _measure(tmp_path, [supervision])
+    assert supervision_result["meta"]["n"] == 1
+    assert supervision_result["pulsos"][0]["co"] == 175
+
+    unrelated = tmp_path / "unrelated"
+    _write_jsonl(unrelated, _turn(999, [_usage(10)]))
+    unrelated_records = json.loads(
+        "["
+        + ",".join(unrelated.joinpath("session.jsonl").read_text().splitlines())
+        + "]"
+    )
+    unrelated_records[0]["message"]["content"] = "LATIDO AJENO CO-999"
+    _write_jsonl(unrelated, unrelated_records)
+    assert _measure(tmp_path, [unrelated])["meta"]["n"] == 0
+
+
+def test_pulso_sin_respuesta_es_despierta(tmp_path: Path) -> None:
+    """Before: create a heartbeat opening without a usage-bearing response.
+
+    During: measure the pulse through the public CLI.
+
+    After: it remains in the denominator and is explicitly classified as awake.
+    """
+    folder = tmp_path / "cuenta"
+    _write_jsonl(folder, _turn(176, [], model="<synthetic>"))
+    result = _measure(tmp_path, [folder])
+    assert result["meta"]["n"] == 1
+    assert result["meta"]["n_sin_respuesta"] == 1
+    assert result["pulsos"][0]["estado_tick"] == "despierta"
+
+
+def test_coste_ponderado_usa_pesos_declarados(tmp_path: Path) -> None:
+    """Before: create one pulse with fresh and cache-read tokens.
+
+    During: measure it once with unit weights and once with declared prices.
+
+    After: unit weights equal the raw sum and non-unit weights change the result.
+    """
+    folder = tmp_path / "cuenta"
+    _write_jsonl(folder, _turn(176, [_usage(100, cache_read=80, creation=20)]))
+    unit = _measure(
+        tmp_path,
+        [folder],
+        "--peso-cache-read",
+        "1",
+        "--peso-fresco",
+        "1",
+    )
+    priced = _measure(
+        tmp_path,
+        [folder],
+        "--peso-cache-read",
+        "0.1",
+        "--peso-fresco",
+        "2",
+    )
+    assert unit["pulsos"][0]["coste_ponderado"] == 200
+    assert priced["pulsos"][0]["coste_ponderado"] == pytest.approx(248)
+    assert priced["meta"]["pesos_coste"] == {
+        "cache_read": 0.1,
+        "fresco": 2.0,
+    }
+
+
+def test_informe_cache_fria_separa_tiempo_y_compactacion(tmp_path: Path) -> None:
+    """Before: create a cold pulse after a compacted earlier pulse.
+
+    During: measure with an explicit fresh-token threshold.
+
+    After: only the cold pulse is reported with elapsed seconds and prior compaction.
+    """
+    folder = tmp_path / "cuenta"
+    first = _turn(
+        176,
+        [_usage(10, cache_read=2), _usage(20, cache_read=3)],
+        timestamp="2026-01-01T00:00:00Z",
+    )
+    first.insert(2, {"type": "system", "subtype": "compact_boundary"})
+    second = _turn(
+        176,
+        [_usage(100, cache_read=8, creation=200)],
+        timestamp="2026-01-01T00:02:00Z",
+    )
+    _write_jsonl(folder, first + second)
+    result = _measure(tmp_path, [folder], "--cache-fria-umbral", "100")
+    report = result["cache_fria"]
+    assert report["umbral_fresco_tokens"] == 100
+    assert [item["fresco"] for item in report["pulsos"]] == [300]
+    assert report["pulsos"][0]["segundos_desde_pulso_anterior"] == 120
+    assert report["pulsos"][0]["compactacion_previa"] is True
