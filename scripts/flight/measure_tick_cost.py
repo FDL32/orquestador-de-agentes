@@ -404,7 +404,17 @@ def _read_measurement(  # noqa: C901
             usage_pulses = 0
             previous_stamp: dt.datetime | None = None
             compactation_before = False
-            for record in records:
+            previous_call_by_index: dict[int, dt.datetime | None] = {}
+            last_call_stamp: dt.datetime | None = None
+            for index, record in enumerate(records):
+                if record.get("type") == "assistant" and _usage(record) is not None:
+                    previous_call_by_index[index] = last_call_stamp
+                    timestamp_value = record.get("timestamp")
+                    last_call_stamp = (
+                        _timestamp(timestamp_value)
+                        if isinstance(timestamp_value, str)
+                        else None
+                    )
                 if record.get("type") != "assistant":
                     continue
                 used = _usage(record)
@@ -451,6 +461,27 @@ def _read_measurement(  # noqa: C901
                     None
                     if previous_stamp is None
                     else int((stamp - previous_stamp).total_seconds())
+                )
+                first_call_index = next(
+                    (
+                        index
+                        for index in range(start, end)
+                        if records[index].get("type") == "assistant"
+                        and _usage(records[index]) is not None
+                    ),
+                    None,
+                )
+                pulse["segundos_desde_llamada_anterior"] = (
+                    None
+                    if first_call_index is None
+                    or previous_call_by_index[first_call_index] is None
+                    or not isinstance(records[first_call_index].get("timestamp"), str)
+                    else int(
+                        (
+                            _timestamp(records[first_call_index].get("timestamp"))
+                            - previous_call_by_index[first_call_index]
+                        ).total_seconds()
+                    )
                 )
                 pulse["compactacion_previa"] = compactation_before
                 previous_stamp = stamp
@@ -793,6 +824,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                             "coste_ponderado": pulse["coste_ponderado"],
                             "segundos_desde_pulso_anterior": pulse[
                                 "segundos_desde_pulso_anterior"
+                            ],
+                            "segundos_desde_llamada_anterior": pulse[
+                                "segundos_desde_llamada_anterior"
                             ],
                             "compactacion_previa": pulse["compactacion_previa"],
                         }

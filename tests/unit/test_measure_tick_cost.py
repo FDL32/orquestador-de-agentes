@@ -698,4 +698,48 @@ def test_informe_cache_fria_separa_tiempo_y_compactacion(tmp_path: Path) -> None
     assert report["umbral_fresco_tokens"] == 100
     assert [item["fresco"] for item in report["pulsos"]] == [300]
     assert report["pulsos"][0]["segundos_desde_pulso_anterior"] == 120
+    assert report["pulsos"][0]["segundos_desde_llamada_anterior"] == 120
     assert report["pulsos"][0]["compactacion_previa"] is True
+
+
+def test_cache_fria_separa_llamada_de_pulso_anterior(tmp_path: Path) -> None:
+    """Before: place a non-heartbeat assistant call between two heartbeats.
+
+    During: measure the cold-cache report through the public CLI.
+
+    After: call elapsed time uses the latest prior usage, while pulse elapsed
+    time still uses the previous heartbeat; the first pulse has no prior call.
+    """
+    folder = tmp_path / "cuenta"
+    first = _turn(
+        176,
+        [_usage(10, cache_read=2)],
+        timestamp="2026-01-01T00:00:00Z",
+    )
+    interstitial = [
+        {
+            "type": "user",
+            "timestamp": "2026-01-01T00:01:00Z",
+            "message": {"content": "consulta intermedia"},
+        },
+        {
+            "type": "assistant",
+            "timestamp": "2026-01-01T00:01:00Z",
+            "message": {
+                "model": "model-a",
+                "content": [],
+                "usage": _usage(10, cache_read=2),
+            },
+        },
+    ]
+    second = _turn(
+        176,
+        [_usage(100, cache_read=8, creation=200)],
+        timestamp="2026-01-01T00:02:00Z",
+    )
+    _write_jsonl(folder, first + interstitial + second)
+    result = _measure(tmp_path, [folder], "--cache-fria-umbral", "100")
+    assert result["pulsos"][0]["segundos_desde_llamada_anterior"] is None
+    cold = result["cache_fria"]["pulsos"][0]
+    assert cold["segundos_desde_pulso_anterior"] == 120
+    assert cold["segundos_desde_llamada_anterior"] == 60
