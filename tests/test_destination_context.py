@@ -21,6 +21,8 @@ from unittest.mock import patch
 
 import pytest
 from scripts.destination_context import (
+    _bare_root_warning,
+    _print_summary,
     _schema_tuple,
     _write_map,
     build_map,
@@ -1276,3 +1278,254 @@ def test_agents_drift_reads_what_the_real_migrate_produced(tmp_path):
     assert "schema_version" not in after[0]
     assert "revisor" in after[0]
     assert not any("--migrate" in line for line in after)
+
+
+# =============================================================================
+# WOT-2026-201a: Barrera de arranque para una raiz de motor BARE (m-01..m-15)
+# =============================================================================
+
+
+def _make_bare_motor_fixture(
+    tmp_path: Path, *, head_origin_diff: bool = True
+) -> tuple[Path, str, str]:
+    """Crea un fixture de raiz bare con 2 commits y ref origin/main (WOT-2026-201a).
+
+    Returns (bare_root, head_sha, origin_main_sha).
+    """
+    bare_root = tmp_path / "motor_bare"
+    bare_root.mkdir()
+    _init_git_repo(bare_root)
+    c1 = _commit(bare_root, "a.txt", "1")
+    c2 = _commit(bare_root, "b.txt", "2")
+    origin_sha = c1 if head_origin_diff else c2
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/main", origin_sha],
+        cwd=bare_root,
+        capture_output=True,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "core.bare", "true"],
+        cwd=bare_root,
+        capture_output=True,
+        check=True,
+    )
+    is_bare = subprocess.run(
+        ["git", "-C", str(bare_root), "rev-parse", "--is-bare-repository"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert is_bare.stdout.strip() == "true"
+    return bare_root, c2, origin_sha
+
+
+def test_bare_root_warning_m01_m02_m03_diff_hashes(tmp_path):
+    """m-01, m-02, m-03: Raiz bare con HEAD != origin/main emite [WARN] motor_root bare con hashes truncados a 7."""
+    bare_root, head_sha, origin_sha = _make_bare_motor_fixture(
+        tmp_path, head_origin_diff=True
+    )
+    warn = _bare_root_warning({"motor_root": str(bare_root)})
+    assert warn is not None
+    assert "[WARN] motor_root bare" in warn
+    assert f"HEAD={head_sha[:7]}" in warn
+    assert f"origin/main={origin_sha[:7]}" in warn
+    assert "git status no funciona" in warn
+    assert "prompts y scripts se leen del worktree propio" in warn
+
+
+def test_bare_root_warning_m04_equal_hashes_returns_none(tmp_path):
+    """m-04: Raiz bare con HEAD == origin/main devuelve None."""
+    bare_root, head_sha, origin_sha = _make_bare_motor_fixture(
+        tmp_path, head_origin_diff=False
+    )
+    assert head_sha == origin_sha
+    warn = _bare_root_warning({"motor_root": str(bare_root)})
+    assert warn is None
+
+
+def test_bare_root_warning_m05_missing_origin_ref_warns_no_verificable(tmp_path):
+    """m-05: Raiz bare sin ref origin/main devuelve un WARN con [WARN] motor_root bare y no verificable."""
+    bare_root = tmp_path / "bare_no_origin"
+    bare_root.mkdir()
+    _init_git_repo(bare_root)
+    _commit(bare_root, "a.txt", "1")
+    subprocess.run(
+        ["git", "config", "core.bare", "true"],
+        cwd=bare_root,
+        capture_output=True,
+        check=True,
+    )
+    warn = _bare_root_warning({"motor_root": str(bare_root)})
+    assert warn is not None
+    assert "[WARN] motor_root bare" in warn
+    assert "no verificable" in warn
+
+
+def test_bare_root_warning_m06_empty_repo_warns_no_verificable(tmp_path):
+    """m-06: Raiz bare sin ningun commit (HEAD no resoluble) devuelve [WARN] motor_root bare y no verificable."""
+    bare_root = tmp_path / "bare_empty"
+    bare_root.mkdir()
+    _init_git_repo(bare_root)
+    subprocess.run(
+        ["git", "config", "core.bare", "true"],
+        cwd=bare_root,
+        capture_output=True,
+        check=True,
+    )
+    warn = _bare_root_warning({"motor_root": str(bare_root)})
+    assert warn is not None
+    assert "[WARN] motor_root bare" in warn
+    assert "no verificable" in warn
+
+
+def test_bare_root_warning_m07_normal_repo_returns_none(tmp_path):
+    """m-07: Repo normal (core.bare false) con HEAD distinto de origin/main devuelve None."""
+    repo_root = tmp_path / "normal_repo"
+    repo_root.mkdir()
+    _init_git_repo(repo_root)
+    c1 = _commit(repo_root, "a.txt", "1")
+    _commit(repo_root, "b.txt", "2")
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/main", c1],
+        cwd=repo_root,
+        capture_output=True,
+        check=True,
+    )
+    warn = _bare_root_warning({"motor_root": str(repo_root)})
+    assert warn is None
+
+
+def test_bare_root_warning_m08_linked_worktree_returns_none(tmp_path):
+    """m-08: Un worktree enlazado de la raiz bare (motor_root apunta al worktree) devuelve None."""
+    bare_root, _, _ = _make_bare_motor_fixture(tmp_path, head_origin_diff=True)
+    wt_path = tmp_path / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", str(wt_path), "HEAD"],
+        cwd=bare_root,
+        capture_output=True,
+        check=True,
+    )
+    warn = _bare_root_warning({"motor_root": str(wt_path)})
+    assert warn is None
+
+
+def test_bare_root_warning_m09_nonexistent_root_returns_none(tmp_path):
+    """m-09: motor_root inexistente devuelve None y no lanza."""
+    warn = _bare_root_warning({"motor_root": str(tmp_path / "nonexistent")})
+    assert warn is None
+
+
+def test_bare_root_warning_m10_not_a_git_repo_returns_none(tmp_path):
+    """m-10: motor_root que existe pero no es un repo git devuelve None y no lanza."""
+    empty_dir = tmp_path / "empty_dir"
+    empty_dir.mkdir()
+    warn = _bare_root_warning({"motor_root": str(empty_dir)})
+    assert warn is None
+
+
+def test_bare_root_warning_m11_git_timeout_returns_none(tmp_path, monkeypatch):
+    """m-11: Un timeout del subproceso git devuelve None y no lanza."""
+    bare_root, _, _ = _make_bare_motor_fixture(tmp_path, head_origin_diff=True)
+
+    def _timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=10)
+
+    monkeypatch.setattr(subprocess, "run", _timeout)
+    warn = _bare_root_warning({"motor_root": str(bare_root)})
+    assert warn is None
+
+
+def test_bare_root_warning_m12_git_missing_returns_none(tmp_path, monkeypatch):
+    """m-12: La ausencia del ejecutable git devuelve None y no lanza."""
+    bare_root, _, _ = _make_bare_motor_fixture(tmp_path, head_origin_diff=True)
+
+    def _missing(*args, **kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", _missing)
+    warn = _bare_root_warning({"motor_root": str(bare_root)})
+    assert warn is None
+
+
+def test_bare_root_warning_m13_no_commit_count_and_no_rev_list(tmp_path, monkeypatch):
+    """m-13: El aviso no cuenta commits: no contiene 'commits detras' y no invoca git rev-list."""
+    bare_root, _, _ = _make_bare_motor_fixture(tmp_path, head_origin_diff=True)
+    recorded_cmds: list[list[str]] = []
+    real_run = subprocess.run
+
+    def _spy_run(cmd, *args, **kwargs):
+        recorded_cmds.append(cmd)
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", _spy_run)
+    warn = _bare_root_warning({"motor_root": str(bare_root)})
+    assert warn is not None
+    assert "commits detras" not in warn
+    for cmd in recorded_cmds:
+        assert "rev-list" not in cmd
+
+
+def test_bare_root_warning_m14_print_summary_wiring(tmp_path, capsys):
+    """m-14: La funcion esta cableada en el arranque: _print_summary imprime el aviso."""
+    bare_root, _, _ = _make_bare_motor_fixture(tmp_path, head_origin_diff=True)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    link = {"motor_root": str(bare_root), "motor_sha": "unknown"}
+    _print_summary(dest, link, dest / "map.md", "content")
+    out = capsys.readouterr().out
+    assert "[WARN] motor_root bare" in out
+
+
+def test_bare_root_warning_m15_bootstrap_productive_route(tmp_path):
+    """m-15: Por la ruta productiva el arranque imprime el aviso y su exit code es 0 (y 0 avisos en repo normal)."""
+    bare_root, _, _ = _make_bare_motor_fixture(tmp_path, head_origin_diff=True)
+    dest_bare = tmp_path / "dest_bare"
+    dest_bare.mkdir()
+    config_dir = dest_bare / ".agent" / "config"
+    config_dir.mkdir(parents=True)
+    link_bare = {"motor_root": str(bare_root), "motor_sha": "unknown"}
+    (config_dir / "motor_destination_link.json").write_text(
+        json.dumps(link_bare), encoding="utf-8"
+    )
+    cmd_bare = [
+        sys.executable,
+        str(Path("scripts/destination_context.py").resolve()),
+        "--bootstrap",
+        "--project-root",
+        str(dest_bare),
+    ]
+    res_bare = subprocess.run(cmd_bare, capture_output=True, text=True, check=False)
+    assert res_bare.returncode == 0
+    assert "[WARN] motor_root bare" in res_bare.stdout
+
+    # Control positivo con fixture repo normal (core.bare false)
+    normal_root = tmp_path / "normal_root"
+    normal_root.mkdir()
+    _init_git_repo(normal_root)
+    c1 = _commit(normal_root, "a.txt", "1")
+    _commit(normal_root, "b.txt", "2")
+    subprocess.run(
+        ["git", "update-ref", "refs/remotes/origin/main", c1],
+        cwd=normal_root,
+        capture_output=True,
+        check=True,
+    )
+    dest_norm = tmp_path / "dest_norm"
+    dest_norm.mkdir()
+    config_dir_norm = dest_norm / ".agent" / "config"
+    config_dir_norm.mkdir(parents=True)
+    link_norm = {"motor_root": str(normal_root), "motor_sha": "unknown"}
+    (config_dir_norm / "motor_destination_link.json").write_text(
+        json.dumps(link_norm), encoding="utf-8"
+    )
+    cmd_norm = [
+        sys.executable,
+        str(Path("scripts/destination_context.py").resolve()),
+        "--bootstrap",
+        "--project-root",
+        str(dest_norm),
+    ]
+    res_norm = subprocess.run(cmd_norm, capture_output=True, text=True, check=False)
+    assert res_norm.returncode == 0
+    assert "[WARN] motor_root bare" not in res_norm.stdout

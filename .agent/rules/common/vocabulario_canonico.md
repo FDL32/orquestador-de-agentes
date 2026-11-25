@@ -72,6 +72,8 @@ directorio alfabeticamente, que es como se buscan en la practica. Ergonomia sobr
 
 **Regla de repos:** toda operacion git del tooling (diff, log, commit) corre con `cwd=repo_motor`. El estado operativo (tickets, memoria, events) vive en `repo_destino`.
 
+**Raiz bare:** el estado de una raiz bare del motor y su aviso de arranque se describen en `scripts/destination_context.py` (aviso `[WARN] motor_root bare`); este canon no redeclara su contenido.
+
 **Regla de `AGENT_PROJECT_ROOT`:** el motor se invoca siempre con esta variable apuntando al `workspace_activo`. Sin ella, el motor usa modo code-only y bloquea escrituras operativas.
 
 **Regla de aislamiento por worktree: aplica al `repo_motor` igual que al `repo_destino`.**

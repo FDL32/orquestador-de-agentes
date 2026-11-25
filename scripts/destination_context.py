@@ -401,6 +401,72 @@ def _contract_surface_warning(motor_link: dict) -> str | None:
         return None
 
 
+def _bare_root_warning(motor_link: dict) -> str | None:
+    """Aviso binario cuando motor_root es una raiz bare y su HEAD difiere de origin/main (WOT-2026-201a).
+
+    Before: `motor_link` es el link parseado; puede no tener `motor_root`, o
+        apuntar a una ruta inexistente o no git.
+    During: comprueba si `motor_root` es bare (`git -C <motor_root> rev-parse --is-bare-repository` -> "true").
+        Si es bare, resuelve HEAD y origin/main. Si los hashes difieren, avisa con HEAD=<sha7> y origin/main=<sha7>.
+        Si HEAD u origin/main no son resolubles, avisa con 'no verificable'.
+    After: devuelve str de UNA linea con [WARN] o None. NUNCA lanza: cualquier fallo
+        degrada a None silencioso. SENAL, no gate.
+    """
+    try:
+        motor_root_raw = motor_link.get("motor_root")
+        if not motor_root_raw:
+            return None
+        motor_root = Path(str(motor_root_raw))
+        if not motor_root.is_dir():
+            return None
+
+        bare_cmd = subprocess.run(  # noqa: S603
+            ["git", "-C", str(motor_root), "rev-parse", "--is-bare-repository"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if bare_cmd.returncode != 0:
+            return None
+        if bare_cmd.stdout.strip().lower() != "true":
+            return None
+
+        head_cmd = subprocess.run(  # noqa: S603
+            ["git", "-C", str(motor_root), "rev-parse", "HEAD"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        origin_cmd = subprocess.run(  # noqa: S603
+            ["git", "-C", str(motor_root), "rev-parse", "origin/main"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        head_ok = head_cmd.returncode == 0 and bool(head_cmd.stdout.strip())
+        origin_ok = origin_cmd.returncode == 0 and bool(origin_cmd.stdout.strip())
+
+        if not head_ok or not origin_ok:
+            return (
+                "[WARN] motor_root bare (no verificable): "
+                "en una raiz bare git status no funciona; prompts y scripts se leen del worktree propio"
+            )
+
+        head_sha = head_cmd.stdout.strip()
+        origin_sha = origin_cmd.stdout.strip()
+
+        if head_sha == origin_sha:
+            return None
+
+        return (
+            f"[WARN] motor_root bare (HEAD={head_sha[:7]}, origin/main={origin_sha[:7]}): "
+            "en una raiz bare git status no funciona; prompts y scripts se leen del worktree propio"
+        )
+    except Exception:
+        # SIGNAL, not a gate: never propagate, never affect exit code.
+        return None
+
+
 _SCHEMA_VERSION_RE = re.compile(r"\d+(\.\d+)*")
 AGENTS_DOC_REL = ".agent/rules/common/host_install_integration.md"
 
@@ -1114,6 +1180,10 @@ def _print_summary(
     surface_warning = _contract_surface_warning(link)
     if surface_warning:
         print(surface_warning)
+
+    bare_warning = _bare_root_warning(link)
+    if bare_warning:
+        print(bare_warning)
 
     # WOT-2026-137b (8): deriva del agents.json del destino (schema y roles del motor).
     # SENAL en stdout, nunca en destination_map.md (no ensucia el arbol del destino) y
