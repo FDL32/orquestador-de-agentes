@@ -58,6 +58,7 @@ compartidas:
 Comunicacion entre sesiones de la MISMA cuenta (`delegate_task`, lentes, bucles de ensemble):
 contenido movido el 2026-10-25 (fichero base cerca del umbral de la "Disciplina de
 crecimiento" de abajo). Detalle completo: `.agent/rules/common/t3_delegate_task_verification.md`.
+Arranque agnostico de coordinadora y checklist de despacho: `.agent/rules/common/arranque_coordinadora_agnostica.md`.
 
 ## 3. Coordinacion de suite y push cuando hay sesiones paralelas sobre `main`
 
