@@ -3677,11 +3677,11 @@ def _parse_scorecard_source(raw: bytes, *, name: str, strict: bool) -> list[dict
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError as exc:
-                raise DispatchBlockedError(
+                print(
                     f"[scorecard-archive] WARN fila ilegible en {name}:{lineno} "
                     f"saltada: {exc}",
                     file=sys.stderr,
-                ) from exc
+                )
                 continue
             if isinstance(obj, dict):
                 rows.append(obj)
