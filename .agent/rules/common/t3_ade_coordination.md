@@ -95,6 +95,7 @@ Esto es una extension de uso RUTINARIO (no de borde) de lo que ya definen
   publicado. Un worktree con commits locales sin push es trabajo en curso, no basura.
 - `t3_worktree_handoff` mueve el HILO que llama, no otro hilo -- no sirve para "liberar" el
   worktree de otra sesion a distancia.
+- Lanzamiento de hilos de vuelo: `t3_lanzamiento_hilos_vuelo.md`.
 
 ## Disciplina de crecimiento (para no convertir esto en cajon de sastre)
 
