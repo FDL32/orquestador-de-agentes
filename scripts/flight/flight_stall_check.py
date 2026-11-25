@@ -106,6 +106,7 @@ OWNED_PREFIXES = (
     "hook-",
     "detector-",
     "huerfano-",
+    "busqueda-huerfana-",
     "gasto-",
     "co-sin-asentar",
     "im-sin-asentar",
@@ -124,11 +125,28 @@ DETECTOR_NAMES = (
     "im-ocioso",
     "cola-despachable",
     "huerfano",
+    "busqueda-huerfana",
 )
 DETECTOR_NAMES += ("presupuesto-nan",)
 DETECTOR_NAMES += ("co-sin-asentar",)
 DETECTOR_NAMES += ("im-sin-asentar",)
 RETIRED_EVENT_KEYS = ("tarea-muerta", "celda-no-conforme")
+
+
+def _search_threshold(raw):
+    """Parse one user-owned search-process threshold without inventing a fallback.
+
+    Before: ``raw`` is an optional environment value supplied by the user.
+    During: accept only a finite non-negative number.
+    After: return the numeric threshold or ``None`` when it is absent/invalid.
+    """
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
 NAN_POOL_CREDITS = 7000.0
 NAN_RESET_AT = "2026-12-07T00:00:00+00:00"
 NAN_UNKNOWN_KEY = "nan_unknown_streak"
@@ -876,6 +894,12 @@ def _resolve_paths(a, ops):  # noqa: C901
             env.get("T3_STATE_DB", Path.home() / ".t3" / "userdata" / "statev2.sqlite")
         ),
         nan_sources={},
+        search_min_age_minutes=_search_threshold(
+            env.get("STALL_SEARCH_MIN_AGE_MINUTES")
+        ),
+        search_min_cpu_seconds=_search_threshold(
+            env.get("STALL_SEARCH_MIN_CPU_SECONDS")
+        ),
     )
     default_nan = {
         "opencode": Path.home() / ".local" / "share" / "opencode" / "opencode.db",
@@ -1276,6 +1300,154 @@ def _huerfano_registry():
         }
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         raise ValueError("registry-missing") from exc
+
+
+def _enumerate_processes():
+    """Enumerate Windows processes with the production system tools.
+
+    Before: Windows exposes ``Get-CimInstance`` and ``Get-Process`` through PowerShell.
+    During: collect pid, ppid, executable, command line, creation time, and CPU seconds
+        in one PowerShell invocation, without adding a Python dependency.
+    After: return a list of dictionaries, or raise a descriptive error when enumeration fails.
+    """
+    if os.name != "nt":
+        raise RuntimeError("enumeracion-solo-Windows")
+    powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+    if powershell is None:
+        raise RuntimeError("powershell-no-encontrado")
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        "Get-CimInstance Win32_Process | ForEach-Object { "
+        "$p=Get-Process -Id $_.ProcessId -ErrorAction SilentlyContinue; "
+        "[pscustomobject]@{pid=[int]$_.ProcessId; ppid=[int]$_.ParentProcessId; "
+        "executable=[string]$_.Name; command_line=[string]$_.CommandLine; "
+        "created_at=$_.CreationDate.ToUniversalTime().ToString('o'); "
+        "cpu_seconds=if($null -eq $p){0.0}else{[double]$p.CPU}} "
+        "} | ConvertTo-Json -Compress"
+    )
+    result = subprocess.run(  # noqa: S603 - executable is resolved from system PowerShell PATH
+        [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        creationflags=NO_WINDOW,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().replace("\n", " ")
+        raise RuntimeError(f"powershell-rc-{result.returncode}: {detail[:120]}")
+    try:
+        payload = json.loads(result.stdout or "[]")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("powershell-json-invalido") from exc
+    if isinstance(payload, dict):
+        payload = [payload]
+    if not isinstance(payload, list):
+        raise RuntimeError("powershell-payload-invalido")
+    return payload
+
+
+def _process_executable(value):
+    """Normalize a process executable name for the closed search/ancestor sets.
+
+    Before: ``value`` is an executable basename or path returned by Windows.
+    During: strip a path and optional ``.exe`` suffix case-insensitively.
+    After: return the lowercase basename without its platform suffix.
+    """
+    return Path(str(value or "")).name.lower().removesuffix(".exe")
+
+
+def _has_agent_ancestor(process, by_pid):
+    """Search the complete parent chain for a codex or claude ancestor.
+
+    Before: ``process`` and ``by_pid`` are records from one process snapshot.
+    During: walk parents through wrappers such as ``cmd`` and ``node`` with cycle protection.
+    After: return true only when any ancestor executable is ``codex`` or ``claude``.
+    """
+    seen = set()
+    parent_pid = process.get("ppid")
+    while parent_pid not in (None, 0) and parent_pid not in seen:
+        seen.add(parent_pid)
+        parent = by_pid.get(parent_pid)
+        if parent is None:
+            return False
+        if _process_executable(parent.get("executable")) in {"codex", "claude"}:
+            return True
+        parent_pid = parent.get("ppid")
+    return False
+
+
+def _process_age_minutes(record, current):
+    """Return a non-negative process age in minutes from a Windows ISO timestamp.
+
+    Before: ``record`` contains the creation timestamp emitted by PowerShell.
+    During: parse the timestamp as timezone-aware UTC and compare with ``current``.
+    After: return minutes, or ``None`` for malformed/future data.
+    """
+    raw = record.get("created_at")
+    if isinstance(raw, str):
+        raw = re.sub(
+            r"(\.\d{6})\d+(?=(?:Z|[+-]\d{2}:\d{2})$)",
+            r"\1",
+            raw,
+        )
+    return _huerfano_date(raw, current)
+
+
+def check_busqueda_huerfana(out, st, enumerate_processes=None):
+    """Report aged, CPU-heavy search processes descended from codex or claude.
+
+    Before: ``CFG`` has optional user thresholds; ``out`` is the tick accumulator and ``st``
+        is existing state. The enumerator is injectable only for deterministic tests.
+    During: fail closed on enumeration errors, otherwise filter ``rg``, ``grep``, and ``find``
+        and inspect the complete ancestor chain through any wrappers.
+    After: return AVISOs with pid/executable/age/CPU, or visible observations without killing
+        or changing any process; no threshold means ``umbral_no_fijado`` and no AVISO.
+    """
+    del st
+    age_limit = getattr(CFG, "search_min_age_minutes", None)
+    cpu_limit = getattr(CFG, "search_min_cpu_seconds", None)
+    if age_limit is None or cpu_limit is None:
+        out["umbral_no_fijado"] = 1
+        out["busqueda_huerfana"] = 0
+        return []
+    try:
+        rows = (enumerate_processes or _enumerate_processes)()
+    except Exception as exc:
+        cause = str(exc)[:160] or type(exc).__name__
+        out["busqueda_huerfana_ciego"] = cause
+        return [
+            (
+                "busqueda-huerfana-ciego",
+                "AVISO",
+                f"Detector busqueda huerfana ciego: {cause}",
+            )
+        ]
+    by_pid = {row.get("pid"): row for row in rows if isinstance(row, dict)}
+    current = now_utc()
+    search_names = {"rg", "grep", "find"}
+    found = []
+    for row in by_pid.values():
+        if _process_executable(row.get("executable")) not in search_names:
+            continue
+        if not _has_agent_ancestor(row, by_pid):
+            continue
+        age = _process_age_minutes(row, current)
+        cpu = row.get("cpu_seconds")
+        if age is None or not isinstance(cpu, (int, float)):
+            continue
+        if age < age_limit or cpu < cpu_limit:
+            continue
+        found.append(
+            (
+                f"busqueda-huerfana-{row.get('pid')}",
+                "AVISO",
+                f"Proceso busqueda pid={row.get('pid')} "
+                f"ejecutable={row.get('executable')} edad_min={age:.1f} cpu_s={cpu:g}",
+            )
+        )
+    out["busqueda_huerfana"] = len(found)
+    return found
 
 
 def _huerfano_date(raw, current):
@@ -2682,6 +2854,7 @@ def _detect(out, st, only=None):
         "im-ocioso": lambda: check_im_ocioso(out, st),
         "cola-despachable": lambda: check_cola_despachable(out, st),
         "huerfano": lambda: check_huerfano(out, st),
+        "busqueda-huerfana": lambda: check_busqueda_huerfana(out, st),
         "presupuesto-nan": lambda: check_nan_budget(out, st),
         "co-sin-asentar": lambda: check_co_sin_asentar(out, st),
         "im-sin-asentar": lambda: check_im_sin_asentar(out, st),
@@ -2752,6 +2925,7 @@ def _reconcile(ca, out, found, a):
         "git-": out.get("ciego_git"),
         "hook-": out.get("ciego_hook"),
         "huerfano-": out.get("huerfano_ciego"),
+        "busqueda-huerfana-": out.get("busqueda_huerfana_ciego"),
         # Un tick NaN en UNKNOWN (o con las fuentes sin configurar) no puede ver la
         # causa de sus claves gasto-*: no las reconcilia mientras este ciego.
         "gasto-": out.get("nan_status") == "UNKNOWN"

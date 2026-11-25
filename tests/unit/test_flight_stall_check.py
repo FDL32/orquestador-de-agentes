@@ -1002,6 +1002,157 @@ def test_test_detector_sin_valor_detector_roto_rc2(box):
     assert "STALL_CHECK_BROKEN" in result.out
 
 
+def _configure_search_detector(box, monkeypatch, age="10", cpu="100"):
+    """Prepara la CFG productiva del detector de procesos de búsqueda."""
+    if age is None:
+        monkeypatch.delenv("STALL_SEARCH_MIN_AGE_MINUTES", raising=False)
+    else:
+        monkeypatch.setenv("STALL_SEARCH_MIN_AGE_MINUTES", str(age))
+    if cpu is None:
+        monkeypatch.delenv("STALL_SEARCH_MIN_CPU_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("STALL_SEARCH_MIN_CPU_SECONDS", str(cpu))
+    args = types.SimpleNamespace(
+        flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+    )
+    box.m.CFG, _causes, _fatal = box.m._resolve_paths(args, box.ops)
+
+
+def _search_record(box, pid, ppid, executable="rg.exe", age_minutes=20, cpu=200):
+    """Construye un registro de proceso con reloj y CPU explícitos."""
+    created = box.m.now_utc() - dt.timedelta(minutes=age_minutes)
+    return {
+        "pid": pid,
+        "ppid": ppid,
+        "executable": executable,
+        "command_line": executable,
+        "created_at": created.isoformat(),
+        "cpu_seconds": cpu,
+    }
+
+
+def test_busqueda_huerfana_m01_avisa_con_ancestro_codex_y_datos(box, monkeypatch):
+    """m-01: el aviso contiene pid, ejecutable, edad y CPU sobre umbral."""
+    _configure_search_detector(box, monkeypatch)
+    rows = [
+        _search_record(box, 200, 201, age_minutes=20, cpu=200),
+        _search_record(box, 201, 202, executable="node.exe", age_minutes=30, cpu=1),
+        _search_record(box, 202, 0, executable="codex.exe", age_minutes=40, cpu=1),
+    ]
+    monkeypatch.setattr(box.m, "_enumerate_processes", lambda: rows)
+
+    out = {}
+    found = box.m.check_busqueda_huerfana(out, {})
+
+    assert len(found) == 1
+    assert "pid=200" in found[0][2]
+    assert "ejecutable=rg.exe" in found[0][2]
+    assert "edad_min=" in found[0][2]
+    assert "cpu_s=200" in found[0][2]
+
+
+def test_busqueda_huerfana_acepta_timestamp_powershell_de_7_digitos(box, monkeypatch):
+    """La fecha ``o`` de PowerShell conserva precisión extra sin cegar el detector."""
+    _configure_search_detector(box, monkeypatch)
+    search = _search_record(box, 200, 201, age_minutes=20, cpu=200)
+    search["created_at"] = search["created_at"].replace("+00:00", "0+00:00")
+    rows = [search, _search_record(box, 201, 0, executable="codex.exe")]
+    monkeypatch.setattr(box.m, "_enumerate_processes", lambda: rows)
+
+    found = box.m.check_busqueda_huerfana({}, {})
+
+    assert len(found) == 1
+
+
+def test_busqueda_huerfana_cpu_bajo_no_avisa(box, monkeypatch):
+    """m-07: quitar la comparación de CPU debe hacer este control rojo."""
+    _configure_search_detector(box, monkeypatch)
+    rows = [
+        _search_record(box, 200, 201, age_minutes=20, cpu=99),
+        _search_record(box, 201, 0, executable="codex.exe"),
+    ]
+    monkeypatch.setattr(box.m, "_enumerate_processes", lambda: rows)
+
+    assert box.m.check_busqueda_huerfana({}, {}) == []
+
+
+def test_busqueda_huerfana_m02_ignora_ancestro_ajeno(box, monkeypatch):
+    """m-02: sin codex/claude en toda la cadena no hay aviso."""
+    _configure_search_detector(box, monkeypatch)
+    rows = [
+        _search_record(box, 200, 201),
+        _search_record(box, 201, 202, executable="python.exe"),
+        _search_record(box, 202, 0, executable="node.exe"),
+    ]
+    monkeypatch.setattr(box.m, "_enumerate_processes", lambda: rows)
+
+    assert box.m.check_busqueda_huerfana({}, {}) == []
+
+
+def test_busqueda_huerfana_m03_ignora_ejecutable_no_busqueda(box, monkeypatch):
+    """m-03: python con ancestro codex no es un proceso de búsqueda."""
+    _configure_search_detector(box, monkeypatch)
+    rows = [
+        _search_record(box, 200, 201, executable="python.exe"),
+        _search_record(box, 201, 0, executable="codex.exe"),
+    ]
+    monkeypatch.setattr(box.m, "_enumerate_processes", lambda: rows)
+
+    assert box.m.check_busqueda_huerfana({}, {}) == []
+
+
+def test_busqueda_huerfana_m04_sin_umbral_observa_y_no_avisa(box, monkeypatch):
+    """m-04: la ausencia de CFG es visible y no inventa umbrales."""
+    _configure_search_detector(box, monkeypatch, age=None, cpu=None)
+    monkeypatch.setattr(box.m, "_enumerate_processes", lambda: [])
+    out = {}
+
+    assert box.m.check_busqueda_huerfana(out, {}) == []
+    assert out["umbral_no_fijado"] == 1
+
+
+def test_busqueda_huerfana_m05_fallo_de_enumeracion_es_ciego(box, monkeypatch):
+    """m-05: el fallo de la ruta real no se convierte en verde."""
+    _configure_search_detector(box, monkeypatch)
+
+    def fail():
+        raise RuntimeError("powershell-no-contesta")
+
+    monkeypatch.setattr(box.m, "_enumerate_processes", fail)
+    out = {}
+    found = box.m.check_busqueda_huerfana(out, {})
+
+    assert out["busqueda_huerfana_ciego"] == "powershell-no-contesta"
+    assert found == [
+        (
+            "busqueda-huerfana-ciego",
+            "AVISO",
+            "Detector busqueda huerfana ciego: powershell-no-contesta",
+        )
+    ]
+
+
+def test_busqueda_huerfana_m06_registrado_en_tick(box, monkeypatch):
+    """m-06: el dispatcher ejecuta la clave nueva en una pasada real del tick."""
+    _configure_search_detector(box, monkeypatch)
+    monkeypatch.setattr(box.m, "_enumerate_processes", lambda: [])
+
+    result = box.tick("--test-detector", "busqueda-huerfana")
+
+    assert result.rc == 0
+    assert '"busqueda_huerfana":' in result.out
+
+
+@pytest.mark.skipif(os.name != "nt", reason="la enumeración productiva es Windows")
+def test_busqueda_huerfana_m08_enumeracion_real_incluye_pid_propio():
+    """m-08: la función productiva ve este intérprete, no sólo una inyección."""
+    module = _load()
+
+    rows = module._enumerate_processes()
+
+    assert sum(row["pid"] == os.getpid() for row in rows) == 1
+
+
 def _write_cell_fixtures(box, count, statuses=None, settled_threads=None):
     import sqlite3
 
@@ -1193,6 +1344,30 @@ def test_reconcile_no_toca_claves_de_otro_owner(box):
     box.ca.mark_seen("cupo-97", "URGENTE", "manual")
     box.tick()
     assert "event:cupo-97" in box.ca_state()
+
+
+def test_busqueda_huerfana_reconcile_borra_clave_resuelta(box):
+    """El prefijo del detector de busquedas pertenece al ledger de stall."""
+    box.ca.event(
+        "busqueda-huerfana-200", "AVISO", None, "active", False, False, owner="stall"
+    )
+    assert "event:busqueda-huerfana-200" in box.ca_state()
+    box.m._reconcile(box.ca, {}, [], types.SimpleNamespace(dry_run=False))
+    assert "event:busqueda-huerfana-200" not in box.ca_state()
+
+
+def test_busqueda_huerfana_reconcile_conserva_clave_si_esta_ciego(box):
+    """Una enumeracion fallida no reconcilia avisos previos del detector."""
+    box.ca.event(
+        "busqueda-huerfana-200", "AVISO", None, "active", False, False, owner="stall"
+    )
+    box.m._reconcile(
+        box.ca,
+        {"busqueda_huerfana_ciego": "enumeracion no disponible"},
+        [],
+        types.SimpleNamespace(dry_run=False),
+    )
+    assert "event:busqueda-huerfana-200" in box.ca_state()
 
 
 # ------------------------------------------------------------------ AST: higiene del modulo
@@ -2243,9 +2418,12 @@ def test_m02_no_check_celda_ni_exentas_ni_evento_celda_no_conforme(box):
 
 def test_m03_resto_de_detectores_sigue_registrado_igual(box):
     """m-03: el resto de detectores sigue registrado exactamente igual a la BASE menos las dos retiradas."""
-    expected = (BASE_DETECTOR_NAMES - {"tarea", "celda"}) | {"im-sin-asentar"}
+    expected = (BASE_DETECTOR_NAMES - {"tarea", "celda"}) | {
+        "im-sin-asentar",
+        "busqueda-huerfana",
+    }
     assert set(box.m.DETECTOR_NAMES) == expected
-    assert len(box.m.DETECTOR_NAMES) == len(expected) == 12
+    assert len(box.m.DETECTOR_NAMES) == len(expected) == 13
 
 
 def test_m04_estado_con_eventos_abiertos_retirados_se_resuelven_y_otros_siguen_abiertos(
