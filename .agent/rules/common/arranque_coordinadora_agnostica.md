@@ -16,6 +16,20 @@ Antes de operar, la sesion confirma su identidad y rol contra el flight roster:
 ## Paso 2: Activacion del latido de 15 minutos (latido)
 
 Tras tomar posesion (Fase B), definir objetivo y primera accion, y activar el latido:
+- **Contenido del prompt (WOT-2026-232b, 2026-11-25):** el contenido del latido se
+  deriva de `prompts/vuelo_pilares_templates/LATIDO_PLANTILLA.md`, nunca se redacta
+  a mano reinterpretando P2/P8/P9/P21/P27 en prosa propia (X-09, skill apunta/prompt
+  gobierna). Dos vias, por este orden de preferencia:
+  1. Si existe un predecesor valido (`diseno/LATIDO_CO-<n-1>_v*.md` del inmediato
+     anterior en la cadena), derivar con `scripts/flight/render_latido.py`.
+  2. Si no existe predecesor valido (hueco de cadena, migracion o primera
+     coordinadora), sustituir los marcadores de la plantilla directamente y
+     DECLARAR el hueco en la cabecera del documento resultante (nunca fabricar una
+     cadena de predecesores retroactiva). Escribir el resultado en
+     `diseno/LATIDO_CO-<n>_v*.md` antes de programar el latido.
+  - El prompt del `schedule_task` REMITE al documento resultante ("Sigue ENTERO
+    <ruta>.md"); no copia ni reinterpreta sus pasos. Comprobacion mecanica minima
+    antes de activarlo: `grep -c "Sigue ENTERO.*LATIDO_CO-" <prompt>` >= 1.
 - Mecanismo: herramienta MCP `schedule_task` (servidor `t3-code`).
 - Parametros requeridos:
   - `schedule`: `{"type":"interval","everyMs":900000}` (intervalo exacto de 15 min, P21).
