@@ -338,6 +338,31 @@ def test_open_store_ro_rejects_non_positive_timeout(tmp_path):
         vua.open_store_ro(tmp_path / "unused.sqlite", timeout=0)
 
 
+def test_gitleaks_gate_uses_context_remote_and_branch_not_origin_literal(tmp_path):
+    _root, context = _gitleaks_context(tmp_path)
+    context = replace(context, remote="upstream", branch="feature")
+    git_calls = []
+    gitleaks_calls = []
+
+    def git_runner(args):
+        git_calls.append(list(args))
+        return 0, "1\n", ""
+
+    def gitleaks_runner(args):
+        gitleaks_calls.append(list(args))
+        if list(args) == ["version"]:
+            return 0, "8.30.1\n", ""
+        return 0, "", ""
+
+    decision = vua.run_gitleaks_gate(
+        context, git_runner=git_runner, gitleaks_runner=gitleaks_runner
+    )
+
+    assert decision.allowed is True
+    assert git_calls == [["rev-list", "--count", "upstream/feature..HEAD"]]
+    assert gitleaks_calls[1][-1] == "--log-opts=upstream/feature..HEAD"
+
+
 @pytest.mark.parametrize(
     "timeout",
     [float("nan"), float("inf"), float("-inf"), -0.2, -1],
@@ -1830,9 +1855,16 @@ def make_git_repo(tmp_path: Path, name: str = "work") -> tuple[Path, Path]:
     _git(root, "init")
     _git(root, "config", "user.name", "synthetic")
     _git(root, "config", "user.email", "synthetic@example.invalid")
+    (root / ".gitleaks.toml").write_text(
+        'title = "test"\n\n[[rules]]\nid = "synthetic"\n'
+        'description = "synthetic"\nregex = "SYNTHETIC-[A-Z0-9]+"\n'
+        'keywords = ["synthetic"]\n',
+        encoding="utf-8",
+    )
     (root / "file.txt").write_text("one\n", encoding="utf-8")
     _git(root, "add", ".")
     _git(root, "commit", "-m", "one")
+    _git(root, "branch", "-M", "main")
     _git(root, "remote", "add", "origin", str(bare))
     _git(root, "push", "origin", "HEAD:refs/heads/main")
     _git(root, "fetch", "origin")
@@ -2033,6 +2065,421 @@ def test_wrapper_dry_run_does_not_push_or_consume(tmp_path):
     assert result.pushed is False
     assert _git(bare, "rev-parse", "refs/heads/main").stdout.strip() == base
     assert not ledger.path.exists()
+
+
+def _gitleaks_context(
+    tmp_path: Path,
+    *,
+    config: str | None = (
+        'title = "test"\n\n[[rules]]\nid = "synthetic"\n'
+        'description = "synthetic"\nregex = "SYNTHETIC-[A-Z0-9]+"\n'
+        'keywords = ["synthetic"]\n'
+    ),
+):
+    root, _bare = make_git_repo(tmp_path, name="gitleaks-work")
+    if config is not None:
+        (root / ".gitleaks.toml").write_text(config, encoding="utf-8")
+    head = advance(root, "gitleaks-context")
+    context, reason = vua.collect_push_context(root, tested_commit_sha=head)
+    assert reason is None
+    assert context is not None
+    return root, context
+
+
+def _successful_gitleaks_runner(calls: list[list[str]]):
+    def runner(args):
+        calls.append(list(args))
+        if list(args) == ["version"]:
+            return 0, "8.30.1\n", ""
+        return 0, "", ""
+
+    return runner
+
+
+@pytest.fixture(autouse=True)
+def _stub_gitleaks_for_unit_tests(request, monkeypatch):
+    """Aísla las pruebas unitarias del binario; integración usa el real."""
+    if request.node.get_closest_marker("integration") is not None:
+        return
+
+    def runner(_args):
+        if list(_args) == ["version"]:
+            return 0, "8.30.1\n", ""
+        return 0, "", ""
+
+    monkeypatch.setattr(vua, "_default_gitleaks_runner", lambda _root: runner)
+
+
+@pytest.mark.parametrize("layout", ["motor", "destination", "missing"])
+def test_gitleaks_gate_resolves_topology_config_with_motor_precedence(tmp_path, layout):
+    root, context = _gitleaks_context(tmp_path)
+    motor_config = root / "agent_system" / "templates" / "gitleaks.config.toml"
+    destination_config = root / ".gitleaks.toml"
+    if layout == "motor":
+        motor_config.parent.mkdir(parents=True)
+        motor_config.write_text(
+            'title = "motor"\n\n[[rules]]\nid = "motor"\n'
+            'regex = "MOTOR-[A-Z0-9]+"\nkeywords = ["motor"]\n',
+            encoding="utf-8",
+        )
+    elif layout == "destination":
+        destination_config.write_text(
+            'title = "destination"\n\n[[rules]]\nid = "destination"\n'
+            'regex = "DESTINATION-[A-Z0-9]+"\nkeywords = ["destination"]\n',
+            encoding="utf-8",
+        )
+    else:
+        destination_config.unlink()
+    calls = []
+
+    decision = vua.run_gitleaks_gate(
+        context, gitleaks_runner=_successful_gitleaks_runner(calls)
+    )
+
+    if layout == "missing":
+        assert decision.reason == "gitleaks-config-missing"
+        assert calls == []
+    else:
+        assert decision.allowed is True
+        detect = calls[1]
+        expected_config = motor_config if layout == "motor" else destination_config
+        assert detect[detect.index("--config") + 1] == str(expected_config)
+
+
+def test_gitleaks_gate_uses_exact_version_and_reproducible_range(tmp_path):
+    _root, context = _gitleaks_context(tmp_path)
+    calls = []
+
+    decision = vua.run_gitleaks_gate(
+        context, gitleaks_runner=_successful_gitleaks_runner(calls)
+    )
+
+    assert decision.allowed is True
+    assert calls[0] == ["version"]
+    assert calls[1] == [
+        "detect",
+        "--redact",
+        "--source",
+        ".",
+        "--config",
+        str(context.project_root / ".gitleaks.toml"),
+        "--exit-code",
+        "1",
+        f"--log-opts={context.remote}/{context.branch}..HEAD",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("version_output", "detect_result", "reason"),
+    [
+        ("8.30.0\n", (0, "", ""), "gitleaks-version-mismatch"),
+        ("8.30.1\n", (1, "leak-value-must-not-escape", ""), "gitleaks-findings"),
+        ("8.30.1\n", (2, "", "invalid toml"), "gitleaks-failed"),
+    ],
+)
+def test_gitleaks_gate_rejects_unsafe_runner_results(
+    tmp_path, version_output, detect_result, reason
+):
+    _root, context = _gitleaks_context(tmp_path)
+    calls = []
+
+    def runner(args):
+        calls.append(list(args))
+        return (0, version_output, "") if list(args) == ["version"] else detect_result
+
+    decision = vua.run_gitleaks_gate(context, gitleaks_runner=runner)
+
+    assert decision.allowed is False
+    assert decision.reason == reason
+    assert "leak-value-must-not-escape" not in decision.reason
+
+
+def test_gitleaks_gate_rejects_invalid_toml_before_runner(tmp_path):
+    root, context = _gitleaks_context(tmp_path, config="title = [\n")
+    called = False
+
+    def runner(_args):
+        nonlocal called
+        called = True
+        raise AssertionError("invalid config must stop before Gitleaks")
+
+    decision = vua.run_gitleaks_gate(context, gitleaks_runner=runner)
+
+    assert decision.reason == "gitleaks-config-invalid"
+    assert called is False
+    assert root.exists()
+
+
+def test_gitleaks_gate_rejects_missing_binary(tmp_path):
+    _root, context = _gitleaks_context(tmp_path)
+
+    def runner(_args):
+        raise FileNotFoundError("gitleaks")
+
+    decision = vua.run_gitleaks_gate(context, gitleaks_runner=runner)
+
+    assert decision.reason == "gitleaks-unavailable"
+
+
+def test_gitleaks_gate_rejects_empty_commit_range(tmp_path):
+    _root, context = _gitleaks_context(tmp_path)
+    empty_context = replace(context, commit_count=0)
+
+    decision = vua.run_gitleaks_gate(empty_context)
+
+    assert decision.reason == "gitleaks-empty-range"
+
+
+def test_gitleaks_dry_run_order(tmp_path):
+    root, _bare = make_git_repo(tmp_path, name="g")
+    (root / ".gitleaks.toml").write_text(
+        'title = "test"\n\n[[rules]]\nid = "synthetic"\n'
+        'description = "synthetic"\nregex = "SYNTHETIC-[A-Z0-9]+"\n'
+        'keywords = ["synthetic"]\n',
+        encoding="utf-8",
+    )
+    head = advance(root, "gitleaks-dry-run-context")
+    context, reason = vua.collect_push_context(root, tested_commit_sha=head)
+    assert reason is None
+    assert context is not None
+    db = build_db(
+        tmp_path / "dry-db",
+        rows=[{"message_id": SYNTH_THREAD, "text": context.expected.phrase}],
+    )
+    ledger = vua.PushAuthorityLedger(tmp_path / "dry-ledger.jsonl")
+    calls = []
+
+    def runner(args):
+        calls.append(list(args))
+        if list(args) == ["version"]:
+            return 0, "8.30.1\n", ""
+        return 1, "synthetic finding", ""
+
+    result = vua.execute_authorized_push(
+        context,
+        anchor_message_id=ANCHOR_ID,
+        db_path=db,
+        ledger=ledger,
+        dry_run=True,
+        gitleaks_runner=runner,
+    )
+
+    assert result.exit_code == vua.EXIT_REJECTED
+    assert result.decision.reason == "gitleaks-findings"
+    formatted = vua.format_decision(result.decision, context.expected)
+    assert "comando reproducible: gitleaks detect" in formatted
+    assert "--redact" in formatted
+    assert "synthetic finding" not in formatted
+    assert calls
+    assert not ledger.path.exists()
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_reason"),
+    [
+        ("invalid-config", "gitleaks-config-invalid"),
+        ("unavailable", "gitleaks-unavailable"),
+        ("version", "gitleaks-version-mismatch"),
+        ("findings", "gitleaks-findings"),
+    ],
+)
+def test_gitleaks_rejections_happen_before_consume(tmp_path, failure, expected_reason):
+    root, _bare = make_git_repo(tmp_path, name="g")
+    if failure == "invalid-config":
+        (root / ".gitleaks.toml").write_text("title = [\n", encoding="utf-8")
+    head = advance(root, f"gitleaks {failure} rejection")
+    context, reason = vua.collect_push_context(root, tested_commit_sha=head)
+    assert reason is None
+    assert context is not None
+    db = build_db(
+        tmp_path / f"db-{failure}",
+        rows=[{"message_id": SYNTH_THREAD, "text": context.expected.phrase}],
+    )
+    ledger = vua.PushAuthorityLedger(tmp_path / f"ledger-{failure}.jsonl")
+
+    def runner(args):
+        if failure == "unavailable":
+            raise FileNotFoundError("gitleaks")
+        if list(args) == ["version"]:
+            version = "8.30.0\n" if failure == "version" else "8.30.1\n"
+            return 0, version, ""
+        if failure == "findings":
+            return 1, "synthetic finding", ""
+        raise AssertionError("unexpected detect invocation")
+
+    result = vua.execute_authorized_push(
+        context,
+        anchor_message_id=ANCHOR_ID,
+        db_path=db,
+        ledger=ledger,
+        gitleaks_runner=runner,
+    )
+
+    assert result.exit_code == vua.EXIT_REJECTED
+    assert result.decision.reason == expected_reason
+    assert not ledger.path.exists()
+
+
+def test_gitleaks_detect_oserror_rejects_before_consume(tmp_path):
+    root, _bare = make_git_repo(tmp_path, name="g")
+    head = advance(root, "gitleaks detect unavailable")
+    context, reason = vua.collect_push_context(root, tested_commit_sha=head)
+    assert reason is None
+    assert context is not None
+    db = build_db(
+        tmp_path / "db-detect-unavailable",
+        rows=[{"message_id": SYNTH_THREAD, "text": context.expected.phrase}],
+    )
+    ledger = vua.PushAuthorityLedger(tmp_path / "ledger-detect-unavailable.jsonl")
+
+    def runner(args):
+        if list(args) == ["version"]:
+            return 0, "8.30.1\n", ""
+        raise OSError("gitleaks detect unavailable")
+
+    result = vua.execute_authorized_push(
+        context,
+        anchor_message_id=ANCHOR_ID,
+        db_path=db,
+        ledger=ledger,
+        gitleaks_runner=runner,
+    )
+
+    assert result.exit_code == vua.EXIT_REJECTED
+    assert result.decision.reason == "gitleaks-unavailable"
+    assert not ledger.path.exists()
+
+
+def test_gitleaks_valid_toml_without_effective_rules_rejects(tmp_path):
+    _root, context = _gitleaks_context(tmp_path, config='title = "empty"\n')
+
+    def runner(_args):
+        raise AssertionError("empty config must stop before Gitleaks")
+
+    decision = vua.run_gitleaks_gate(context, gitleaks_runner=runner)
+
+    assert decision.allowed is False
+    assert decision.reason == "gitleaks-config-invalid"
+
+
+def test_gitleaks_invalid_git_range_rejects_before_runner(tmp_path):
+    _root, context = _gitleaks_context(tmp_path)
+    git_calls = []
+
+    def git_runner(args):
+        git_calls.append(list(args))
+        return 1, "", "unknown revision"
+
+    def runner(_args):
+        raise AssertionError("invalid range must stop before Gitleaks")
+
+    decision = vua.run_gitleaks_gate(
+        context, git_runner=git_runner, gitleaks_runner=runner
+    )
+
+    assert decision.allowed is False
+    assert decision.reason == "gitleaks-range-invalid"
+    assert git_calls == [["rev-list", "--count", "origin/main..HEAD"]]
+
+
+@pytest.mark.integration
+def test_gitleaks_real_binary(tmp_path):
+    root, _bare = make_git_repo(tmp_path, name="g")
+    template = REPO_ROOT / "agent_system" / "templates" / "gitleaks.config.toml"
+    (root / ".gitleaks.toml").write_bytes(template.read_bytes())
+    pem_body = "\n".join(
+        "MIIEowIBAAKCAQEA" + ("Zm9vYmFyMTIzNDU2Nzg5" * 3) for _ in range(4)
+    )
+    synthetic_secret = (
+        "-----BEGIN "
+        + "RSA PRIVATE KEY-----\n"
+        + pem_body
+        + "\n-----END RSA PRIVATE KEY-----\n"
+    )
+    (root / "runtime-only.txt").write_text(synthetic_secret + "\n", encoding="utf-8")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "runtime-only synthetic finding")
+    head = _git(root, "rev-parse", "HEAD").stdout.strip()
+    context, reason = vua.collect_push_context(root, tested_commit_sha=head)
+    assert reason is None
+    assert context is not None
+
+    decision = vua.run_gitleaks_gate(context)
+
+    assert decision.allowed is False
+    assert decision.reason == "gitleaks-findings"
+    assert synthetic_secret not in decision.reason
+
+
+@pytest.mark.integration
+def test_gitleaks_real_binary_clean_control_passes(tmp_path):
+    root, _bare = make_git_repo(tmp_path, name="clean")
+    template = REPO_ROOT / "agent_system" / "templates" / "gitleaks.config.toml"
+    (root / ".gitleaks.toml").write_bytes(template.read_bytes())
+    head = advance(root, "clean gitleaks control")
+    context, reason = vua.collect_push_context(root, tested_commit_sha=head)
+    assert reason is None
+    assert context is not None
+
+    decision = vua.run_gitleaks_gate(context)
+
+    assert decision.allowed is True
+    assert decision.reason == "gitleaks-clean"
+
+
+@pytest.mark.integration
+def test_gitleaks_real_binary_ignore_control_passes(tmp_path):
+    root, _bare = make_git_repo(tmp_path, name="ignored")
+    template = REPO_ROOT / "agent_system" / "templates" / "gitleaks.config.toml"
+    (root / ".gitleaks.toml").write_bytes(template.read_bytes())
+    pem_body = "\n".join(
+        "MIIEowIBAAKCAQEA" + ("Zm9vYmFyMTIzNDU2Nzg5" * 3) for _ in range(4)
+    )
+    synthetic_secret = (
+        "-----BEGIN "
+        + "RSA PRIVATE KEY-----\n"
+        + pem_body
+        + "\n-----END RSA PRIVATE KEY-----\n"
+    )
+    (root / "runtime-only.txt").write_text(synthetic_secret, encoding="utf-8")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "ignored gitleaks control")
+    report = root / "gitleaks-report.json"
+    scan = subprocess.run(
+        [
+            "gitleaks",
+            "detect",
+            "--source",
+            ".",
+            "--config",
+            str(root / ".gitleaks.toml"),
+            "--report-format",
+            "json",
+            "--report-path",
+            str(report),
+            "--exit-code",
+            "1",
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert scan.returncode == 1
+    fingerprint = json.loads(report.read_text(encoding="utf-8"))[0]["Fingerprint"]
+    report.unlink()
+    (root / ".gitleaksignore").write_text(fingerprint + "\n", encoding="utf-8")
+    _git(root, "add", ".gitleaksignore")
+    _git(root, "commit", "-m", "ignore synthetic gitleaks finding")
+    head = _git(root, "rev-parse", "HEAD").stdout.strip()
+    context, reason = vua.collect_push_context(root, tested_commit_sha=head)
+    assert reason is None
+    assert context is not None
+
+    decision = vua.run_gitleaks_gate(context)
+
+    assert decision.allowed is True
+    assert decision.reason == "gitleaks-clean"
 
 
 def test_wrapper_rejects_message_in_another_thread(tmp_path):

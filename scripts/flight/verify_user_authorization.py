@@ -46,6 +46,12 @@ from pathlib import Path
 from urllib.parse import quote
 
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
+
+
 _ORIGINAL_OS_CLOSE = os.close
 
 # CO-161 06:3x, sujeto a CO-160: las rondas sin marcador anteriores al
@@ -126,6 +132,7 @@ EXIT_REJECTED = 10
 EXIT_INFRA = 11
 EXIT_USAGE = 12
 EXIT_PUSH_FAILED = 20
+GITLEAKS_VERSION = "8.30.1"
 
 _MISSING = object()
 
@@ -247,6 +254,7 @@ class Decision:
     thread_id: str | None = None
     created_at: str | None = None
     text_sha256: str | None = None
+    detail: str = ""
 
 
 CHAIN_HARD_MAX_DURATION_HOURS = 12
@@ -1212,6 +1220,16 @@ _REASON_TEXT = {
         "no se pudo releer la ref remota antes del push; no se publico y la "
         "confirmacion quedo CONSUMIDA"
     ),
+    "gitleaks-empty-range": "el rango de commits a publicar esta vacio",
+    "gitleaks-range-invalid": "no se pudo validar el rango de commits a escanear",
+    "gitleaks-config-missing": (
+        "no existe una configuracion Gitleaks valida para esta topologia"
+    ),
+    "gitleaks-config-invalid": "la configuracion Gitleaks no es TOML valido",
+    "gitleaks-unavailable": "no se pudo ejecutar el binario Gitleaks",
+    "gitleaks-version-mismatch": "Gitleaks no es exactamente la version exigida",
+    "gitleaks-findings": "Gitleaks encontro secretos en el rango a publicar",
+    "gitleaks-failed": "Gitleaks fallo sin producir un veredicto limpio",
     "revalidation-thread": (
         "el mensaje cambio de hilo entre la verificacion y el push"
     ),
@@ -1271,6 +1289,8 @@ def format_decision(decision: Decision, expected: ExpectedAuthorization) -> str:
         "Como repetir: envia exactamente esa frase como mensaje tuyo (web o movil) "
         "en el hilo de la peticion, despues del ancla; no hace falta escalar.",
     ]
+    if decision.detail:
+        lines.append(f"detalle: {decision.detail}")
     burn_reasons = {
         "consumed",
         "push-failed",
@@ -1681,6 +1701,162 @@ def _default_git_runner(
     return run
 
 
+def _default_gitleaks_runner(
+    project_root: Path,
+) -> Callable[[Sequence[str]], tuple[int, str, str]]:
+    """Ejecuta Gitleaks sin shell en `project_root` y conserva sus tres salidas.
+
+    Before: `project_root` es el checkout que se va a publicar y el binario se
+        resuelve por PATH del proceso del wrapper.
+    During: ejecuta solo argv controlado, con cwd fijo y texto UTF-8 tolerante.
+    After: devuelve `(returncode, stdout, stderr)`; un binario ausente se
+        representa como `FileNotFoundError` para que el gate rechace cerrado.
+    """
+
+    def run(args: Sequence[str]) -> tuple[int, str, str]:
+        completed = subprocess.run(  # noqa: S603 - argv controlado
+            ["gitleaks", *args],  # noqa: S607 - binario resuelto por PATH
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        return completed.returncode, completed.stdout, completed.stderr
+
+    return run
+
+
+def _gitleaks_config_path(project_root: Path) -> Path | None:
+    """Resuelve la configuracion Gitleaks con discriminador topologico explicito.
+
+    Before: `project_root` apunta al checkout activo y puede contener la
+        plantilla del motor o la configuracion propia del destino.
+    During: da precedencia a `agent_system/templates/gitleaks.config.toml`
+        (motor); solo si falta usa `.gitleaks.toml` (destino).
+    After: devuelve una ruta existente o `None`; no inventa una configuracion.
+    """
+
+    motor = project_root / "agent_system" / "templates" / "gitleaks.config.toml"
+    destino = project_root / ".gitleaks.toml"
+    if motor.is_file():
+        return motor
+    if destino.is_file():
+        return destino
+    return None
+
+
+def _gitleaks_detect_args(context: PushContext, config_path: Path) -> list[str]:
+    """Construye los argumentos exactos del escaneo reproducible.
+
+    Before: `context` contiene el remoto, la rama y el checkout, y
+        `config_path` ya fue validada como configuracion TOML existente.
+    During: conserva el rango topologico y las opciones de privacidad del gate.
+    After: devuelve argv sin valores detectados ni salida del binario.
+    """
+    return [
+        "detect",
+        "--redact",
+        "--source",
+        ".",
+        "--config",
+        str(config_path),
+        "--exit-code",
+        "1",
+        f"--log-opts={context.remote}/{context.branch}..HEAD",
+    ]
+
+
+def _gitleaks_reproducible_command(context: PushContext, config_path: Path) -> str:
+    """Describe el comando de deteccion sin filtrar el contenido del hallazgo."""
+    return "gitleaks " + " ".join(_gitleaks_detect_args(context, config_path))
+
+
+def _gitleaks_range_is_valid(
+    context: PushContext,
+    git_runner: Callable[[Sequence[str]], tuple[int, str, str]],
+) -> bool:
+    """Confirma que Git puede resolver y contar exactamente el rango."""
+    try:
+        rc, output, _error = git_runner(
+            ["rev-list", "--count", f"{context.remote}/{context.branch}..HEAD"]
+        )
+        return rc == 0 and int(output.strip()) >= 1
+    except (OSError, ValueError):
+        return False
+
+
+def _gitleaks_config_is_valid(config_path: Path) -> bool:
+    """Exige TOML parseable con al menos una regla efectiva."""
+    try:
+        with config_path.open("rb") as config_file:
+            config = tomllib.load(config_file)
+    except (OSError, tomllib.TOMLDecodeError):
+        return False
+    rules = config.get("rules")
+    extend = config.get("extend")
+    return (isinstance(rules, list) and bool(rules)) or (
+        isinstance(extend, dict) and extend.get("useDefault") is True
+    )
+
+
+def run_gitleaks_gate(
+    context: PushContext,
+    *,
+    gitleaks_runner: Callable[[Sequence[str]], tuple[int, str, str]] | None = None,
+    git_runner: Callable[[Sequence[str]], tuple[int, str, str]] | None = None,
+) -> Decision:
+    """Ejecuta el gate reproducible de secretos antes de consumir autorizacion.
+
+    Before: `context` identifica un rango remoto/rama con al menos un commit y
+        `project_root` es el checkout que se pretende empujar.
+    During: valida TOML, exige Gitleaks exactamente `8.30.1` y ejecuta
+        `detect --redact --source . --config ... --exit-code 1 --log-opts=<remote>/<branch>..HEAD`.
+        El discriminador topologico prioriza la plantilla del motor y cae a la
+        configuracion del destino; cualquier ausencia, hallazgo, error o
+        binario/version no validos rechaza sin exponer stdout/stderr.
+    After: devuelve Decision permitida solo con retorno 0 y rango no vacio;
+        nunca escribe el ledger ni empuja.
+    """
+
+    if context.commit_count < 1:
+        return Decision(False, "gitleaks-empty-range")
+    git_run = git_runner or _default_git_runner(context.project_root)
+    if not _gitleaks_range_is_valid(context, git_run):
+        return Decision(False, "gitleaks-range-invalid")
+    config_path = _gitleaks_config_path(context.project_root)
+    if config_path is None:
+        return Decision(False, "gitleaks-config-missing")
+    if not _gitleaks_config_is_valid(config_path):
+        return Decision(False, "gitleaks-config-invalid")
+
+    run = gitleaks_runner or _default_gitleaks_runner(context.project_root)
+    try:
+        version_rc, version_out, _version_err = run(["version"])
+    except OSError:
+        return Decision(False, "gitleaks-unavailable")
+    version = version_out.strip().removeprefix("v")
+    if version_rc != 0 or version != GITLEAKS_VERSION:
+        return Decision(False, "gitleaks-version-mismatch")
+
+    try:
+        detect_rc, _detect_out, _detect_err = run(
+            _gitleaks_detect_args(context, config_path)
+        )
+    except OSError:
+        return Decision(False, "gitleaks-unavailable")
+    if detect_rc == 0:
+        return Decision(True, "gitleaks-clean")
+    if detect_rc == 1:
+        return Decision(
+            False,
+            "gitleaks-findings",
+            detail="comando reproducible: "
+            + _gitleaks_reproducible_command(context, config_path),
+        )
+    return Decision(False, "gitleaks-failed")
+
+
 def _repo_from_url(url: str) -> str:
     """Extrae el nombre del repo de la URL de un remoto (sin .git)."""
     raw = url.strip().replace("\\", "/").rstrip("/")
@@ -1852,12 +2028,14 @@ def execute_authorized_push(
     ledger: PushAuthorityLedger,
     dry_run: bool = False,
     git_runner: Callable[[Sequence[str]], tuple[int, str, str]] | None = None,
+    gitleaks_runner: Callable[[Sequence[str]], tuple[int, str, str]] | None = None,
 ) -> ExecutionResult:
     """Verifica la autorizacion, la consume y ejecuta el push en un comando.
 
     Before: contexto de git, ancla, almacen y ledger.
-    During: (1) `find_authorization`; (2) si dry_run, para sin consumir ni
-        empujar; (3) consume el messageId de forma atomica; (4) revalida la
+    During: (1) `find_authorization`; (2) si la decision permite, ejecuta el
+        gate Gitleaks antes de cualquier dry-run o consumo; (3) si dry_run,
+        para sin consumir ni empujar; (4) consume el messageId de forma atomica; (5) revalida la
         identidad COMPLETA (messageId, thread_id, created_at, ancla no borrada y
         posterioridad) y el digest JUSTO antes del push (si falla, el mensaje
         queda quemado: fail-closed); (5) exige HEAD == full_sha justo antes del
@@ -1884,6 +2062,11 @@ def execute_authorized_push(
         )
         if not decision.allowed:
             return ExecutionResult(EXIT_REJECTED, decision)
+        gitleaks_decision = run_gitleaks_gate(
+            context, gitleaks_runner=gitleaks_runner, git_runner=git_runner
+        )
+        if not gitleaks_decision.allowed:
+            return ExecutionResult(EXIT_REJECTED, gitleaks_decision)
         if dry_run:
             return ExecutionResult(EXIT_ALLOWED, decision, pushed=False)
         record = {
