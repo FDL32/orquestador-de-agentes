@@ -6740,6 +6740,8 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
                     original_exc=exc,
                     failure_class="unexpected_synthesis_failure",
                     tried_profiles=_tried_profiles | {profile_name},
+                    author_model=author_model,
+                    reviewer_model=reviewer_model,
                 )
             raise
         return _retry_with_similar_fallback(
@@ -6762,6 +6764,8 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
             original_exc=exc,
             failure_class=_classify_transport_failure(exc),
             tried_profiles=_tried_profiles | {profile_name},
+            author_model=author_model,
+            reviewer_model=reviewer_model,
         )
     latency_ms = round((time.perf_counter() - _t0) * 1000)
     # WOT-2026-086k (Decision 2 de `DEC-086K-001`): el canal `agent` NO lanza
@@ -6872,6 +6876,8 @@ def run_loop_round(  # noqa: C901 - WOT-2026-034a anade el fallback de sintesis 
             original_exc=RuntimeError(_bad_content_detail),
             failure_class="bad_content",
             tried_profiles=_tried_profiles | {profile_name},
+            author_model=author_model,
+            reviewer_model=reviewer_model,
         )
 
     return reply
@@ -6941,6 +6947,8 @@ def _retry_with_similar_fallback(
     original_exc: Exception,
     failure_class: str,
     tried_profiles: frozenset[str],
+    author_model: str | None = None,
+    reviewer_model: str | None = None,
 ) -> str:
     """Reintenta UNA vez con `resolve_similar_fallback` tras un transport_failed.
 
@@ -7060,6 +7068,8 @@ def _retry_with_similar_fallback(
         session_id=session_id,
         commit_sha=commit_sha,
         challenge_nonce=challenge_nonce,
+        author_model=author_model,
+        reviewer_model=reviewer_model,
         _tried_profiles=tried_profiles,
     )
 
@@ -9625,6 +9635,8 @@ def _retry_with_nan_leader_fallback(
     original_exc: Exception,
     failure_class: str,
     tried_profiles: frozenset[str],
+    author_model: str | None = None,
+    reviewer_model: str | None = None,
 ) -> str:
     """Specialized fallback for synthesis using the best nan model from leaders.json."""
     fallback_profile, fallback_selection = _get_best_nan_for_task(
@@ -9691,5 +9703,7 @@ def _retry_with_nan_leader_fallback(
         session_id=session_id,
         commit_sha=commit_sha,
         challenge_nonce=challenge_nonce,
+        author_model=author_model,
+        reviewer_model=reviewer_model,
         _tried_profiles=tried_profiles,
     )
