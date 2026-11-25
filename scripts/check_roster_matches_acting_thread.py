@@ -38,6 +38,37 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+_role_key_load_error: Exception | None = None
+try:
+    _role_key_path = (
+        Path(__file__).resolve().parent / "flight" / "roster_role_key.py"
+    ).resolve()
+    _role_key_name = "_flt_roster_role_key_" + str(_role_key_path).replace(
+        "\\", "_"
+    ).replace(":", "_")
+    _role_key_spec = importlib.util.spec_from_file_location(
+        _role_key_name, _role_key_path
+    )
+    if _role_key_spec is None or _role_key_spec.loader is None:
+        raise ImportError("no se pudo cargar roster_role_key.py")
+    _role_key_module = importlib.util.module_from_spec(_role_key_spec)
+    _role_key_spec.loader.exec_module(_role_key_module)
+    RosterRoleKeyError = _role_key_module.RosterRoleKeyError
+    orchestrator_entry = _role_key_module.orchestrator_entry
+    resolve_orchestrator_role = _role_key_module.resolve_orchestrator_role
+except Exception as _role_key_exc:
+    _role_key_load_error = _role_key_exc
+
+    class RosterRoleKeyError(ValueError):
+        """Fallback resolver error for an isolated FLT copy."""
+
+    def orchestrator_entry(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def resolve_orchestrator_role(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+
 _THREAD_ID_PATH = Path(__file__).resolve().parent / "flight" / "thread_id.py"
 _thread_id_module: object | None = None
 _thread_id_load_error: Exception | None = None
@@ -228,6 +259,13 @@ def check_identity(active_roles: dict, role: str, acting_thread: str) -> list[st
     """
     if not isinstance(active_roles, dict):
         return [f"(a) rol '{role}' ausente en active_roles: identidad no verificable"]
+    if role in ("orquestador", "coordinadora"):
+        try:
+            resolved = resolve_orchestrator_role(active_roles)
+        except RosterRoleKeyError as exc:
+            return [_role_key_diagnostic("a", exc)]
+        if resolved is not None:
+            role = resolved
     role_entry = active_roles.get(role)
     if role_entry is None:
         return [f"(a) rol '{role}' ausente en active_roles: identidad no verificable"]
@@ -259,6 +297,13 @@ def check_pendiente_ack(
     Extension NO literal del DoD (aceptada): si NO hay ninguna linea
     canonica que explique el estado, se trata tambien como violacion.
     """
+    if role in ("orquestador", "coordinadora"):
+        try:
+            resolved = resolve_orchestrator_role(active_roles)
+        except RosterRoleKeyError as exc:
+            return [_role_key_diagnostic("b", exc)]
+        if resolved is not None:
+            role = resolved
     role_entry = active_roles.get(role)
     if role_entry is None:
         return []
@@ -336,8 +381,16 @@ def check_roster_outdated(
     violations: list[str] = []
     notes: list[str] = []
 
+    try:
+        coordinator_key = resolve_orchestrator_role(active_roles)
+    except RosterRoleKeyError as exc:
+        return [_role_key_diagnostic("d", exc)], []
+    normalized_roles = dict(active_roles)
+    if coordinator_key is not None:
+        normalized_roles["orquestador"] = active_roles[coordinator_key]
+
     for roster_role, registry_role in roster_to_registry.items():
-        role_entry = active_roles.get(roster_role)
+        role_entry = normalized_roles.get(roster_role)
         if role_entry is None:
             notes.append(f"rol '{roster_role}' no mapeado en active_roles, (d) omitida")
             continue
@@ -364,6 +417,13 @@ def check_roster_outdated(
     return violations, notes
 
 
+def _role_key_diagnostic(checkpoint: str, exc: Exception) -> str:
+    """Before: checkpoint and resolver error; During: preserve its cause; After: one fail-closed diagnostic."""
+    if _role_key_load_error is not None:
+        return f"({checkpoint}) no se pudo cargar roster_role_key.py: {exc}"
+    return f"({checkpoint}) identidad de coordinacion ambigua: {exc}"
+
+
 # --- Main ---
 
 
@@ -387,6 +447,14 @@ def find_violations(  # noqa: C901
         return [f"no se pudo parsear el roster: {roster_path}"], []
 
     active_roles = roster.get("active_roles", {})
+    if isinstance(active_roles, dict):
+        try:
+            coordinator_key = resolve_orchestrator_role(active_roles)
+        except RosterRoleKeyError as exc:
+            return [_role_key_diagnostic("b", exc)], []
+        if coordinator_key is not None:
+            active_roles = dict(active_roles)
+            active_roles["orquestador"] = active_roles[coordinator_key]
     if registry is None or not isinstance(registry, dict):
         violations = check_identity(active_roles, role, acting_thread)
         if violations:
@@ -443,7 +511,7 @@ def find_violations(  # noqa: C901
 # --- Supervisor helpers (WOT-2026-136f) ---
 
 
-def supervisor_esperado(roster: dict) -> str:
+def supervisor_esperado(roster: dict) -> str:  # noqa: C901
     """Determinar el threadId esperado del supervisor desde el predecesor.
 
     Before: roster es el diccionario completo del flight_roster.json.
@@ -455,7 +523,10 @@ def supervisor_esperado(roster: dict) -> str:
     ar = roster.get("active_roles")
     if not isinstance(ar, dict):
         return "indeterminado"
-    orq = ar.get("orquestador")
+    try:
+        orq = orchestrator_entry(ar)
+    except RosterRoleKeyError:
+        return "indeterminado"
     if not isinstance(orq, dict):
         return "indeterminado"
     orq_thread = orq.get("threadId", "")
@@ -516,7 +587,10 @@ def check_identity_e(  # noqa: C901
     if not isinstance(sup_thread, str):
         return ["(e) supervisor.threadId no es una cadena"]
 
-    orq = ar.get("orquestador")
+    try:
+        orq = orchestrator_entry(ar)
+    except RosterRoleKeyError as exc:
+        return [_role_key_diagnostic("e", exc)]
     if not isinstance(orq, dict):
         return ["(e) active_roles.orquestador no es un mapping"]
 
@@ -607,7 +681,10 @@ def check_cascada_f(  # noqa: C901
         return []  # No cascada to check
 
     if not isinstance(cascada, list):
-        orq = ar.get("orquestador")
+        try:
+            orq = orchestrator_entry(ar)
+        except RosterRoleKeyError as exc:
+            return [_role_key_diagnostic("f", exc)]
         orq_thread = orq.get("threadId", "") if isinstance(orq, dict) else "?"
         return [
             f"(f) orquestador '{orq_thread}': cadena_contexto no es lista "
@@ -616,14 +693,20 @@ def check_cascada_f(  # noqa: C901
 
     for entry in cascada:
         if not isinstance(entry, dict):
-            orq = ar.get("orquestador")
+            try:
+                orq = orchestrator_entry(ar)
+            except RosterRoleKeyError as exc:
+                return [_role_key_diagnostic("f", exc)]
             orq_thread = orq.get("threadId", "") if isinstance(orq, dict) else "?"
             return [
                 f"(f) orquestador '{orq_thread}': elemento de cadena "
                 f"no es un mapping (no se puede verificar threadId)"
             ]
         if "threadId" not in entry:
-            orq = ar.get("orquestador")
+            try:
+                orq = orchestrator_entry(ar)
+            except RosterRoleKeyError as exc:
+                return [_role_key_diagnostic("f", exc)]
             orq_thread = orq.get("threadId", "") if isinstance(orq, dict) else "?"
             return [
                 f"(f) orquestador '{orq_thread}': elemento de cadena "
@@ -633,7 +716,10 @@ def check_cascada_f(  # noqa: C901
     violations: list[str] = []
 
     # Check that orquestador is not in its own cascada.
-    orq = ar.get("orquestador")
+    try:
+        orq = orchestrator_entry(ar)
+    except RosterRoleKeyError as exc:
+        return [_role_key_diagnostic("f", exc)]
     if isinstance(orq, dict):
         orq_thread = orq.get("threadId", "")
         if isinstance(orq_thread, str):

@@ -39,6 +39,41 @@ from pathlib import Path
 from types import SimpleNamespace
 
 
+_role_key_load_error: Exception | None = None
+try:
+    _role_key_path = (
+        Path(__file__).resolve().with_name("roster_role_key.py")
+    ).resolve()
+    _role_key_name = "_flt_roster_role_key_" + str(_role_key_path).replace(
+        "\\", "_"
+    ).replace(":", "_")
+    _role_key_spec = importlib.util.spec_from_file_location(
+        _role_key_name, _role_key_path
+    )
+    if _role_key_spec is None or _role_key_spec.loader is None:
+        raise ImportError("no se pudo cargar roster_role_key.py")
+    _role_key_module = importlib.util.module_from_spec(_role_key_spec)
+    _role_key_spec.loader.exec_module(_role_key_module)
+    RosterRoleKeyError = _role_key_module.RosterRoleKeyError
+    orchestrator_entry = _role_key_module.orchestrator_entry
+    resolve_orchestrator_role = _role_key_module.resolve_orchestrator_role
+    set_orchestrator_entry = _role_key_module.set_orchestrator_entry
+except Exception as _role_key_exc:
+    _role_key_load_error = _role_key_exc
+
+    class RosterRoleKeyError(ValueError):
+        """Fallback resolver error for an isolated FLT copy."""
+
+    def orchestrator_entry(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def resolve_orchestrator_role(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def set_orchestrator_entry(_roles, _entry, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+
 OPS_DIR_ENV = "FLIGHT_OPS_DIR"
 FLIGHT_DIR_ENV = "FLIGHT_DIR"
 NO_WINDOW = 0x08000000
@@ -933,10 +968,11 @@ def _resolve_paths(a, ops):  # noqa: C901
                     if hard_valid:
                         cfg.quota_hard = quota["hard_stop_block_pct"]
                     cfg.quota_fallback = not (soft_valid and hard_valid)
+                candidate_entry = orchestrator_entry(value.get("active_roles", {}))
                 candidate = (
-                    value.get("active_roles", {})
-                    .get("orquestador", {})
-                    .get("session_code")
+                    candidate_entry.get("session_code")
+                    if isinstance(candidate_entry, dict)
+                    else None
                 )
                 if re.fullmatch(r"[A-Z]{2,3}-[0-9]{1,4}", str(candidate or "")):
                     cfg.session_code = candidate
@@ -2564,7 +2600,7 @@ def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
     try:
         roster = json.loads(roster_path.read_text(encoding="utf-8"))
         roles = roster.get("active_roles") if isinstance(roster, dict) else None
-        orchestrator = roles.get("orquestador") if isinstance(roles, dict) else None
+        orchestrator = orchestrator_entry(roles) if isinstance(roles, dict) else None
         if (
             not isinstance(orchestrator, dict)
             or not orchestrator.get("threadId")
@@ -2599,15 +2635,14 @@ def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
         if since is None or since.tzinfo is None:
             raise ValueError("since ilegible")
         triad = []
-        for role_name in ("orquestador", "supervisor", "ancestro_directo"):
-            role = roles.get(role_name) if isinstance(roles, dict) else None
-            if isinstance(role, dict):
-                triad.append(
-                    (
-                        str(role.get("threadId") or ""),
-                        str(role.get("session_code") or ""),
-                    )
-                )
+        triad_roles = (orchestrator, supervisor, roles.get("ancestro_directo"))
+        triad.extend(
+            [
+                (str(role.get("threadId") or ""), str(role.get("session_code") or ""))
+                for role in triad_roles
+                if isinstance(role, dict)
+            ]
+        )
     except (OSError, TypeError, ValueError, json.JSONDecodeError, RecursionError):
         return blind("roster no medido")
 

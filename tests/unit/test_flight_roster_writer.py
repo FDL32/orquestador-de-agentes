@@ -2949,10 +2949,13 @@ class TestGuardImportFailClosedSubprocess:
             shutil.copy(scripts_dir / name, iso / name)
         # WOT-2026-136h (N1a): always copy flight/thread_id.py to the isolated tree.
         thread_id_src = scripts_dir / "flight" / "thread_id.py"
-        if thread_id_src.exists():
-            flight_dir = iso / "flight"
-            flight_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy(thread_id_src, flight_dir / "thread_id.py")
+        flight_dir = iso / "flight"
+        flight_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy(thread_id_src, flight_dir / "thread_id.py")
+        shutil.copy(
+            scripts_dir / "flight" / "roster_role_key.py",
+            flight_dir / "roster_role_key.py",
+        )
         roster_p, changes_p = _write_rotation_files(tmp_path, _rotation_roster())
         before = roster_p.read_bytes()
         proc = subprocess.run(

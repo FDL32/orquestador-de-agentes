@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.util
 import json
 import math
 import os
@@ -24,6 +25,41 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+
+_role_key_load_error: Exception | None = None
+try:
+    _role_key_path = (
+        Path(__file__).resolve().with_name("roster_role_key.py")
+    ).resolve()
+    _role_key_name = "_flt_roster_role_key_" + str(_role_key_path).replace(
+        "\\", "_"
+    ).replace(":", "_")
+    _role_key_spec = importlib.util.spec_from_file_location(
+        _role_key_name, _role_key_path
+    )
+    if _role_key_spec is None or _role_key_spec.loader is None:
+        raise ImportError("no se pudo cargar roster_role_key.py")
+    _role_key_module = importlib.util.module_from_spec(_role_key_spec)
+    _role_key_spec.loader.exec_module(_role_key_module)
+    RosterRoleKeyError = _role_key_module.RosterRoleKeyError
+    orchestrator_entry = _role_key_module.orchestrator_entry
+    resolve_orchestrator_role = _role_key_module.resolve_orchestrator_role
+    set_orchestrator_entry = _role_key_module.set_orchestrator_entry
+except Exception as _role_key_exc:
+    _role_key_load_error = _role_key_exc
+
+    class RosterRoleKeyError(ValueError):
+        """Fallback resolver error for an isolated FLT copy."""
+
+    def orchestrator_entry(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def resolve_orchestrator_role(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def set_orchestrator_entry(_roles, _entry, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -335,9 +371,12 @@ def _validate_phase_a_outgoing(flight_dir: Path, request: RotationRequest) -> No
     except Exception as exc:
         raise RotationRejectedError("phase-a-outgoing-identity-mismatch") from exc
     active_roles = roster.get("active_roles")
-    orchestrator = (
-        active_roles.get("orquestador") if isinstance(active_roles, dict) else None
-    )
+    try:
+        orchestrator = orchestrator_entry(active_roles)
+    except RosterRoleKeyError as exc:
+        raise RotationRejectedError(
+            f"phase-a-outgoing-identity-mismatch: {exc}"
+        ) from exc
     sessions = registry.get("sessions")
     outgoing_sessions = (
         [
@@ -467,7 +506,10 @@ def _install_incoming_orchestrator(
     active_roles = current.get("active_roles")
     if not isinstance(active_roles, dict):
         raise RotationRejectedError("roster-active-roles-invalid")
-    current_orchestrator = active_roles.get("orquestador")
+    try:
+        current_orchestrator = orchestrator_entry(active_roles)
+    except RosterRoleKeyError as exc:
+        raise RotationRejectedError(f"roster-orchestrador-invalid: {exc}") from exc
     if not isinstance(current_orchestrator, dict):
         raise RotationRejectedError("roster-orchestrador-invalid")
     if current_orchestrator.get("estado") != "PENDIENTE_ACK":
@@ -489,7 +531,7 @@ def _install_incoming_orchestrator(
     }
     roster_writer._validate_active_role_fields(incoming)
     updated = json.loads(json.dumps(current, ensure_ascii=False))
-    updated["active_roles"]["orquestador"] = incoming
+    set_orchestrator_entry(updated["active_roles"], incoming)
     roster_writer._atomic_write_json(roster_path, updated)
     roster_writer._append_change_line(
         changes_log_path,
@@ -677,7 +719,7 @@ def rotate_phase_a(
         )
 
 
-def _rotate_phase_b_locked(
+def _rotate_phase_b_locked(  # noqa: C901
     flight_dir: Path,
     request: RotationRequest,
     *,
@@ -707,9 +749,10 @@ def _rotate_phase_b_locked(
     log_path = flight_dir / "roster_changes.jsonl"
     roster = roster_writer._read_roster(roster_path)
     active_roles = roster.get("active_roles")
-    orquestador = (
-        active_roles.get("orquestador") if isinstance(active_roles, dict) else None
-    )
+    try:
+        orquestador = orchestrator_entry(active_roles)
+    except RosterRoleKeyError as exc:
+        raise RotationRejectedError(f"phase-a-required: {exc}") from exc
     if (
         not isinstance(orquestador, dict)
         or orquestador.get("estado") != "PENDIENTE_ACK"

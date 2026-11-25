@@ -9,10 +9,38 @@ contract violation and exit 2 reports an unmeasured environment.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
 from pathlib import Path
+
+
+_role_key_load_error: Exception | None = None
+try:
+    _role_key_path = (
+        Path(__file__).resolve().parent / "flight" / "roster_role_key.py"
+    ).resolve()
+    _role_key_name = "_flt_roster_role_key_" + str(_role_key_path).replace(
+        "\\", "_"
+    ).replace(":", "_")
+    _role_key_spec = importlib.util.spec_from_file_location(
+        _role_key_name, _role_key_path
+    )
+    if _role_key_spec is None or _role_key_spec.loader is None:
+        raise ImportError("no se pudo cargar roster_role_key.py")
+    _role_key_module = importlib.util.module_from_spec(_role_key_spec)
+    _role_key_spec.loader.exec_module(_role_key_module)
+    RosterRoleKeyError = _role_key_module.RosterRoleKeyError
+    orchestrator_entry = _role_key_module.orchestrator_entry
+except Exception as _role_key_exc:
+    _role_key_load_error = _role_key_exc
+
+    class RosterRoleKeyError(ValueError):
+        """Fallback resolver error for an isolated FLT copy."""
+
+    def orchestrator_entry(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -157,7 +185,10 @@ def _workspace_heartbeat(workspace: Path) -> tuple[Path | None, str | None]:
             data = json.loads(raw or "")
             roles = data["active_roles"]
             supervisor = roles["supervisor"]["session_code"]
-            coordinator = roles["orquestador"]["session_code"]
+            coordinator_entry = orchestrator_entry(roles)
+            if not isinstance(coordinator_entry, dict):
+                raise ValueError("coordinadora ausente en active_roles")
+            coordinator = coordinator_entry["session_code"]
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             return None, f"NO MEDIDO: roster roto en {roster_path}: {exc}"
         flight_dir = roster_path.parent

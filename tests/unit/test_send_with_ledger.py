@@ -1113,6 +1113,10 @@ def _isolated_tree(tmp_path: Path, mode: str | None) -> Path:
     ):
         shutil.copy(_SCRIPTS_DIR / name, scripts / name)
     shutil.copy(_SEND_WITH_LEDGER, scripts / "flight" / "send_with_ledger.py")
+    shutil.copy(
+        _SCRIPTS_DIR / "flight" / "roster_role_key.py",
+        scripts / "flight" / "roster_role_key.py",
+    )
     if mode is None:
         shutil.copy(
             _SCRIPTS_DIR / "flight" / "thread_id.py",

@@ -23,6 +23,41 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 
+_role_key_load_error: Exception | None = None
+try:
+    _role_key_path = (
+        Path(__file__).resolve().with_name("roster_role_key.py")
+    ).resolve()
+    _role_key_name = "_flt_roster_role_key_" + str(_role_key_path).replace(
+        "\\", "_"
+    ).replace(":", "_")
+    _role_key_spec = importlib.util.spec_from_file_location(
+        _role_key_name, _role_key_path
+    )
+    if _role_key_spec is None or _role_key_spec.loader is None:
+        raise ImportError("no se pudo cargar roster_role_key.py")
+    _role_key_module = importlib.util.module_from_spec(_role_key_spec)
+    _role_key_spec.loader.exec_module(_role_key_module)
+    RosterRoleKeyError = _role_key_module.RosterRoleKeyError
+    orchestrator_entry = _role_key_module.orchestrator_entry
+    resolve_orchestrator_role = _role_key_module.resolve_orchestrator_role
+    set_orchestrator_entry = _role_key_module.set_orchestrator_entry
+except Exception as _role_key_exc:
+    _role_key_load_error = _role_key_exc
+
+    class RosterRoleKeyError(ValueError):
+        """Fallback resolver error for an isolated FLT copy."""
+
+    def orchestrator_entry(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def resolve_orchestrator_role(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def set_orchestrator_entry(_roles, _entry, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+
 ACK_RE = re.compile(r"ACTIVA\s*\(ACK medido\s+(?P<ts>[^)]+)\)")
 STATE_NAME = "post_relevo_state.json"
 
@@ -231,7 +266,10 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
         roster = _load_json(flight_dir / "flight_roster.json")
         registry_path = flight_dir / "session_registry.json"
         registry = _load_json(registry_path)
-        incoming = roster["active_roles"]["orquestador"]["session_code"]
+        incoming_entry = orchestrator_entry(roster["active_roles"])
+        if not isinstance(incoming_entry, dict):
+            raise ValueError("coordinadora ausente en active_roles")
+        incoming = incoming_entry["session_code"]
         session = _session(registry, incoming)
         if session is None:
             raise ValueError(f"entrante ausente: {incoming}")

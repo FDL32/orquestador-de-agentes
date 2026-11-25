@@ -64,12 +64,51 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import re
 import sys
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+
+_role_key_load_error: Exception | None = None
+try:
+    _role_key_path = (
+        Path(__file__).resolve().with_name("roster_role_key.py")
+    ).resolve()
+    _role_key_name = "_flt_roster_role_key_" + str(_role_key_path).replace(
+        "\\", "_"
+    ).replace(":", "_")
+    _role_key_spec = importlib.util.spec_from_file_location(
+        _role_key_name, _role_key_path
+    )
+    if _role_key_spec is None or _role_key_spec.loader is None:
+        raise ImportError("no se pudo cargar roster_role_key.py")
+    _role_key_module = importlib.util.module_from_spec(_role_key_spec)
+    try:
+        _role_key_spec.loader.exec_module(_role_key_module)
+        RosterRoleKeyError = _role_key_module.RosterRoleKeyError
+        orchestrator_entry = _role_key_module.orchestrator_entry
+        resolve_orchestrator_role = _role_key_module.resolve_orchestrator_role
+        set_orchestrator_entry = _role_key_module.set_orchestrator_entry
+    except Exception:
+        raise
+except Exception as _role_key_exc:
+    _role_key_load_error = _role_key_exc
+
+    class RosterRoleKeyError(ValueError):
+        """Fallback resolver error for an isolated FLT copy."""
+
+    def orchestrator_entry(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def resolve_orchestrator_role(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def set_orchestrator_entry(_roles, _entry, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
 
 
 _CASCADE_START = "la cascada es "
@@ -399,7 +438,13 @@ def reduce_roster(real: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str
         f"campo de roster no consumido: {key} en active_roles"
         for key in sorted(
             set(active_roles)
-            - {"orquestador", "supervisor", "_schema_note", "ancestro_directo"}
+            - {
+                "orquestador",
+                "coordinadora",
+                "supervisor",
+                "_schema_note",
+                "ancestro_directo",
+            }
         )
     )
     known_role_metadata = {
@@ -413,7 +458,19 @@ def reduce_roster(real: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str
         "estado",
     }
     reduced_roles: dict[str, dict[str, Any]] = {}
-    for name in ("orquestador", "supervisor"):
+    resolution_failed = False
+    try:
+        orchestrator_key = resolve_orchestrator_role(active_roles)
+    except RosterRoleKeyError as exc:
+        errors.append(f"campo de roster no consumido: {exc}")
+        orchestrator_key = None
+        resolution_failed = True
+    if orchestrator_key is None and not resolution_failed:
+        errors.append(
+            "campo de roster ausente: active_roles debe contener orquestador o coordinadora"
+        )
+    names = ((orchestrator_key,) if orchestrator_key else ()) + ("supervisor",)
+    for name in names:
         value = active_roles.get(name)
         location = f"active_roles.{name}"
         if not isinstance(value, dict):

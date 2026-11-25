@@ -14,6 +14,7 @@ import copy
 import datetime
 import hashlib
 import importlib
+import importlib.util
 import json
 import os
 import shutil
@@ -21,6 +22,41 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+
+_role_key_load_error: Exception | None = None
+try:
+    _role_key_path = (
+        Path(__file__).resolve().with_name("roster_role_key.py")
+    ).resolve()
+    _role_key_name = "_flt_roster_role_key_" + str(_role_key_path).replace(
+        "\\", "_"
+    ).replace(":", "_")
+    _role_key_spec = importlib.util.spec_from_file_location(
+        _role_key_name, _role_key_path
+    )
+    if _role_key_spec is None or _role_key_spec.loader is None:
+        raise ImportError("no se pudo cargar roster_role_key.py")
+    _role_key_module = importlib.util.module_from_spec(_role_key_spec)
+    _role_key_spec.loader.exec_module(_role_key_module)
+    RosterRoleKeyError = _role_key_module.RosterRoleKeyError
+    orchestrator_entry = _role_key_module.orchestrator_entry
+    resolve_orchestrator_role = _role_key_module.resolve_orchestrator_role
+    set_orchestrator_entry = _role_key_module.set_orchestrator_entry
+except Exception as _role_key_exc:
+    _role_key_load_error = _role_key_exc
+
+    class RosterRoleKeyError(ValueError):
+        """Fallback resolver error for an isolated FLT copy."""
+
+    def orchestrator_entry(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def resolve_orchestrator_role(_roles, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
+
+    def set_orchestrator_entry(_roles, _entry, _error=_role_key_exc):
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
 
 
 MOTOR = Path()
@@ -78,7 +114,7 @@ def phase_a(fl, a, backups, actor):
             backups / (p.name + f".pre_rotacion_{a.in_code.lower().replace('-', '')}"),
         )
     r0 = W._read_roster(roster_p)
-    orq0 = r0["active_roles"]["orquestador"]
+    orq0 = orchestrator_entry(r0["active_roles"])
     sup0 = r0["active_roles"]["supervisor"]
     if not (
         orq0["threadId"] == a.out_thread and orq0.get("estado", "ACTIVO") == "ACTIVO"
@@ -105,23 +141,26 @@ def phase_a(fl, a, backups, actor):
     )
     # 2) identidad: roster y registro seguidos
     r1 = W._read_roster(roster_p)
-    v = r1["active_roles"]["orquestador"]["version"]
+    v = orchestrator_entry(r1["active_roles"])["version"]
     new = copy.deepcopy(r1)
-    new["active_roles"]["orquestador"] = {
-        "threadId": a.in_thread,
-        "session_code": a.in_code,
-        "since": now(),
-        "set_by": f"{actor} (relevo planificado {a.out_code} -> {a.in_code}; {reason})",
-        "predecessor_threadId": a.out_thread,
-        "version": v + 1,
-        "status": "active",
-        "approved_by": a.approved_by,
-        "nota": f"{a.in_code} es codigo/etiqueta; la clave `orquestador` del roster es el nombre del campo de la coordinadora y su renombre es un ticket aparte. Cadena en session_registry.json -> cadena_consulta.",
-        "estado": "PENDIENTE_ACK",
-    }
-    W._validate_active_role_fields(new["active_roles"]["orquestador"])
+    set_orchestrator_entry(
+        new["active_roles"],
+        {
+            "threadId": a.in_thread,
+            "session_code": a.in_code,
+            "since": now(),
+            "set_by": f"{actor} (relevo planificado {a.out_code} -> {a.in_code}; {reason})",
+            "predecessor_threadId": a.out_thread,
+            "version": v + 1,
+            "status": "active",
+            "approved_by": a.approved_by,
+            "nota": f"{a.in_code} es codigo/etiqueta; la clave `orquestador` del roster es el nombre del campo de la coordinadora y su renombre es un ticket aparte. Cadena en session_registry.json -> cadena_consulta.",
+            "estado": "PENDIENTE_ACK",
+        },
+    )
+    W._validate_active_role_fields(orchestrator_entry(new["active_roles"]))
     fresh = W._read_roster(roster_p)
-    if fresh["active_roles"]["orquestador"]["version"] != v:
+    if orchestrator_entry(fresh["active_roles"])["version"] != v:
         raise AssertionError("CAS: el roster cambio")
     W._atomic_write_json(roster_p, new)
     W._append_change_line(
@@ -327,8 +366,8 @@ def main():
         r = json.loads((fl / "flight_roster.json").read_text(encoding="utf-8"))
         print(
             "roster final: orquestador",
-            r["active_roles"]["orquestador"]["session_code"],
-            r["active_roles"]["orquestador"]["estado"],
+            orchestrator_entry(r["active_roles"])["session_code"],
+            orchestrator_entry(r["active_roles"])["estado"],
             "| supervisor",
             r["active_roles"]["supervisor"]["session_code"],
             "| cascada",
@@ -359,12 +398,12 @@ def main():
         )
         r1 = W._read_roster(fl2 / "flight_roster.json")
         n2 = copy.deepcopy(r1)
-        n2["active_roles"]["orquestador"].update(
+        orchestrator_entry(n2["active_roles"]).update(
             {
                 "threadId": a.in_thread,
                 "session_code": a.in_code,
                 "predecessor_threadId": a.out_thread,
-                "version": r1["active_roles"]["orquestador"]["version"] + 1,
+                "version": orchestrator_entry(r1["active_roles"])["version"] + 1,
             }
         )
         W._atomic_write_json(fl2 / "flight_roster.json", n2)

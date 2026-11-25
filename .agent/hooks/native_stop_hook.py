@@ -83,6 +83,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -90,6 +91,33 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+_MOTOR_ROOT = Path(__file__).resolve().parents[2]
+try:
+    _role_key_path = (
+        _MOTOR_ROOT / "scripts" / "flight" / "roster_role_key.py"
+    ).resolve()
+    _role_key_name = "_flt_roster_role_key_" + str(_role_key_path).replace(
+        "\\", "_"
+    ).replace(":", "_")
+    _role_key_spec = importlib.util.spec_from_file_location(
+        _role_key_name, _role_key_path
+    )
+    if _role_key_spec is None or _role_key_spec.loader is None:
+        raise ImportError("no se pudo cargar roster_role_key.py")
+    _role_key_module = importlib.util.module_from_spec(_role_key_spec)
+    _role_key_spec.loader.exec_module(_role_key_module)
+    RosterRoleKeyError = _role_key_module.RosterRoleKeyError
+    orchestrator_entry = _role_key_module.orchestrator_entry
+except Exception as _role_key_exc:
+
+    class RosterRoleKeyError(ValueError):
+        """Fallback error when the shared resolver cannot be loaded."""
+
+    def orchestrator_entry(_roles, _error=_role_key_exc):
+        """Fail closed for an isolated hook copy without the shared helper."""
+        raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
 
 
 #: Marcadores de clasificacion. Su AUSENCIA es lo que se detecta.
@@ -616,7 +644,7 @@ def p9_announces_without_acting(message: str) -> bool:
 
 
 def _p9_resolve_co_activa(flight_dir: Path) -> str | None:
-    """Before: directorio de vuelo; During: resuelve una CO activa; After: codigo unico o None."""
+    """Before: vuelo con roster; During: detecta una sola clave CO; After: codigo o None fail-closed."""
     try:
         raw = (flight_dir / "flight_roster.json").read_text(encoding="utf-8-sig")
         data = json.loads(raw)
@@ -629,14 +657,20 @@ def _p9_resolve_co_activa(flight_dir: Path) -> str | None:
         if key == "_schema_note" or not isinstance(value, dict):
             continue
         if (
-            key == "orquestador"
+            key in ("orquestador", "coordinadora")
             or key.startswith("orquestador")
             or value.get("role") in ("orquestador", "orquestadora")
         ):
             candidates.append(value)
     if len(candidates) != 1:
         return None
-    session_code = candidates[0].get("session_code")
+    try:
+        resolved = orchestrator_entry(data["active_roles"])
+    except RosterRoleKeyError:
+        return None
+    if resolved is None:
+        return None
+    session_code = resolved.get("session_code") if isinstance(resolved, dict) else None
     if not isinstance(session_code, str) or not session_code.strip():
         return None
     return session_code.strip()

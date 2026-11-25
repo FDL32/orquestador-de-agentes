@@ -223,6 +223,10 @@ def hermetic_close_environment(tmp_path_factory):
         target = motor_root / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+    helper_source = MOTOR_ROOT / "scripts" / "flight" / "roster_role_key.py"
+    helper_target = motor_root / "scripts" / "flight" / "roster_role_key.py"
+    helper_target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(helper_source, helper_target)
     subprocess.run(["git", "init", "-q", str(motor_root)], check=True)
     subprocess.run(
         ["git", "-C", str(motor_root), "config", "core.autocrlf", "false"],
