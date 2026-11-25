@@ -54,6 +54,31 @@ def test_script_es_ascii_y_sin_rutas_de_usuario():
     )
 
 
+def test_no_cred_sync_protege_la_sincronizacion_de_claude_y_el_mutante_falla():
+    """El switch solo evita la copia de credencial en la ruta no interactiva de Claude."""
+    text = SCRIPT.read_text(encoding="ascii")
+
+    def assert_contract(source: str) -> None:
+        assert len(re.findall(r"\[switch\]\$NoCredSync\b", source)) == 1
+        assert source.count("Sync-ClaudeCredentials") == 2
+        assert re.search(
+            r"if \(-not \$interactiveShell -and \$Exe -eq 'claude'"
+            r" -and -not \$NoCredSync\) \{\s*\$null = Sync-ClaudeCredentials",
+            source,
+        ), "la sincronizacion de Claude debe quedar protegida por NoCredSync"
+
+    assert_contract(text)
+
+    # Control positivo: quitar la guarda deja la llamada incondicional y debe fallar.
+    mutant = text.replace(
+        "if (-not $interactiveShell -and $Exe -eq 'claude' -and -not $NoCredSync)",
+        "if (-not $interactiveShell -and $Exe -eq 'claude')",
+    )
+    assert mutant != text
+    with pytest.raises(AssertionError):
+        assert_contract(mutant)
+
+
 @pytest.mark.skipif(not IS_WIN, reason="el parser de PowerShell 5.1 es de Windows")
 def test_script_parsea_sin_errores_de_sintaxis():
     code = (

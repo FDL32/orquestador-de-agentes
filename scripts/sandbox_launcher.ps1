@@ -39,6 +39,7 @@ param(
   [string[]]$PassEnv = @(),
   [int]$TimeoutSec = 0,
   [switch]$Net,
+  [switch]$NoCredSync,
   [switch]$NoCanary,
   [switch]$NullStdin,
   [string[]]$ExtraCap = @(),
@@ -233,8 +234,8 @@ function Sync-ClaudeCredentials($home_) {
   Copy-Item $src (Join-Path $dstDir '.credentials.json') -Force
   Say "credencial de Claude sincronizada desde $cfgDir (cuenta activa ahora)"
   # WOT-2026-104a: la garantia "sin secretos" de la Seccion 1 del protocolo NO cubre
-  # este fichero (excepcion INCONDICIONAL: se copia siempre que $Exe -eq 'claude' no
-  # interactivo). Con $Net activo esa credencial viva queda alcanzable por cualquier
+  # este fichero (se copia siempre que $Exe -eq 'claude' no interactivo y no se use
+  # -NoCredSync). Con $Net activo esa credencial viva queda alcanzable por cualquier
   # proceso con red abierta dentro del sandbox -- advertencia explicita, solo en ese
   # caso, para no repetir el aviso cuando no hay red y el riesgo de exfiltracion no aplica.
   if ($Net) {
@@ -302,7 +303,7 @@ function Cmd-Run($interactiveShell) {
   # proceso lanzador (no esta en la lista blanca), asi que hay que capturar la cuenta
   # activa primero. Solo aplica cuando el agente a lanzar es `claude` (el unico backend
   # de esta sesion que la usa); los demas backends no se ven afectados.
-  if (-not $interactiveShell -and $Exe -eq 'claude') { $null = Sync-ClaudeCredentials (Join-Path $Root 'home') }
+  if (-not $interactiveShell -and $Exe -eq 'claude' -and -not $NoCredSync) { $null = Sync-ClaudeCredentials (Join-Path $Root 'home') }
   Set-CleanEnv $l
   if (-not $NoCanary) { Invoke-Canary $l }
   if ($interactiveShell) { $exePath = Join-Path $env:SystemRoot 'System32\cmd.exe'; $argLine = '' }

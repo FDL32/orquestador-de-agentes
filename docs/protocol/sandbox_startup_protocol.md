@@ -10,7 +10,7 @@
 |---|---|
 | El proceso lanzado lee y escribe solo bajo la raíz del sandbox (`work\`, `home\`); fuera falla, también por junction. | Nada de lo que **no** pase por el lanzador: un terminal normal, una extensión que lanza su propio agente, el propio IDE. |
 | Su entorno no trae secretos (lista blanca de variables estándar; el resto se elimina). | Una lista de hosts: la red es **todo o nada** (`-Net` concede internet completo). |
-| **EXCEPCION (WOT-2026-104a, 2026-10-18):** la garantia de arriba NO cubre el fichero de credencial de Claude. `Sync-ClaudeCredentials` copia `.credentials.json` de la cuenta ACTIVA a `home\.claude\.credentials.json` SIEMPRE que `-Exe claude` corre en modo no interactivo -- incondicional de `-Net`. | Si ademas `-Net` esta activo, esa credencial viva queda alcanzable por cualquier proceso de red dentro del sandbox: riesgo de exfiltracion. El lanzador emite una ADVERTENCIA explicita a stderr solo en ese caso (`-Net` + credencial copiada). |
+| **EXCEPCION (WOT-2026-104a, 2026-10-18):** la garantia de arriba NO cubre el fichero de credencial de Claude. `Sync-ClaudeCredentials` copia `.credentials.json` de la cuenta ACTIVA a `home\.claude\.credentials.json` cuando `-Exe claude` corre en modo no interactivo y no se pasa `-NoCredSync`. | Si ademas `-Net` esta activo, esa credencial viva queda alcanzable por cualquier proceso de red dentro del sandbox: riesgo de exfiltracion. El lanzador emite una ADVERTENCIA explicita a stderr solo en ese caso (`-Net` + credencial copiada). |
 | El canario comprueba, antes de cada arranque, que dentro se lee y fuera no; si no, **no arranca** (fail-closed). | Que el agente sea inofensivo con lo que sí ve: ve `work\` y la red si se la das. |
 | Sin admin, sin instalar nada, deshacible (`down`). | Un agente lanzado a mano como el usuario conserva todo su acceso (AppLocker no activo, WDAC de usuario apagado). |
 
@@ -186,3 +186,50 @@ seguir sin montar el repo real -- `clone`/`snapshot`, nunca apuntar al
 checkout autoritativo. No se repitio la prueba de `opencode` (Seccion 8,
 EPERM/cuelgue) ni la de los backends `kilo`/`nan` -- siguen con su estado
 documentado sin verificar hoy.
+
+## 11. Acta (e): red completa y credencial dedicada (WOT-2026-089r)
+
+Esta acta documenta la decision del operador sobre la clave dedicada y la red
+completa. La red es todo o nada: `-Net` concede salida a Internet sin una
+allowlist de hosts implementada por este lanzador. `-Net` queda apagado por
+defecto para shells, git, snapshots y pruebas locales, pero es el estado normal
+deliberado de toda ronda que necesite hablar con un modelo; no es una excepcion
+silenciosa. Una lista por host requiere un firewall o proxy externo y queda
+diferida.
+
+La aceptacion de proveedor usa una clave dedicada, acotada y revocable. La
+receta exige `CLAUDE_CONFIG_DIR` apuntando a un directorio temporal vacio,
+ademas de `-PassEnv ANTHROPIC_API_KEY`, o el switch `-NoCredSync`. El switch
+solo omite `Sync-ClaudeCredentials` para `claude` no interactivo; sin el switch
+se conserva la sincronizacion existente. La clave nunca se imprime, se guarda
+en el repo ni se coloca en argumentos o ficheros persistentes.
+
+La aceptacion tiene dos fases: (A) una corrida sin clave valida que comprueba
+aislamiento y fallo de autenticacion; (B) una corrida corta con la clave
+dedicada. Tras B, en la misma sesion se ejecuta `down -Purge` y se revoca la
+clave; la revocacion se verifica con una llamada posterior que debe fallar.
+La ejecucion fisica de estas corridas y la revocacion son responsabilidad
+humana. Tambien siguen siendo humanas la prueba de VS Code y la entrada por
+teclado real; el proxy de loopback o con allowlist queda diferido.
+
+El alcance de la proteccion es limitado: el sandbox protege lo que queda fuera
+de la raiz del sandbox y lo que nunca se introduce en ella. No promete proteger
+secretos que se pasen dentro de `work` o por `-PassEnv`; esos datos quedan al
+alcance del proceso y pueden exfiltrarse si se concede `-Net`. Tampoco protege
+terminales, extensiones o agentes que no arranquen por este lanzador.
+
+La medicion de la seccion 10 (`claude -p` devolvio `PONG` con exit 0, commit
+`359870d8`) reconcilia la medicion antigua de la seccion 8: no se conserva como
+hecho actual ninguna afirmacion de que `claude -p` no funcione dentro del
+sandbox. La prueba de `opencode` sigue pendiente.
+
+Para la clausula (a) de la fila WOT-2026-089l, **clase F** se define aqui como
+una ronda real de
+un agente con filesystem que produce una respuesta sustantiva y deja un
+registro correlacionable en `.agent/runtime/ensemble/scorecard.jsonl`; esta es
+una definicion nueva de este ticket porque no se encontro una definicion
+previa en el motor (la ruta del scorecard y su consumidor estan definidos en
+`scripts/ensemble_dispatch.py`, constante `SCORECARD_REL`). La clausula
+requiere una corrida nueva sobre snapshot y su registro; la medicion historica
+de la seccion 10 acredita el mecanismo, no ella sola el cumplimiento de la
+clausula.
