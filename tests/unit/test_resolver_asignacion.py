@@ -750,12 +750,12 @@ def test_m12_real_backends_and_required_assignments():
     ]
     assert list(document["backends"]) == expected
     revisor = assignments["im.revisor"]["candidatos"][0]
-    assert revisor["familia"] == "gemini"
-    assert revisor["instanceId"] == "antigravity"
-    assert revisor["model"] == "gemini-3.8-flash-high"
+    assert revisor["familia"] == "claude"
+    assert revisor["instanceId"] == "claudeAgent"
+    assert revisor["model"] == "claude-sonnet-5"
     assert (
         module.effective_orden(assignments["im.revisor"], revisor)
-        == "f130d0e9-6480-4a2c-adb0-b68fd31b9fc0"
+        == "2ebbe20e-2f64-48ad-b298-3187da4861cc"
     )
     assert assignments["im.revisor"]["refugio"] == [
         {"backend_key": "BA05", "cuenta": "codex"},
@@ -801,14 +801,11 @@ def test_real_derived_eligible_and_pending_posts():
     module = _load_module()
     document, assignments = module.load_declaration(module.DEFAULT_AGENTS_JSON)
     assert module.derive_eligible(assignments, document) == [
-        "BA04",
-        "BA07",
+        "BA257",
         "BA258",
         "BA259",
         "BA150",
         "BA151",
-        "BA08",
-        "BA09",
     ]
     assert not set(module.derive_eligible(assignments, document)) & {
         "BA05",
@@ -842,13 +839,14 @@ def test_real_derived_eligible_and_pending_posts():
         excluir_familias=("codex", "claude", "mimo"),
     )
     assert (first["candidato"]["backend_key"], first["info"]["familia"]) == (
-        "BA04",
+        "BA257",
         "mimo",
     )
-    assert (second["candidato"]["backend_key"], second["info"]["familia"]) == (
-        "BA07",
-        "deepseek",
+    assert (second["info"]["tipo"], second["info"]["familia"]) == (
+        "t3_session",
+        "gemini",
     )
+    assert second["candidato"]["instanceId"] == "antigravity"
 
 
 def test_cli_main_success_pending_and_unreadable(tmp_path, capsys):
@@ -873,7 +871,7 @@ def test_cli_main_success_pending_and_unreadable(tmp_path, capsys):
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
-    assert payload["candidato"]["backend_key"] == "BA04"
+    assert payload["candidato"]["backend_key"] == "BA257"
     assert (
         module.main(["im.revisor", "--agents-json", str(tmp_path / "missing.json")])
         == 3

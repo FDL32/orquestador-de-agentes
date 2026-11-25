@@ -2577,14 +2577,11 @@
     "eligible_coverage": {
       "MANAGER_REVIEW:repo_motor": {
         "backend_keys": [
-          "BA04",
-          "BA07",
+          "BA257",
           "BA258",
           "BA259",
           "BA150",
-          "BA151",
-          "BA08",
-          "BA09"
+          "BA151"
         ],
         "min_distinct": 2,
         "policy": "declared",
@@ -3204,17 +3201,17 @@
         }
       ],
       "orden": {
-        "messageId": "3eb5bb94-6f1e-4ebd-b52e-6291b484ee37"
+        "messageId": "2ebbe20e-2f64-48ad-b298-3187da4861cc"
       }
     },
     "im.revisor": {
       "candidatos": [
         {
           "tipo": "t3_session",
-          "familia": "gemini",
+          "familia": "claude",
           "nivel": "medio",
-          "instanceId": "antigravity",
-          "model": "gemini-3.8-flash-high",
+          "instanceId": "claudeAgent",
+          "model": "claude-sonnet-5",
           "effort": "high"
         }
       ],
@@ -3230,7 +3227,7 @@
         }
       ],
       "orden": {
-        "messageId": "f130d0e9-6480-4a2c-adb0-b68fd31b9fc0"
+        "messageId": "2ebbe20e-2f64-48ad-b298-3187da4861cc"
       }
     },
     "im.v1": {
@@ -3347,27 +3344,20 @@
     "lentes_p34": {
       "candidatos": [
         {
-          "backend_key": "BA05",
+          "backend_key": "BA257",
           "orden": {
-            "messageId": "9c01c011-e0c0-414e-87a7-df5b5c02f32c"
+            "messageId": "2ebbe20e-2f64-48ad-b298-3187da4861cc"
           }
         },
         {
-          "backend_key": "BA269",
+          "tipo": "t3_session",
+          "familia": "gemini",
+          "nivel": "medio",
+          "instanceId": "antigravity",
+          "model": "gemini-3.8-flash-high",
+          "effort": "high",
           "orden": {
-            "messageId": "9c01c011-e0c0-414e-87a7-df5b5c02f32c"
-          }
-        },
-        {
-          "backend_key": "BA04",
-          "orden": {
-            "messageId": "9c01c011-e0c0-414e-87a7-df5b5c02f32c"
-          }
-        },
-        {
-          "backend_key": "BA07",
-          "orden": {
-            "messageId": "9c01c011-e0c0-414e-87a7-df5b5c02f32c"
+            "messageId": "2ebbe20e-2f64-48ad-b298-3187da4861cc"
           }
         },
         {
@@ -3381,12 +3371,6 @@
         },
         {
           "backend_key": "BA151"
-        },
-        {
-          "backend_key": "BA08"
-        },
-        {
-          "backend_key": "BA09"
         }
       ],
       "nivel": "medio",
