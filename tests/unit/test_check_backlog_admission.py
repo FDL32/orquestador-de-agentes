@@ -272,6 +272,337 @@ def commit_alta_with_ficha(
     return git(repo, "rev-parse", "HEAD").strip()
 
 
+def primary_source_receipt(ticket: str = "WOT-2026-231c") -> str:
+    return (
+        "PRIMARY_SOURCE_CHECK:\n"
+        "  estado: TIPIFICADA-FORMA\n"
+        f"  candidato_id: {ticket}\n"
+        "  semantica_certificada: false\n"
+        "  comando: git ls-files AGENTS.md\n"
+        "  cwd: .\n"
+        "  root: .\n"
+        "  fecha: 2026-11-25T13:00:00Z\n"
+        "  rc: 0\n"
+        "  universo:\n"
+        "    README.md: 1\n"
+        "  conteo_total: 1\n"
+        "  citas:\n"
+        "    - ruta: README.md\n"
+        "      linea: 1\n"
+        '      texto: "# repo"\n'
+    )
+
+
+def normative_flt_ficha(receipt: str = "") -> str:
+    return f"redactada_por: co\n## Files Likely Touched\n- AGENTS.md\n{receipt}"
+
+
+def test_normative_flt_admission_requires_primary_source_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """DoD: FLT normativo sin recibo falla y el recibo valido pasa."""
+    ticket = "WOT-2026-231c"
+    bad = init_repo(tmp_path / "bad")
+    cutoff = git(bad, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    commit_alta_with_ficha(
+        bad, row(ticket), "alta FLT sin recibo", ticket, normative_flt_ficha()
+    )
+    bad_code, bad_lines, _bad_skip, _bad_findings = cba._audit_closeout(
+        bad, cutoff_sha=cutoff
+    )
+    assert bad_code == 1
+    assert "PRIMARY_SOURCE_CHECK" in "\n".join(bad_lines)
+
+    good = init_repo(tmp_path / "good")
+    good_cutoff = git(good, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", good_cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", good_cutoff)
+    good_candidate = row(ticket)
+    good_receipt = build_recibo(good, ticket, good_candidate, [backlog_surface(good)])
+    commit_alta_with_ficha(
+        good,
+        good_candidate,
+        msg_with_recibo("alta FLT con recibo", good_receipt),
+        ticket,
+        normative_flt_ficha(primary_source_receipt(ticket)),
+    )
+    good_code, good_lines, _good_skip, _good_findings = cba._audit_closeout(
+        good, cutoff_sha=good_cutoff
+    )
+    assert good_code == 0
+    assert "PRIMARY_SOURCE_CHECK_CONFORME" in "\n".join(good_lines)
+
+
+def test_normative_flt_receipt_mutation_is_rejected(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """DoD: quitar el recibo y conservar la cita no abre la admision."""
+    repo = init_repo(tmp_path / "repo")
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    ficha_mutada = normative_flt_ficha(
+        "cita conservada: README.md linea 1 contiene '# repo'\n"
+    )
+    commit_alta_with_ficha(
+        repo,
+        row("WOT-2026-231d"),
+        "alta FLT recibo quitado",
+        "WOT-2026-231d",
+        ficha_mutada,
+    )
+    code, lines, skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    assert code == 1
+    assert not skipped
+    assert "PRIMARY_SOURCE_CHECK" in "\n".join(lines)
+
+
+def test_primary_source_receipt_reads_the_committed_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """La cita se valida contra el commit de alta, no contra el working tree posterior."""
+    repo = init_repo(tmp_path / "repo")
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    ticket = "WOT-2026-231f"
+    candidate = row(ticket)
+    commit_alta_with_ficha(
+        repo,
+        candidate,
+        msg_with_recibo(
+            "alta FLT con snapshot",
+            build_recibo(repo, ticket, candidate, [backlog_surface(repo)]),
+        ),
+        ticket,
+        normative_flt_ficha(primary_source_receipt(ticket)),
+    )
+    (repo / "README.md").write_text("# cambiado despues de la alta\n", encoding="utf-8")
+    code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    assert code == 0
+    assert "PRIMARY_SOURCE_CHECK_CONFORME" in "\n".join(lines)
+
+
+def test_primary_source_receipt_rejects_artifact_deleted_in_admission_commit(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """m-03: recibo intacto pero artefacto citado ausente en el commit => rojo."""
+    repo = init_repo(tmp_path / "repo")
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", "unresolvable-lenses-cutoff")
+    ticket = "WOT-2026-231h"
+    candidate = row(ticket)
+    ficha = repo / ".agent" / "collaboration" / f"FICHA_{ticket}.md"
+    ficha.write_text(
+        normative_flt_ficha(primary_source_receipt(ticket)), encoding="utf-8"
+    )
+    backlog = repo / BACKLOG_REL
+    admission_receipt = build_recibo(repo, ticket, candidate, [backlog_surface(repo)])
+    backlog.write_text(
+        backlog.read_text(encoding="utf-8") + candidate, encoding="utf-8"
+    )
+    (repo / "README.md").unlink()
+    git(repo, "add", "-A")
+    git(
+        repo,
+        "commit",
+        "-m",
+        msg_with_recibo(
+            "alta FLT con artefacto citado borrado",
+            admission_receipt,
+        ),
+    )
+    code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    assert code == 1
+    output = "\n".join(lines)
+    assert "no existe en disco" in output
+
+
+@pytest.mark.parametrize("with_receipt", [False, True])
+def test_primary_source_cutoff_exempts_history_before_cutoff(
+    tmp_path: Path, monkeypatch, with_receipt: bool
+) -> None:
+    """m-06: historia anterior al cutoff queda exenta, con y sin recibo."""
+    repo = init_repo(tmp_path / ("repo-with" if with_receipt else "repo-without"))
+    cutoff_parent = git(repo, "rev-parse", "HEAD").strip()
+    ticket = "WOT-2026-231i"
+    ficha_text = normative_flt_ficha(
+        primary_source_receipt(ticket) if with_receipt else ""
+    )
+    commit_alta_with_ficha(
+        repo,
+        row(ticket),
+        msg_with_recibo(
+            "alta historica antes del cutoff",
+            build_recibo(repo, ticket, row(ticket), [backlog_surface(repo)]),
+        ),
+        ticket,
+        ficha_text,
+    )
+    (repo / "cutoff-marker.txt").write_text("cutoff\n", encoding="utf-8")
+    git(repo, "add", "cutoff-marker.txt")
+    git(repo, "commit", "-m", "establecer cutoff posterior")
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    assert cutoff != cutoff_parent
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", "unresolvable-lenses-cutoff")
+    code, lines, _skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    assert code == 0
+    assert not any(
+        f.get("clave")
+        in {
+            cba.VER_PRIMARY_SOURCE_CONFORME,
+            cba.VER_PRIMARY_SOURCE_NO_CONFORME,
+        }
+        and f.get("candidato_id") == ticket
+        for f in findings
+    )
+    assert "PRIMARY_SOURCE_CHECK" not in "\n".join(lines)
+
+
+@pytest.mark.parametrize("with_receipt", [False, True])
+def test_primary_source_cutoff_divergent_branch_is_explicitly_skipped(
+    tmp_path: Path, monkeypatch, with_receipt: bool
+) -> None:
+    """m-06: rama divergente se declara SKIP y no exige recibo, con y sin él."""
+    repo = init_repo(tmp_path)
+    base = git(repo, "rev-parse", "HEAD").strip()
+    git(repo, "checkout", "-b", "cutoff-line")
+    (repo / "cutoff-marker.txt").write_text("cutoff\n", encoding="utf-8")
+    git(repo, "add", "cutoff-marker.txt")
+    git(repo, "commit", "-m", "establecer cutoff en otra rama")
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    git(repo, "checkout", "main")
+    assert git(repo, "rev-parse", "HEAD").strip() == base
+    ticket = "WOT-2026-231j"
+    candidate = row(ticket)
+    commit_alta_with_ficha(
+        repo,
+        candidate,
+        msg_with_recibo(
+            "alta en rama divergente",
+            build_recibo(repo, ticket, candidate, [backlog_surface(repo)]),
+        ),
+        ticket,
+        normative_flt_ficha(primary_source_receipt(ticket) if with_receipt else ""),
+    )
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", "unresolvable-lenses-cutoff")
+    code, lines, _skipped, findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    assert code == 0
+    assert not any(
+        f.get("clave")
+        in {
+            cba.VER_PRIMARY_SOURCE_CONFORME,
+            cba.VER_PRIMARY_SOURCE_NO_CONFORME,
+        }
+        and f.get("candidato_id") == ticket
+        for f in findings
+    )
+    assert "PRIMARY_SOURCE_CHECK no aplicado" in "\n".join(lines)
+
+
+def test_primary_source_cutoff_unresolvable_is_named_skip(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """m-06: cutoff no resoluble produce SKIP nombrado, nunca verde silencioso."""
+    repo = init_repo(tmp_path / "repo")
+    ticket = "WOT-2026-231k"
+    candidate = row(ticket)
+    commit_alta_with_ficha(
+        repo,
+        candidate,
+        msg_with_recibo(
+            "alta sin cutoff resoluble",
+            build_recibo(repo, ticket, candidate, [backlog_surface(repo)]),
+        ),
+        ticket,
+        normative_flt_ficha(),
+    )
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", "deadbeef-unresolvable")
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", "unresolvable-lenses-cutoff")
+    code, lines, _skipped, _findings = cba._audit_closeout(
+        repo, cutoff_sha="deadbeef-unresolvable"
+    )
+    assert code == 0
+    assert (
+        "SKIP: corte no resoluble o no ancestro; PRIMARY_SOURCE_CHECK no aplicado"
+        in lines
+    )
+
+
+def test_decision_marker_admission_requires_primary_source_receipt(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """DoD: DECISION DE PROCESO: es el disparador principal del recibo."""
+    repo = init_repo(tmp_path / "repo")
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    ficha = "redactada_por: co\nDECISION DE PROCESO: activar barrido\n"
+    commit_alta_with_ficha(
+        repo, row("WOT-2026-231e"), "alta decision sin recibo", "WOT-2026-231e", ficha
+    )
+    code, lines, skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    assert code == 1
+    assert not skipped
+    assert "trigger=DECISION DE PROCESO:" in "\n".join(lines)
+
+
+def test_decision_marker_admission_with_primary_source_receipt_passes(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """m-02: el trigger (a) con recibo válido pasa."""
+    repo = init_repo(tmp_path / "repo")
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    ticket = "WOT-2026-231l"
+    candidate = row(ticket)
+    commit_alta_with_ficha(
+        repo,
+        candidate,
+        msg_with_recibo(
+            "alta decision con recibo",
+            build_recibo(repo, ticket, candidate, [backlog_surface(repo)]),
+        ),
+        ticket,
+        "redactada_por: co\nDECISION DE PROCESO: activar barrido\n"
+        + primary_source_receipt(ticket),
+    )
+    code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    assert code == 0
+    assert "PRIMARY_SOURCE_CHECK_CONFORME" in "\n".join(lines)
+
+
+def test_primary_source_receipt_from_other_admission_is_rejected(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """m-04: un recibo ligado al ID A no puede certificar el alta B."""
+    repo = init_repo(tmp_path / "repo")
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    ticket = "WOT-2026-231g"
+    candidate = row(ticket)
+    commit_alta_with_ficha(
+        repo,
+        candidate,
+        msg_with_recibo(
+            "alta con recibo de otro ID",
+            build_recibo(repo, ticket, candidate, [backlog_surface(repo)]),
+        ),
+        ticket,
+        normative_flt_ficha(primary_source_receipt("WOT-2026-231a")),
+    )
+    code, lines, _skipped, _findings = cba._audit_closeout(repo, cutoff_sha=cutoff)
+    assert code == 1
+    assert "no esta ligado a la alta WOT-2026-231g" in "\n".join(lines)
+
+
 def run_guard(repo: Path, *args: str) -> tuple[int, str]:
     proc = subprocess.run(
         [sys.executable, str(GUARD), "--git-root", str(repo), *args],

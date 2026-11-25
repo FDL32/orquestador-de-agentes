@@ -171,39 +171,36 @@ def extract_receipt_data(text: str) -> dict | None:
     return None
 
 
-def _measure_root_count(root_name: str, base_dir: Path) -> int:
-    """Mide el conteo de ficheros en una raiz declarada."""
-    target = base_dir / root_name
-    if not target.exists():
-        try:
-            out = subprocess.check_output(  # noqa: S603
-                ["git", "ls-files", root_name],  # noqa: S607
-                cwd=base_dir,
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            files = [f for f in out.splitlines() if f.strip()]
-            return len(files)
-        except Exception:
-            return 0
+def _git_files_for_root(
+    root_name: str, base_dir: Path, revision: str | None = None
+) -> list[str]:
+    """Devuelve solo rutas versionadas de una raiz, opcionalmente en un commit."""
+    command = [
+        "git",
+        "ls-tree",
+        "-r",
+        "--name-only",
+        revision or "HEAD",
+        "--",
+        root_name,
+    ]
+    try:
+        out = subprocess.check_output(  # noqa: S603
+            command,
+            cwd=base_dir,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+    return [f for f in out.splitlines() if f.strip()]
 
-    if target.is_file():
-        return 1
-    if target.is_dir():
-        try:
-            out = subprocess.check_output(  # noqa: S603
-                ["git", "ls-files", root_name],  # noqa: S607
-                cwd=base_dir,
-                text=True,
-                stderr=subprocess.DEVNULL,
-            )
-            files = [f for f in out.splitlines() if f.strip()]
-            if files:
-                return len(files)
-        except (subprocess.SubprocessError, OSError):
-            pass
-        return len([f for f in target.rglob("*") if f.is_file()])
-    return 0
+
+def _measure_root_count(
+    root_name: str, base_dir: Path, revision: str | None = None
+) -> int:
+    """Mide el conteo de ficheros versionados en una raiz declarada."""
+    return len(_git_files_for_root(root_name, base_dir, revision))
 
 
 def _is_path_in_universe(ruta_str: str, universe_roots: list[str]) -> bool:
@@ -215,8 +212,38 @@ def _is_path_in_universe(ruta_str: str, universe_roots: list[str]) -> bool:
     return False
 
 
+def _read_citation_lines(
+    ruta: str, base_dir: Path, revision: str | None
+) -> tuple[list[str] | None, str | None]:
+    """Lee una cita desde el commit indicado o, por compatibilidad, del disco."""
+    if revision is not None:
+        try:
+            content = subprocess.check_output(  # noqa: S603
+                ["git", "show", f"{revision}:{ruta}"],  # noqa: S607
+                cwd=base_dir,
+                stderr=subprocess.DEVNULL,
+            )
+        except (subprocess.SubprocessError, OSError):
+            return None, (
+                f"la ruta citada '{ruta}' no existe en disco ni en el commit "
+                f"{revision[:12]}"
+            )
+    else:
+        target_file = base_dir / ruta
+        if not target_file.is_file():
+            return None, f"la ruta citada '{ruta}' no existe en disco"
+        try:
+            content = target_file.read_bytes()
+        except Exception as e:
+            return None, f"error al leer '{ruta}': {e}"
+    return content.decode("utf-8", errors="replace").splitlines(), None
+
+
 def _validate_citation(
-    cita: dict, universe_roots: list[str], base_dir: Path
+    cita: dict,
+    universe_roots: list[str],
+    base_dir: Path,
+    revision: str | None = None,
 ) -> str | None:
     """Comprueba la forma verificable de una cita de fuente primaria."""
     if not isinstance(cita, dict):
@@ -229,19 +256,16 @@ def _validate_citation(
     if not _is_path_in_universe(ruta, universe_roots):
         return f"la cita '{ruta}' esta fuera del universo declarado o es una fuente omitida"
 
-    target_file = base_dir / ruta
-    if not target_file.is_file():
-        return f"la ruta citada '{ruta}' no existe en disco"
-
     try:
         linea = int(cita["linea"])
     except (ValueError, TypeError):
         return f"la linea declarada '{cita['linea']}' debe ser un entero"
 
-    try:
-        lines = target_file.read_text(encoding="utf-8", errors="replace").splitlines()
-    except Exception as e:
-        return f"error al leer '{ruta}': {e}"
+    lines, read_error = _read_citation_lines(ruta, base_dir, revision)
+    if read_error:
+        return read_error
+    if lines is None:
+        return f"error al leer '{ruta}'"
 
     if linea < 1 or linea > len(lines):
         return f"la linea {linea} no existe en '{ruta}' (total lineas: {len(lines)})"
@@ -292,9 +316,12 @@ def _check_receipt_metadata(receipt: dict) -> tuple[str | None, str]:
 
 
 def _check_universe_counts(
-    universo: dict, conteo_total_raw: object, base_dir: Path
+    universo: dict,
+    conteo_total_raw: object,
+    base_dir: Path,
+    revision: str | None = None,
 ) -> tuple[str | None, list[str]]:
-    """Verifica y mide las raices del universo declarado."""
+    """Verifica conteos declarados contra el universo vivo por cada raiz."""
     if not isinstance(universo, dict) or not universo:
         return ("el campo 'universo' debe ser un diccionario no vacio de raices", [])
 
@@ -318,12 +345,11 @@ def _check_universe_counts(
 
     measured_total = 0
     for root_name in universe_roots:
-        measured = _measure_root_count(root_name, base_dir)
-        if measured == 0:
-            return (
-                f"la raiz declarada '{root_name}' esta vacia (0 ficheros encontrados)",
-                [],
-            )
+        err, measured = _check_measured_root(
+            root_name, universo[root_name], base_dir, revision
+        )
+        if err:
+            return (err, [])
         measured_total += measured
 
     if measured_total == 0:
@@ -332,21 +358,55 @@ def _check_universe_counts(
     return (None, universe_roots)
 
 
+def _check_measured_root(
+    root_name: str,
+    declared: int,
+    base_dir: Path,
+    revision: str | None = None,
+) -> tuple[str | None, int]:
+    """Mide una raiz y compara su valor declarado con el valor vivo."""
+    measured = _measure_root_count(root_name, base_dir, revision)
+    if measured == 0:
+        if revision is not None:
+            return (
+                f"la raiz declarada '{root_name}' no existe en disco ni en el commit "
+                f"{revision[:12]}",
+                0,
+            )
+        return (
+            f"la raiz declarada '{root_name}' esta vacia (0 ficheros encontrados)",
+            0,
+        )
+    if declared != measured:
+        return (
+            f"el conteo declarado para la raiz '{root_name}' ({declared}) "
+            f"no coincide con el medido ({measured})",
+            0,
+        )
+    return (None, measured)
+
+
 def _check_tipificada_receipt(
-    receipt: dict, universe_roots: list[str], base_dir: Path
+    receipt: dict,
+    universe_roots: list[str],
+    base_dir: Path,
+    revision: str | None = None,
 ) -> str | None:
     citas = receipt.get("citas")
     if not isinstance(citas, list) or not citas:
         return "el recibo TIPIFICADA-FORMA exige una lista no vacia de 'citas'"
     for cita in citas:
-        err = _validate_citation(cita, universe_roots, base_dir)
+        err = _validate_citation(cita, universe_roots, base_dir, revision)
         if err:
             return err
     return None
 
 
 def _check_no_tipificada_receipt(
-    receipt: dict, universe_roots: list[str], base_dir: Path
+    receipt: dict,
+    universe_roots: list[str],
+    base_dir: Path,
+    revision: str | None = None,
 ) -> str | None:
     conflicto = receipt.get("conflicto")
     if not conflicto or not str(conflicto).strip():
@@ -364,13 +424,12 @@ def _check_no_tipificada_receipt(
         return "el recibo NO TIPIFICADA exige 'control_positivo' estructurado"
 
     cp_universo = cp.get("universo")
-    if not isinstance(cp_universo, dict) or set(cp_universo.keys()) != set(
-        universe_roots
-    ):
-        return "el universo del control_positivo no coincide con las raices declaradas en el recibo"
+    expected_universe = {root: receipt["universo"][root] for root in universe_roots}
+    if cp_universo != expected_universe:
+        return "el universo del control_positivo no coincide con las raices declaradas (claves y conteos)"
 
     cp_cita = cp.get("cita")
-    err = _validate_citation(cp_cita, universe_roots, base_dir)
+    err = _validate_citation(cp_cita, universe_roots, base_dir, revision)
     if err:
         return f"error en cita de control_positivo: {err}"
 
@@ -378,7 +437,7 @@ def _check_no_tipificada_receipt(
 
 
 def validate_primary_source_receipt(
-    receipt: dict, base_dir: Path
+    receipt: dict, base_dir: Path, revision: str | None = None
 ) -> tuple[str | None, str]:
     """Valida exhaustivamente un recibo PRIMARY_SOURCE_CHECK."""
     err, estado = _check_receipt_metadata(receipt)
@@ -386,15 +445,15 @@ def validate_primary_source_receipt(
         return (err, estado)
 
     err, roots = _check_universe_counts(
-        receipt["universo"], receipt["conteo_total"], base_dir
+        receipt["universo"], receipt["conteo_total"], base_dir, revision
     )
     if err:
         return (err, estado)
 
     if estado == "TIPIFICADA-FORMA":
-        err = _check_tipificada_receipt(receipt, roots, base_dir)
+        err = _check_tipificada_receipt(receipt, roots, base_dir, revision)
     else:
-        err = _check_no_tipificada_receipt(receipt, roots, base_dir)
+        err = _check_no_tipificada_receipt(receipt, roots, base_dir, revision)
 
     return (err, estado)
 
@@ -403,6 +462,8 @@ def check_artifact(
     text: str,
     base_dir: Path | None = None,
     mandatory: bool = False,
+    revision: str | None = None,
+    expected_candidate_id: str | None = None,
 ) -> str | None:
     """None si OK/no-aplica; str con el defecto exacto si bloquea."""
     if base_dir is None:
@@ -410,7 +471,14 @@ def check_artifact(
 
     receipt = extract_receipt_data(text)
     if receipt is not None:
-        defecto, _ = validate_primary_source_receipt(receipt, base_dir)
+        if expected_candidate_id is not None:
+            actual_candidate_id = str(receipt.get("candidato_id", "")).strip()
+            if actual_candidate_id != expected_candidate_id:
+                return (
+                    "el recibo PRIMARY_SOURCE_CHECK no esta ligado a la alta "
+                    f"{expected_candidate_id}"
+                )
+        defecto, _ = validate_primary_source_receipt(receipt, base_dir, revision)
         return defecto
 
     if mandatory:

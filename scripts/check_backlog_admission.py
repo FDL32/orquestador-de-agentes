@@ -60,6 +60,12 @@ After (Post-condiciones y Errores):
       recibos encontrados y veredicto por alta. Read-only: este modulo no
       escribe nada (los temporales de materializacion viven en tempfile y se
       borran).
+    - LIMITE DECLARADO (WOT-2026-231c): PRIMARY_SOURCE_CHECK protege el
+      CIERRE DE SESION (`prepush_check.py --session-close`), no el `git push`
+      directo; los productores no forman parte de este guard.
+    - LIMITE DECLARADO (WOT-2026-231c): el disparador FLT normativo (b') es
+      evadible por omision de la ruta en la ficha commiteada; no se amplia a
+      toda alta sin `DECISION DE PROCESO:` ni FLT normativo.
     - `--check-ficha` valida solo el contrato de `redactada_por`; c-14 en el
       closeout lee la ficha desde el commit de alta, no desde el arbol.
     - LIMIT declarado (contrato T-054M-001 D3): las superficies FUERA del
@@ -97,9 +103,17 @@ if str(_MOTOR_ROOT) not in sys.path:
 
 try:
     from scripts.backlog_db_compare import load_backlog_rows
+    from scripts.check_process_decision_search import (
+        check_artifact,
+        has_decision_marker,
+    )
     from scripts.find_similar_signals import _split_row as _split_row_cells
 except ImportError:  # pragma: no cover - ejecucion directa fuera del motor
     from backlog_db_compare import load_backlog_rows  # type: ignore[no-redef]
+    from check_process_decision_search import (  # type: ignore[no-redef]
+        check_artifact,
+        has_decision_marker,
+    )
     from find_similar_signals import (  # type: ignore[no-redef]
         _split_row as _split_row_cells,
     )
@@ -127,6 +141,8 @@ DEFAULT_ARCHIVES = (".agent/collaboration/_archive/backlog_done.md",)
 GRANDFATHER_CUTOFF_SHA_DEFAULT = "6d341ff3d40dfbeb468859f0ccba312f10f5f1cc"
 # WOT-2026-161v: c-14 cutoff is the post-admission commit named by the ficha.
 LENSES_CUTOFF_SHA = "3411db5f2fb130dcc39fd537eaefaf9370be6a10"
+# WOT-2026-231c: commit HEAD del repo_destino medido justo antes de implementar.
+PRIMARY_SOURCE_CUTOFF_SHA = "b64df7a007161d908e2e2834022e201917392719"
 LENSES_VERDICTS = frozenset({"APPROVE"})
 LENTES_TR_CONFORME = "LENTES_TR_CONFORME"
 LENTES_TR_NO_CONFORME = "LENTES_TR_NO_CONFORME"
@@ -147,12 +163,15 @@ VER_INCOHERENTE = "RECIBO_INCOHERENTE"
 VER_CONCURRENTE = "ALTA_CONCURRENTE"
 VER_COHERENTE = "RECIBO_COHERENTE"
 VER_OTRA_RAMA = "ID_EN_OTRA_RAMA"
+VER_PRIMARY_SOURCE_CONFORME = "PRIMARY_SOURCE_CHECK_CONFORME"
+VER_PRIMARY_SOURCE_NO_CONFORME = "PRIMARY_SOURCE_CHECK_NO_CONFORME"
 FAIL_VERDICTS = (
     VER_SIN_RECIBO,
     VER_INCOHERENTE,
     VER_CONCURRENTE,
     VER_OTRA_RAMA,
     LENTES_TR_NO_CONFORME,
+    VER_PRIMARY_SOURCE_NO_CONFORME,
 )
 SEMI_FAIL_VERDICTS = (VER_WARN_GRANDFATHERED,)
 SEMANTIC_TIPOS = {"DUPLICADO_DE", "ABSORBE_A", "VINCULADA_A"}
@@ -370,6 +389,104 @@ def check_ficha_contract(
         value,
         None,
     )
+
+
+_NORMATIVE_FLT_PREFIXES = (
+    "prompts/",
+    ".claude/rules/",
+    ".agent/rules/common/",
+)
+
+
+def _normative_flt_path(path: str) -> bool:
+    """Indica si una ruta de FLT pertenece a la lista normativa del contrato."""
+    normalized = path.strip().strip("`*-").rstrip(".,;:)")
+    return normalized in {"AGENTS.md", "CLAUDE.md"} or any(
+        normalized.startswith(prefix) and normalized.endswith(".md")
+        for prefix in _NORMATIVE_FLT_PREFIXES
+    )
+
+
+def _primary_source_trigger(ficha_text: str) -> str | None:
+    """Devuelve el disparador PRIMARY_SOURCE_CHECK de una ficha commiteada.
+
+    Before: ``ficha_text`` es la ficha versionada del commit de alta.
+    During: reconoce el marcador ``DECISION DE PROCESO:`` o una ruta normativa
+        declarada en la seccion exacta ``Files Likely Touched``.
+    After: devuelve la causa del disparo o ``None``; no amplia el alcance a
+        altas sin marcador ni FLT normativo (limite declarado por WOT-2026-231c).
+    """
+    if has_decision_marker(ficha_text):
+        return "DECISION DE PROCESO:"
+    in_flt = False
+    for line in ficha_text.splitlines():
+        if re.fullmatch(
+            r"\s*##\s+(?:\d+[.)]?\s+)?Files Likely Touched\s*",
+            line,
+            re.IGNORECASE,
+        ):
+            in_flt = True
+            continue
+        if in_flt and re.match(r"\s*##\s+", line):
+            break
+        if in_flt and line.lstrip().startswith(("-", "*")):
+            path = (
+                line.lstrip()[1:].strip().split()[0]
+                if line.lstrip()[1:].strip()
+                else ""
+            )
+            if _normative_flt_path(path):
+                return "Files Likely Touched (ruta normativa)"
+    return None
+
+
+def _primary_source_finding(repo: Path, alta: dict, lines: list[str]) -> dict | None:
+    """Aplica PRIMARY_SOURCE_CHECK a una alta posterior al cutoff.
+
+    Before: ``alta`` procede de ``audit_range`` y el cutoff apunta al HEAD
+        medido del repo_destino al implementar.
+    During: lee la ficha del commit de alta, aplica solo los disparadores
+        contractuales y valida el recibo contra el mismo repo versionado.
+    After: devuelve un hallazgo verificable o ``None`` si la alta es anterior
+        al cutoff o no activa (borrado permitido por contrato).
+    """
+    commit = alta["commit"]
+    if _is_ancestor(repo, commit, PRIMARY_SOURCE_CUTOFF_SHA):
+        return None
+    if not _is_ancestor(repo, PRIMARY_SOURCE_CUTOFF_SHA, commit):
+        return None
+    ficha_rel = f".agent/collaboration/FICHA_{alta['id']}.md"
+    ficha_content = rev_content(repo, commit, ficha_rel)
+    if ficha_content is None:
+        return None
+    ficha_text = ficha_content.decode("utf-8", errors="replace")
+    trigger = _primary_source_trigger(ficha_text)
+    if trigger is None:
+        return None
+    defect = check_artifact(
+        ficha_text,
+        base_dir=repo,
+        mandatory=True,
+        revision=commit,
+        expected_candidate_id=alta["id"],
+    )
+    if defect is None:
+        verdict = VER_PRIMARY_SOURCE_CONFORME
+        reason = f"trigger={trigger}; recibo valido"
+    else:
+        verdict = VER_PRIMARY_SOURCE_NO_CONFORME
+        reason = f"trigger={trigger}; {defect}"
+    lines.append(
+        f"ALTA {alta['id']} en {commit[:12]} -> VEREDICTO: {verdict}: {reason}"
+    )
+    return {
+        "commit": commit[:12],
+        "candidato_id": alta["id"],
+        "clave": verdict,
+        "veredicto": verdict,
+        "motivos": [reason],
+        "trigger": trigger,
+    }
 
 
 def _c14_finding(repo: Path, alta: dict, cutoff_sha: str, lines: list[str]) -> dict:
@@ -1800,6 +1917,7 @@ def _audit_closeout(
         cutoff_sha=cutoff_sha,
         altas_out=altas,
     )
+    lens_findings: list[dict] = []
     if not _is_ancestor(repo, LENSES_CUTOFF_SHA, head):
         lines.append("SKIP: corte no resoluble o no ancestro; c-14 no aplicado")
     else:
@@ -1807,29 +1925,48 @@ def _audit_closeout(
             _c14_finding(repo, alta, LENSES_CUTOFF_SHA, lines) for alta in altas
         ]
         findings.extend(lens_findings)
-        lens_failures = [
-            finding
-            for finding in lens_findings
-            if finding["veredicto"] == LENTES_TR_NO_CONFORME
+    primary_findings: list[dict] = []
+    if not _is_ancestor(repo, PRIMARY_SOURCE_CUTOFF_SHA, head):
+        lines.append(
+            "SKIP: corte no resoluble o no ancestro; PRIMARY_SOURCE_CHECK no aplicado"
+        )
+    else:
+        primary_findings = [
+            _primary_source_finding(repo, alta, lines) for alta in altas
         ]
-        if lens_failures:
-            failure_line = (
-                f"VEREDICTO GLOBAL: FALLO ({len(lens_failures)} alta(s) "
-                "no conformes a c-14)"
-            )
-            coherent_index = next(
-                (
-                    index
-                    for index, line in enumerate(lines)
-                    if line == "VEREDICTO GLOBAL: RECIBO_COHERENTE"
-                ),
-                None,
-            )
-            if coherent_index is not None:
-                lines[coherent_index] = failure_line
-            elif not any("VEREDICTO GLOBAL: FALLO" in line for line in lines):
-                lines.append(failure_line)
-            code = 1
+        primary_findings = [finding for finding in primary_findings if finding]
+    findings.extend(primary_findings)
+    lens_failures = [
+        finding
+        for finding in lens_findings
+        if finding["veredicto"] == LENTES_TR_NO_CONFORME
+    ]
+    primary_failures = [
+        finding
+        for finding in primary_findings
+        if finding["veredicto"] == VER_PRIMARY_SOURCE_NO_CONFORME
+    ]
+    if lens_failures or primary_failures:
+        failure_count = len(
+            {finding["candidato_id"] for finding in lens_failures + primary_failures}
+        )
+        failure_line = (
+            f"VEREDICTO GLOBAL: FALLO ({failure_count} alta(s) "
+            "no conformes a c-14 o PRIMARY_SOURCE_CHECK)"
+        )
+        coherent_index = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if line == "VEREDICTO GLOBAL: RECIBO_COHERENTE"
+            ),
+            None,
+        )
+        if coherent_index is not None:
+            lines[coherent_index] = failure_line
+        elif not any("VEREDICTO GLOBAL: FALLO" in line for line in lines):
+            lines.append(failure_line)
+        code = 1
     return code, lines, False, findings
 
 

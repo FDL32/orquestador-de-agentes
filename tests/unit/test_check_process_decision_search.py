@@ -164,9 +164,8 @@ PRIMARY_SOURCE_CHECK:
   fecha: 2026-11-24T13:00:00Z
   rc: 0
   universo:
-    scripts: 10
     AGENTS.md: 1
-  conteo_total: 11
+  conteo_total: 1
   citas:
     - ruta: AGENTS.md
       linea: 1
@@ -186,12 +185,10 @@ PRIMARY_SOURCE_CHECK:
   conflicto: "Discrepancia detectada entre contrato y ejecucion local"
   siguiente_peldano: supervisora
   universo:
-    scripts: 10
     AGENTS.md: 1
-  conteo_total: 11
+  conteo_total: 1
   control_positivo:
     universo:
-      scripts: 10
       AGENTS.md: 1
     cita:
       ruta: AGENTS.md
@@ -257,11 +254,11 @@ def test_recibo_universo_conteo_y_raices(tmp_path):
     """m-03: checker mide conteo vivo, rechaza suma discordante o raiz vacia."""
     # Suma declarada no coincide con conteo_total
     recibo_suma_erronea = _VALID_RECEIPT_TIPIFICADA.replace(
-        "conteo_total: 11", "conteo_total: 999"
+        "conteo_total: 1", "conteo_total: 999"
     )
     r1 = _run_mandatory(tmp_path, recibo_suma_erronea)
     assert r1.returncode == 1
-    assert "conteo_total (999) no coincide con la suma del universo (11)" in r1.stderr
+    assert "conteo_total (999) no coincide con la suma del universo (1)" in r1.stderr
 
     # Raiz declarada inexistente o vacia
     recibo_raiz_vacia = """
@@ -298,12 +295,12 @@ PRIMARY_SOURCE_CHECK:
   fecha: 2026-11-24T13:00:00Z
   rc: 0
   universo:
-    scripts: 10
-  conteo_total: 10
+    AGENTS.md: 1
+  conteo_total: 1
   citas:
-    - ruta: AGENTS.md
+    - ruta: scripts/check_process_decision_search.py
       linea: 1
-      texto: "AGENTS.md - Instrucciones transversales"
+      texto: "def _measure_root_count"
 """
     r = _run_mandatory(tmp_path, recibo_omision)
     assert r.returncode == 1
@@ -346,6 +343,70 @@ def test_recibo_no_tipificada_valido_y_defectos(tmp_path):
         "el universo del control_positivo no coincide con las raices declaradas"
         in r3.stderr
     )
+
+
+def test_recibo_rechaza_conteo_de_raiz_distinto_del_medido(tmp_path):
+    """m-07: el conteo declarado por raiz debe coincidir con el conteo vivo."""
+    receipt = _VALID_RECEIPT_TIPIFICADA.replace(
+        "    AGENTS.md: 1", "    AGENTS.md: 2"
+    ).replace("conteo_total: 1", "conteo_total: 2")
+    result = _run_mandatory(tmp_path, receipt)
+    assert result.returncode == 1
+    assert "raiz 'AGENTS.md'" in result.stderr
+    assert (
+        "declarado para la raiz 'AGENTS.md' (2) no coincide con el medido (1)"
+        in result.stderr
+    )
+
+
+def test_control_positivo_rechaza_mismos_nombres_conteos_distintos(tmp_path):
+    """m-08: el control positivo compara nombres y conteos del universo."""
+    receipt = _VALID_RECEIPT_NO_TIPIFICADA.replace(
+        "      AGENTS.md: 1\n    cita:",
+        "      AGENTS.md: 2\n    cita:",
+    )
+    result = _run_mandatory(tmp_path, receipt)
+    assert result.returncode == 1
+    assert "claves y conteos" in result.stderr
+
+
+def test_recibo_no_cuenta_fichero_no_versionado_en_raiz(tmp_path):
+    """m-07: el universo no puede inflarse con un fichero no trackeado."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    sources = repo / "sources"
+    sources.mkdir()
+    (sources / "AGENTS.md").write_text(
+        "AGENTS.md - Instrucciones transversales\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "add", "sources/AGENTS.md"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-m",
+            "base",
+        ],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+    )
+    (sources / "ignored.md").write_text("no es fuente versionada\n", encoding="utf-8")
+    receipt = (
+        _VALID_RECEIPT_TIPIFICADA.replace("    AGENTS.md: 1", "    sources: 2")
+        .replace("conteo_total: 1", "conteo_total: 2")
+        .replace("ruta: AGENTS.md", "ruta: sources/AGENTS.md")
+    )
+    defect, _ = guard.validate_primary_source_receipt(
+        guard.extract_receipt_data(receipt), repo
+    )
+    assert defect is not None
+    assert "raiz 'sources' (2) no coincide con el medido (1)" in defect
 
 
 def test_recibo_rechaza_certificacion_de_semantica(tmp_path):
