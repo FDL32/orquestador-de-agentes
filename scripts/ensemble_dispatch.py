@@ -196,7 +196,10 @@ EMITTED_NONCE_FIELDS = [
     # que no dice cual acredito. Las filas anteriores a 067i no lo llevan: el
     # lector trata su ausencia como "no comprobable", nunca como discrepancia.
     "resolved_against",
+    "unregistered_reason",
 ]
+
+CUTOFF_SHA = "62355f4f9abd067ec680d55a54edad7d5efa5965"
 
 SCORECARD_FIELDS = [
     "ts",
@@ -3674,11 +3677,11 @@ def _parse_scorecard_source(raw: bytes, *, name: str, strict: bool) -> list[dict
             try:
                 obj = json.loads(line)
             except json.JSONDecodeError as exc:
-                print(
+                raise DispatchBlockedError(
                     f"[scorecard-archive] WARN fila ilegible en {name}:{lineno} "
                     f"saltada: {exc}",
                     file=sys.stderr,
-                )
+                ) from exc
                 continue
             if isinstance(obj, dict):
                 rows.append(obj)
@@ -3997,6 +4000,7 @@ def emit_nonce(
     issuer_backend_key: str,
     nonce: str | None = None,
     resolved_against: str | None = None,
+    unregistered_reason: str | None = None,
 ) -> tuple[str, Path]:
     """Emite (registra) un challenge_nonce ANTES de un fan-out de gobierno.
 
@@ -4017,6 +4021,7 @@ def emit_nonce(
         (mismo mecanismo que el scorecard). `issued_before_ts == ts` de emision.
     After: retorna `(nonce, path)`. La fila es la unica prueba de que la ceremonia
         previa ocurrio; sin ella, un receipt con ese nonce es un nonce fabricado.
+        Si hubo escape para un loop_id no registrado, la fila conserva el motivo.
     """
     if nonce is None:
         nonce = secrets.token_hex(16)
@@ -4030,6 +4035,7 @@ def emit_nonce(
         "loop_id": loop_id,
         "challenge_nonce": nonce,
         "resolved_against": resolved_against,
+        "unregistered_reason": unregistered_reason,
     }
     path = project_root / EMITTED_NONCES_REL
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -8990,6 +8996,12 @@ def validate_loop_id(loop_id: str, config: dict) -> str | None:
         `loop_shapes`); retorna un texto de WARN si esta `deprecated`/`archived`
         o si NO existe en el registro. NUNCA lanza ni bloquea.
 
+    WOT-2026-075d: el WARN de un id ausente se convierte en bloqueo solo en
+    `_cmd_emit_nonce` cuando el commit es NUEVO. Motor-only usa
+    `git merge-base --is-ancestor` contra el `CUTOFF_SHA` versionado en el
+    mismo motor; destino-only es NUEVO fail-closed por definicion. SHA ambiguo,
+    no resoluble o corte no resoluble falla cerrado sin fila.
+
     ALCANCE DECLARADO -- por que AVISA y no BLOQUEA (decision del usuario,
     2026-09-18, tras aplicar el STOP de degeneracion de AGENTS.md):
     una primera version lanzaba `ValueError` ante un `loop_id` inexistente. Rompio
@@ -9055,13 +9067,87 @@ def validate_loop_id(loop_id: str, config: dict) -> str | None:
     return None
 
 
+def _loop_id_is_unregistered(loop_id: str, config: dict) -> bool:
+    """Determina si un loop_id carece de entrada citable sin escribir estado.
+
+    Before: `loop_id` es el valor del CLI y `config` el registro cargado.
+    During: consulta `loop_shapes` y resuelve aliases legacy.
+    After: devuelve `True` solo para un id ausente o un alias roto; un registro
+        vacio conserva el fail-open de `validate_loop_id`.
+    """
+    shapes = (config or {}).get("ensemble_registry", {}).get("loop_shapes", {})
+    if not shapes:
+        return False
+    meta = shapes.get(loop_id)
+    if meta is None:
+        return True
+    alias_of = meta.get("alias_of")
+    return alias_of is not None and shapes.get(alias_of) is None
+
+
+def _commit_is_new(
+    canonical_sha: str,
+    resolved_against: str,
+    motor_root: Path,
+) -> bool:
+    """Clasifica un commit respecto al corte versionado de 075d.
+
+    Before: `canonical_sha` resolvio en una sola raiz y `resolved_against` es
+        `repo_motor` o `repo_destino`.
+    During: para el motor ejecuta `git merge-base --is-ancestor` en esa raiz;
+        destino-only es NUEVO sin comparar repositorios.
+    After: devuelve `True` para NUEVO y `False` para pre-corte; cualquier fallo
+        de git o corte no resoluble lanza `ValueError` fail-closed.
+    """
+    if resolved_against == "repo_destino":
+        return True
+    if resolved_against != "repo_motor":
+        raise ValueError(f"raiz de commit no gobernada: {resolved_against!r}")
+    if canonical_sha == CUTOFF_SHA:
+        return False
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        raise ValueError("git no esta disponible para evaluar CUTOFF_SHA")
+    try:
+        probe = subprocess.run(
+            [
+                git_executable,
+                "-C",
+                str(motor_root),
+                "merge-base",
+                "--is-ancestor",
+                CUTOFF_SHA,
+                canonical_sha,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError(f"no pude evaluar CUTOFF_SHA contra el motor: {exc}") from exc
+    if probe.returncode == 0:
+        return True
+    if probe.returncode == 1:
+        return False
+    detail = (probe.stderr or probe.stdout or "").strip()[:200]
+    raise ValueError(
+        f"CUTOFF_SHA o commit_sha no resoluble en el motor (git rc="
+        f"{probe.returncode}: {detail})"
+    )
+
+
 def _cmd_emit_nonce(args, config) -> int:
+    """Emite un nonce y aplica el guard de loop_id nuevo de WOT-2026-075d.
+
+    Before: el destino, el registro citable y el commit_sha vienen del CLI.
+    During: motor-only usa ancestria contra `CUTOFF_SHA`; destino-only es NUEVO
+        por definicion; ambiguedad, SHA no resoluble o corte no resoluble fallan
+        cerrado sin fila. El escape exige motivo no vacio y lo persiste.
+    After: retorna 0 con fila valida, o un codigo de bloqueo/entrada invalida
+        sin escribir fila.
+    """
     project_root = _resolve_project_root(args.project_root)
-    # WOT-2026-070g: el loop_id se valida ANTES de tocar el ledger, igual que
-    # backend_key se valida antes de gastar una llamada al backend.
-    _loop_warning = validate_loop_id(args.loop_id, config)
-    if _loop_warning:
-        print(_loop_warning, file=sys.stderr)
     # WOT-2026-059c: el emisor NUNCA registra un sha que NADIE puede resolver
     # (la contraparte productiva de la barrera de WOT-2026-059b que ya falla
     # cerrado en prepush). La validacion vive AQUI, en la unica ruta productiva
@@ -9089,6 +9175,22 @@ def _cmd_emit_nonce(args, config) -> int:
         )
     except ValueError as exc:
         raise ValueError(f"emit-nonce bloqueado (WOT-2026-059c): {exc}") from exc
+    # WOT-2026-070g: valida antes de tocar el ledger.
+    _loop_warning = validate_loop_id(args.loop_id, config)
+    if _loop_warning:
+        print(_loop_warning, file=sys.stderr)
+    unregistered_reason = getattr(args, "allow_unregistered_reason", None)
+    if _loop_id_is_unregistered(args.loop_id, config):
+        if unregistered_reason is not None and not unregistered_reason.strip():
+            raise ValueError("--allow-unregistered-reason exige un motivo no vacio")
+        if _commit_is_new(canonical_sha, resolved_against, motor_root) and (
+            not unregistered_reason or not unregistered_reason.strip()
+        ):
+            raise DispatchBlockedError(
+                f"emit-nonce bloqueado (WOT-2026-075d): loop_id "
+                f"'{args.loop_id}' es NUEVO y no esta en el registro citable; "
+                "usa --allow-unregistered-reason '<motivo>'"
+            )
     if canonical_sha != args.commit_sha:
         print(
             f"[emit-nonce] sha normalizado: {args.commit_sha} -> {canonical_sha}",
@@ -9102,6 +9204,7 @@ def _cmd_emit_nonce(args, config) -> int:
         issuer_backend_key=args.issuer_backend_key,
         nonce=args.nonce,
         resolved_against=resolved_against,
+        unregistered_reason=unregistered_reason,
     )
     # El nonce va a stdout para que el orquestador lo pase al fan-out; la fila
     # ya quedo registrada en emitted_nonces.jsonl (la prueba de la ceremonia).
@@ -9472,6 +9575,11 @@ def main(argv: list[str] | None = None) -> int:
         "--nonce",
         default=None,
         help="nonce explicito (default: aleatorio); util para tests reproducibles",
+    )
+    p_nonce.add_argument(
+        "--allow-unregistered-reason",
+        default=None,
+        help="motivo no vacio para emitir un loop_id nuevo fuera del registro",
     )
     p_nonce.add_argument("--project-root", required=True)
 

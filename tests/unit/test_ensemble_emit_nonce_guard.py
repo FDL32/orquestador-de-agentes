@@ -79,18 +79,26 @@ def _ledger(destino: Path) -> Path:
     return destino / ".agent" / "runtime" / "ensemble" / "emitted_nonces.jsonl"
 
 
-def _emit(destino: Path, commit_sha: str) -> int:
+def _emit(
+    destino: Path,
+    commit_sha: str,
+    *,
+    loop_id: str = "L720",
+    reason: str | None = None,
+) -> int:
     argv = [
         "emit-nonce",
         "--commit-sha",
         commit_sha,
         "--loop-id",
-        "LX",
+        loop_id,
         "--issuer-backend-key",
         "BA01",
         "--project-root",
         str(destino),
     ]
+    if reason is not None:
+        argv.extend(["--allow-unregistered-reason", reason])
     return ed.main(argv)
 
 
@@ -207,3 +215,92 @@ def test_git_broken_reports_unknown_never_invalid(
     assert "no resuelve a un commit del motor" not in err, (
         "un fallo de infraestructura NUNCA debe reportarse como 'sha inexistente'"
     )
+
+
+def test_cutoff_sha_resolves_as_commit_in_motor() -> None:
+    assert _git(_ROOT, "cat-file", "-t", ed.CUTOFF_SHA).stdout.strip() == "commit"
+    assert len(ed.CUTOFF_SHA) == 40
+
+
+def _make_post_cutoff_commit(motor: Path, monkeypatch) -> str:
+    base = _git(motor, "rev-parse", "HEAD").stdout.strip()
+    monkeypatch.setattr(ed, "CUTOFF_SHA", base)
+    (motor / "after-cutoff.txt").write_text("new", encoding="utf-8")
+    subprocess.run(["git", "-C", str(motor), "add", "."], check=True)
+    subprocess.run(
+        ["git", "-C", str(motor), "commit", "-m", "after cutoff"], check=True
+    )
+    return _git(motor, "rev-parse", "HEAD").stdout.strip()
+
+
+def test_new_unregistered_loop_blocks_without_ledger_row(
+    motor: Path, destino: Path, monkeypatch
+) -> None:
+    sha = _make_post_cutoff_commit(motor, monkeypatch)
+
+    rc = _emit(destino, sha, loop_id="L999-INVENTADO")
+
+    assert rc != 0
+    assert _read_ledger(destino) == []
+
+
+def test_new_unregistered_loop_escape_records_reason(
+    motor: Path, destino: Path, monkeypatch
+) -> None:
+    sha = _make_post_cutoff_commit(motor, monkeypatch)
+
+    rc = _emit(
+        destino,
+        sha,
+        loop_id="L999-INVENTADO",
+        reason="test escape: synthetic loop",
+    )
+
+    assert rc == 0
+    assert _read_ledger(destino)[-1]["unregistered_reason"] == (
+        "test escape: synthetic loop"
+    )
+
+
+def test_registered_loop_emits_without_escape(
+    motor: Path, destino: Path, monkeypatch
+) -> None:
+    sha = _make_post_cutoff_commit(motor, monkeypatch)
+
+    rc = _emit(destino, sha, loop_id="L720")
+
+    assert rc == 0
+    assert _read_ledger(destino)[-1]["unregistered_reason"] is None
+
+
+def test_pre_cutoff_unregistered_loop_warns_and_records(
+    motor: Path, destino: Path, monkeypatch, capsys
+) -> None:
+    base = _git(motor, "rev-parse", "HEAD").stdout.strip()
+    monkeypatch.setattr(ed, "CUTOFF_SHA", base)
+
+    rc = _emit(destino, base, loop_id="L999-INVENTADO")
+
+    assert rc == 0
+    assert "WARN" in capsys.readouterr().err
+    assert len(_read_ledger(destino)) == 1
+
+
+@pytest.mark.parametrize("reason", [None, ""])
+def test_unregistered_reason_must_be_non_empty(
+    motor: Path, destino: Path, monkeypatch, reason: str | None
+) -> None:
+    sha = _make_post_cutoff_commit(motor, monkeypatch)
+
+    assert _emit(destino, sha, loop_id="L999-INVENTADO", reason=reason) != 0
+    assert _read_ledger(destino) == []
+
+
+def test_unresolvable_cutoff_fails_closed_without_row(
+    motor: Path, destino: Path, monkeypatch
+) -> None:
+    sha = _git(motor, "rev-parse", "HEAD").stdout.strip()
+    monkeypatch.setattr(ed, "CUTOFF_SHA", "f" * 40)
+
+    assert _emit(destino, sha, loop_id="L999-INVENTADO") != 0
+    assert _read_ledger(destino) == []
