@@ -2076,7 +2076,7 @@ def _gitleaks_context(
         'keywords = ["synthetic"]\n'
     ),
 ):
-    root, _bare = make_git_repo(tmp_path, name="gitleaks-work")
+    root, _bare = make_git_repo(tmp_path, name="g")
     if config is not None:
         (root / ".gitleaks.toml").write_text(config, encoding="utf-8")
     head = advance(root, "gitleaks-context")
