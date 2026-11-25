@@ -176,7 +176,7 @@ def test_precios_table_carries_measured_procedure_and_date():
         assert entry.get("fecha"), key
         assert entry.get("nivel_decidido_por"), key
     medido = precios["BA255"]["precio_por_m_creditos"]
-    assert medido == {"entrada_sin_cache": 49, "cache": 1.05, "salida": 154}
+    assert medido == {"entrada_sin_cache": 49, "cache": 9.1, "salida": 154}
 
 
 def test_classification_lint_rejects_invalid_access_and_missing_usage_cross_reference():

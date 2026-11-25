@@ -812,7 +812,7 @@ CAMPOS_POLITICA_CUENTA: tuple[str, ...] = tuple(
 VALORES_VIGENTES_2026_10_30: dict[str, str] = dict(
     zip(
         CAMPOS_POLITICA_CUENTA,
-        ("92", "97", "60", "80", "90", "45", "2", "1"),
+        ("101", "101", "60", "80", "90", "45", "2", "1"),
         strict=True,
     )
 )
@@ -1240,7 +1240,7 @@ def test_dod_136h_protocolo_tabla_valores_vigentes():
 
     # Control positivo del parser: cambiar el valor de UNA fila (aunque el numero siga
     # apareciendo en otra frase de la seccion) hace caer la igualdad.
-    fila_soft = f"| {CAMPOS_POLITICA_CUENTA[0]} | 92 |"
+    fila_soft = f"| {CAMPOS_POLITICA_CUENTA[0]} | 101 |"
     assert fila_soft in seccion
     mutada = seccion.replace(fila_soft, f"| {CAMPOS_POLITICA_CUENTA[0]} | 93 |")
     assert {c: f[1] for c, f in _filas_tabla_valores(mutada).items()} != (

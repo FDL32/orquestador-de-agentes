@@ -2010,7 +2010,7 @@ def test_dry_run_predicts_warn_for_ticket_without_backlog_row(
 
 _058O_TS_EMIT = "2026-10-11T10:00:00+00:00"
 _058O_TS_ROUND = "2026-10-11T10:05:00+00:00"
-_058O_BACKENDS = ("BA03", "BA07")
+_058O_BACKENDS = ("BA04", "BA07")
 
 
 def _058o_emitted_row(commit: str) -> dict:
