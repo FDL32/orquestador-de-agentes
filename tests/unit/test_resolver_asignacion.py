@@ -768,10 +768,14 @@ def test_m12_real_backends_and_required_assignments():
         assignments, "tr.revisor", document["ensemble_registry"]["backend_keys"]
     )
     assert (im_v1["candidato"], im_v1["info"]["model"], im_v1["orden"]) == (
-        {"backend_key": "BA05"},
-        "gpt-5.6-luna",
-        "f130d0e9-6480-4a2c-adb0-b68fd31b9fc0",
+        {"backend_key": "BA258"},
+        "nan/qwen3.6",
+        "894583da-d3c1-4dcb-828b-26d677fb7e07",
     )
+    assert assignments["im.v1"]["candidatos"] == [
+        {"backend_key": "BA258"},
+        {"backend_key": "BA259"},
+    ]
     assert (
         tr_revisor["candidato"],
         tr_revisor["info"]["model"],

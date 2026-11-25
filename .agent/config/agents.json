@@ -3233,7 +3233,10 @@
     "im.v1": {
       "candidatos": [
         {
-          "backend_key": "BA05"
+          "backend_key": "BA258"
+        },
+        {
+          "backend_key": "BA259"
         }
       ],
       "nivel": "medio",
@@ -3248,7 +3251,7 @@
         }
       ],
       "orden": {
-        "messageId": "f130d0e9-6480-4a2c-adb0-b68fd31b9fc0"
+        "messageId": "894583da-d3c1-4dcb-828b-26d677fb7e07"
       }
     },
     "im.subagentes": {

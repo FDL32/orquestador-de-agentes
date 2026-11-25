@@ -435,7 +435,7 @@ def _health_line(root: Path) -> str:
 _LAYER_ROLES = ("orchestrator", "manager", "revisor", "builder")
 
 
-# ASIGNACIONES:BEGIN sha=401bbb9babb62dec
+# ASIGNACIONES:BEGIN sha=6f32ba581f8df1be
 # **Asignaciones del vuelo**:
 # refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
 # - co [alto]: claude:claudeAgent/claude-sonnet-5-5
@@ -443,7 +443,7 @@ _LAYER_ROLES = ("orchestrator", "manager", "revisor", "builder")
 # - supervisora [alto]: claude:claudeAgent/claude-sonnet-5-5 PENDIENTE
 # - im.builder [alto]: codex gpt-5.6-luna
 # - im.revisor [medio]: claude:claudeAgent/claude-sonnet-5
-# - im.v1 [medio]: codex gpt-5.6-luna
+# - im.v1 [medio]: qwen nan/qwen3.6 > gemma nan/gemma4
 # - im.subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
 # - tr.triador [base]: gemma nan/gemma4
 # - tr.revisor [medio]: codex gpt-5.6-luna
