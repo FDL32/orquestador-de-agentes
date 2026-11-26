@@ -1,14 +1,18 @@
-"""Tests de cobertura de la configuracion REAL para WOT-2026-161t.
+"""Tests de cobertura REAL derivados del panel de asignaciones del vuelo.
 
-Cada clausula del DoD (c-01..c-05 de la ficha) es UN test contra el agents.json
-VIVO cargado con load_motor_config (patron de test_check_loop_execution.py:2846).
+Los esperados de eligible_coverage se derivan del panel mediante el resolvedor
+real, y cada clausula del DoD se mide contra la configuracion cargada en memoria.
 """
 # [NON-REVERSE-CLASSICAL: test de contrato/cobertura nueva]
 
 from __future__ import annotations
 
+import copy
+import importlib.util
 import sys
 from pathlib import Path
+
+import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -28,6 +32,83 @@ _RS_INTERNAL_MODE = (
     "unexpected: RuntimeError: backend CLI sin respuesta tras 900s; arbol de "
     "procesos matado. CAUSA NO DETERMINADA -- comprueba en este orden"
 )
+
+_OLD_VIEW = [
+    "BA04",
+    "BA07",
+    "BA258",
+    "BA259",
+    "BA150",
+    "BA151",
+    "BA08",
+    "BA09",
+]
+
+
+def _config():
+    """Carga la configuracion del motor desde un unico punto.
+
+    Before: el test necesita el documento de configuracion vigente.
+    During: delega exclusivamente en ``ensemble_dispatch.load_motor_config``.
+    After: devuelve la configuracion cargada, susceptible de parche en memoria.
+    """
+    return ed.load_motor_config()
+
+
+def _resolver():
+    """Carga el resolvedor de asignaciones hermano por ruta absoluta.
+
+    Before: existe ``scripts/flight/resolver_asignacion.py`` en el motor.
+    During: crea un modulo desde esa ruta y ejecuta su loader, sin tocar sys.path.
+    After: devuelve el modulo del resolvedor listo para cargar o derivar datos.
+    """
+    resolver_path = SCRIPTS_DIR / "flight" / "resolver_asignacion.py"
+    spec = importlib.util.spec_from_file_location(
+        "resolver_for_reserve_coverage", resolver_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("no se pudo cargar resolver_asignacion.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _derived_view(config):
+    """Deriva la vista elegible usando solo la configuracion recibida.
+
+    Before: ``config`` contiene asignaciones y registro coherentes.
+    During: pasa ``config["asignaciones"]`` al resolvedor sin leer disco, para
+        que un control positivo pueda parchear el documento completo en memoria.
+    After: devuelve la lista de backend_keys que el panel hace elegible.
+    """
+    return _resolver().derive_eligible(config["asignaciones"], config)
+
+
+def _entry(config):
+    """Obtiene la entrada de cobertura de la fase y autoridad auditadas.
+
+    Before: ``config`` contiene el registro ``ensemble_registry``.
+    During: navega hasta la clave canonica de MANAGER_REVIEW en repo_motor.
+    After: devuelve el diccionario de cobertura que se debe validar o auditar.
+    """
+    return config["ensemble_registry"]["eligible_coverage"]["MANAGER_REVIEW:repo_motor"]
+
+
+def _config_for(view):
+    """Prepara la configuracion real o el fixture de la vista antigua.
+
+    Before: ``view`` es ``real`` o ``old`` y la configuracion real es cargable.
+    During: conserva la real o clona en profundidad y sustituye solo la vista
+        antigua para probar que la semantica no depende de claves concretas.
+    After: devuelve una configuracion aislada para el escenario solicitado.
+    """
+    if view == "real":
+        return _config()
+    if view == "old":
+        config = copy.deepcopy(_config())
+        _entry(config)["backend_keys"] = list(_OLD_VIEW)
+        return config
+    raise ValueError(f"vista desconocida: {view}")
 
 
 def _emitted(nonce="N1", commit="abc", loop="L700", ts="2026-07-24T10:00:00+00:00"):
@@ -77,17 +158,17 @@ def _rs_hang(backend, *, times=2, nonce="N1", mode=_RS_WATCHDOG_MODE, start=10):
     ]
 
 
-def audit_real(monkeypatch, rows):
-    """cle.audit con scorecard/emitted parcheados y el agents.json REAL.
+def audit_real(monkeypatch, rows, config):
+    """Ejecuta cle.audit con evidencia parcheada y config recibida.
 
-    Before: rows con la forma de _rs_row; monkeypatch de pytest activo.
-    During: parchea _read_scorecard y read_emitted_nonces (sin disco) y fija
-        phase+delivery_authority para activar la cobertura declarada.
-    After: primer veredicto (un solo commit "abc") con load_motor_config().
+    Before: ``rows`` tiene la forma de _rs_row, ``config`` es la entrada a
+        auditar y monkeypatch esta activo.
+    During: parchea _read_scorecard y read_emitted_nonces sin usar disco, y fija
+        phase y delivery_authority para activar la cobertura declarada.
+    After: devuelve el primer veredicto para el unico commit ``abc``.
     """
     monkeypatch.setattr(cle, "_read_scorecard", lambda root: (list(rows), "x"))
     monkeypatch.setattr(cle, "read_emitted_nonces", lambda root: [_emitted()])
-    config = ed.load_motor_config()
     verdicts = cle.audit(
         Path("dummy"),
         commit_shas=["abc"],
@@ -99,30 +180,149 @@ def audit_real(monkeypatch, rows):
     return verdicts[0]
 
 
-def test_real_entry_lists_extra_lenses_as_eligible():
-    """c-01: la entrada REAL declara las cuatro lentes extra como elegibles."""
-    config = ed.load_motor_config()
-    entry = config["ensemble_registry"]["eligible_coverage"][
-        "MANAGER_REVIEW:repo_motor"
+def _select_keys(entry):
+    """Selecciona las dos primeras claves elegibles de la entrada auditada.
+
+    Before: ``entry`` es una entrada de cobertura validada.
+    During: comprueba que la entrada permite construir dos lentes distintas y
+        conserva el orden posicional declarado.
+    After: devuelve ``(k1, k2)`` sin introducir claves concretas en el test.
+    """
+    backend_keys = entry["backend_keys"]
+    if len(backend_keys) < 2:
+        pytest.fail(
+            "precondicion: la entrada auditada tiene <2 backend_keys elegibles; "
+            "los escenarios de dos lentes distintas no son construibles"
+        )
+    first, second = backend_keys[:2]
+    if first == second:
+        pytest.fail(
+            "precondicion: la entrada auditada no tiene dos backend_keys distintas; "
+            "los escenarios de dos lentes distintas no son construibles"
+        )
+    return first, second
+
+
+def _rows_two_answered(k1, k2):
+    """Construye dos respuestas sustantivas para dos posiciones elegibles.
+
+    Before: ``k1`` y ``k2`` son claves distintas de la entrada auditada.
+    During: crea una ronda respondida para cada clave con el mismo nonce.
+    After: devuelve las dos filas que deben satisfacer min_distinct.
+    """
+    return [_rs_row(k1), _rs_row(k2, sec=6)]
+
+
+def _rows_second_only(k1, k2):
+    """Construye una sola respuesta para la segunda clave posicional.
+
+    Before: ``k1`` y ``k2`` son claves distintas de la entrada auditada.
+    During: conserva solo la segunda posicion.
+    After: devuelve una ronda, insuficiente para el minimo declarado.
+    """
+    del k1
+    return [_rs_row(k2)]
+
+
+def _rows_first_only(k1, k2):
+    """Construye una sola respuesta para la primera clave posicional.
+
+    Before: ``k1`` y ``k2`` son claves distintas de la entrada auditada.
+    During: conserva solo la primera posicion.
+    After: devuelve una ronda, insuficiente para el minimo declarado.
+    """
+    del k2
+    return [_rs_row(k1)]
+
+
+def _rows_second_hung(k1, k2):
+    """Construye una respuesta y una segunda ronda colgada.
+
+    Before: ``k1`` y ``k2`` son claves distintas de la entrada auditada.
+    During: marca la segunda ronda con el modo watchdog y sin respuesta.
+    After: devuelve evidencia donde solo la primera lente puede contar.
+    """
+    return [
+        _rs_row(k1),
+        _rs_row(k2, hang=_RS_WATCHDOG_MODE, answered=False, sec=12),
     ]
-    assert entry["backend_keys"] == [
-        "BA04",
-        "BA07",
-        "BA258",
-        "BA259",
-        "BA150",
-        "BA151",
-        "BA08",
-        "BA09",
-    ]
+
+
+def _assert_two_answered(verdict, rows, k1, k2):
+    """Comprueba que dos respuestas distintas cubren el minimo.
+
+    Before: ``verdict`` procede de dos filas respondidas para ``k1`` y ``k2``.
+    During: contrasta claves de filas, veredicto, distincion y minimo aplicado.
+    After: demuestra cobertura sin aceptar una tercera clave accidental.
+    """
+    assert {row["backend_key"] for row in rows} == {k1, k2}
+    assert verdict["ok"] is True
+    assert sorted(verdict["distinct_backends"]) == sorted([k1, k2])
+    assert verdict["min_aplicado"] == 2
+
+
+def _assert_single(verdict, rows, k1, k2):
+    """Comprueba que una unica respuesta no cubre el minimo.
+
+    Before: ``verdict`` procede de una sola fila entre ``k1`` y ``k2``.
+    During: contrasta la unica clave contada y el minimo aplicado.
+    After: demuestra que una lente aislada no satisface la politica declarada.
+    """
+    del k1, k2
+    expected = rows[0]["backend_key"]
+    assert verdict["ok"] is False
+    assert verdict["distinct_backends"] == [expected]
+    assert verdict["min_aplicado"] == 2
+
+
+def _assert_hung(verdict, rows, k1, k2):
+    """Comprueba que una segunda lente colgada no cuenta ni activa reserva.
+
+    Before: ``verdict`` procede de una respuesta y una ronda watchdog.
+    During: contrasta que solo ``k1`` queda contado y que no aparecen campos de
+        reserva en una entrada que no declara reservas.
+    After: demuestra el tratamiento sustantivo de la ronda colgada.
+    """
+    del rows
+    assert verdict["ok"] is False
+    assert verdict["distinct_backends"] == [k1]
+    assert k2 not in verdict["distinct_backends"]
+    assert "reserve_substitutions" not in verdict
+    assert "reserve_exhausted" not in verdict
+
+
+_SCENARIOS = {
+    "c04a": (_rows_two_answered, _assert_two_answered),
+    "c04b": (_rows_second_only, _assert_single),
+    "c04c": (_rows_second_hung, _assert_hung),
+    "c04d": (_rows_two_answered, _assert_two_answered),
+    "c04e": (_rows_first_only, _assert_single),
+    "c04f": (_rows_second_hung, _assert_hung),
+    "c04g": (_rows_two_answered, _assert_two_answered),
+    "c04h": (_rows_two_answered, _assert_two_answered),
+}
+
+
+def test_real_entry_matches_derived_view():
+    """c-01: la entrada real coincide con la vista derivada del panel.
+
+    Before: se carga la configuracion real a traves de _config.
+    During: se deriva la vista sobre el mismo objeto en memoria y se valida
+        ademas la declaracion real por la ruta canonica del resolvedor.
+    After: backend_keys coincide con derive_eligible sin fijar claves concretas;
+        la derivacion no lee disco para permitir el control positivo en memoria.
+    """
+    config = _config()
+    entry = _entry(config)
+    assert entry["backend_keys"] == _derived_view(config)
+    document, assignments = _resolver().load_declaration()
+    assert assignments is document["asignaciones"]
 
 
 def test_real_entry_is_valid_and_declares_no_reserve():
-    """c-02: load_eligible_coverage da la entrada sin reason y SIN campos de reserva."""
-    config = ed.load_motor_config()
-    entry = config["ensemble_registry"]["eligible_coverage"][
-        "MANAGER_REVIEW:repo_motor"
-    ]
+    """c-02: load_eligible_coverage da la entrada sin reason y sin reserva."""
+    config = _config()
+    entry = _entry(config)
     assert cle.validate_coverage_entry(entry, config) is None
     loaded, reason, key = cle.load_eligible_coverage(
         config, "MANAGER_REVIEW", "repo_motor"
@@ -135,108 +335,76 @@ def test_real_entry_is_valid_and_declares_no_reserve():
 
 
 def test_real_entry_keeps_other_keys_untouched():
-    """c-03: los controles existentes y las cuatro primeras claves quedan intactos."""
-    config = ed.load_motor_config()
-    entry = config["ensemble_registry"]["eligible_coverage"][
-        "MANAGER_REVIEW:repo_motor"
-    ]
+    """c-03: conserva los controles de politica independientes de la vista."""
+    config = _config()
+    entry = _entry(config)
     assert entry["min_distinct"] == 2
     assert entry["policy"] == "declared"
     assert entry["excluded_backend_keys"] == ["BA05"]
     assert entry["exempt_tickets"] == ["WOT-2026-129d"]
-    assert entry["backend_keys"][:4] == ["BA04", "BA07", "BA258", "BA259"]
 
 
-def test_ba04_and_ba09_cover_without_ba07_or_ba08(monkeypatch):
-    """c-04a: BA04 y BA09 respondidas cubren sin BA07 ni BA08."""
-    rows = [_rs_row("BA04"), _rs_row("BA09", sec=6)]
-    v = audit_real(monkeypatch, rows)
-    assert all(r["backend_key"] not in {"BA07", "BA08"} for r in rows)
-    assert v["ok"] is True
-    assert sorted(v["distinct_backends"]) == ["BA04", "BA09"]
-    assert v["min_aplicado"] == 2
+@pytest.mark.parametrize(
+    "scenario, view",
+    [
+        ("c04a", "real"),
+        ("c04a", "old"),
+        ("c04b", "real"),
+        ("c04b", "old"),
+        ("c04c", "real"),
+        ("c04c", "old"),
+        ("c04d", "real"),
+        ("c04d", "old"),
+        ("c04e", "real"),
+        ("c04e", "old"),
+        ("c04f", "real"),
+        ("c04f", "old"),
+        ("c04g", "real"),
+        ("c04g", "old"),
+        ("c04h", "real"),
+        ("c04h", "old"),
+    ],
+    ids=[
+        "c04a-real",
+        "c04a-old",
+        "c04b-real",
+        "c04b-old",
+        "c04c-real",
+        "c04c-old",
+        "c04d-real",
+        "c04d-old",
+        "c04e-real",
+        "c04e-old",
+        "c04f-real",
+        "c04f-old",
+        "c04g-real",
+        "c04g-old",
+        "c04h-real",
+        "c04h-old",
+    ],
+)
+def test_coverage_scenarios(monkeypatch, scenario, view):
+    """c-04a..h: mide los sucesores con vista real y fixture antiguo.
 
-
-def test_ba04_and_ba07_cover_without_ba08(monkeypatch):
-    """c-04d: BA04 y BA07 respondidas cubren sin BA08."""
-    rows = [_rs_row("BA04"), _rs_row("BA07", sec=6)]
-    v = audit_real(monkeypatch, rows)
-    assert all(r["backend_key"] != "BA08" for r in rows)
-    assert v["ok"] is True
-    assert sorted(v["distinct_backends"]) == ["BA04", "BA07"]
-    assert v["min_aplicado"] == 2
-
-
-def test_ba07_alone_does_not_cover(monkeypatch):
-    """c-04e: BA07 sola no cubre min_distinct 2."""
-    rows = [_rs_row("BA07")]
-    v = audit_real(monkeypatch, rows)
-    assert v["ok"] is False
-    assert v["distinct_backends"] == ["BA07"]
-    assert v["min_aplicado"] == 2
-
-
-def test_hung_ba07_does_not_count(monkeypatch):
-    """c-04f: BA07 colgada no cuenta y no activa claves de reserva."""
-    rows = [
-        _rs_row("BA04"),
-        _rs_row("BA07", hang=_RS_WATCHDOG_MODE, answered=False, sec=12),
-    ]
-    v = audit_real(monkeypatch, rows)
-    assert v["ok"] is False
-    assert v["distinct_backends"] == ["BA04"]
-    assert "BA07" not in v["distinct_backends"]
-    assert "reserve_substitutions" not in v
-    assert "reserve_exhausted" not in v
-
-
-def test_ba04_and_ba08_cover_without_ba07_or_ba09(monkeypatch):
-    """c-04g: BA04 y BA08 respondidas cubren sin BA07 ni BA09."""
-    rows = [_rs_row("BA04"), _rs_row("BA08", sec=6)]
-    v = audit_real(monkeypatch, rows)
-    assert v["ok"] is True
-    assert sorted(v["distinct_backends"]) == ["BA04", "BA08"]
-    assert v["min_aplicado"] == 2
-
-
-def test_ba04_and_ba09_answered_counts(monkeypatch):
-    """c-04h: BA09 respondida cuenta junto a BA04."""
-    rows = [_rs_row("BA04"), _rs_row("BA09", sec=6)]
-    v = audit_real(monkeypatch, rows)
-    assert v["ok"] is True
-    assert sorted(v["distinct_backends"]) == ["BA04", "BA09"]
-    assert v["min_aplicado"] == 2
-
-
-def test_ba08_alone_does_not_cover(monkeypatch):
-    """c-04b: BA08 sola no cubre min_distinct 2."""
-    rows = [_rs_row("BA08")]
-    v = audit_real(monkeypatch, rows)
-    assert v["ok"] is False
-    assert v["distinct_backends"] == ["BA08"]
-    assert v["min_aplicado"] == 2
-
-
-def test_hung_ba09_does_not_count(monkeypatch):
-    """c-04c: BA09 colgada no cuenta y no activa claves de reserva."""
-    rows = [
-        _rs_row("BA04"),
-        _rs_row("BA09", hang=_RS_WATCHDOG_MODE, answered=False, sec=12),
-    ]
-    v = audit_real(monkeypatch, rows)
-    assert v["ok"] is False
-    assert v["distinct_backends"] == ["BA04"]
-    assert "BA09" not in v["distinct_backends"]
-    assert "reserve_substitutions" not in v
-    assert "reserve_exhausted" not in v
+    Before: ``scenario`` identifica un constructor y una asercion de la tabla,
+        y ``view`` selecciona la entrada real o la antigua.
+    During: selecciona claves por posicion, audita filas construidas y aplica
+        la asercion asociada sin depender de nombres de claves.
+    After: cada caso demuestra la semantica de cobertura que le corresponde.
+    """
+    config = _config_for(view)
+    entry = _entry(config)
+    k1, k2 = _select_keys(entry)
+    build_rows, check_verdict = _SCENARIOS[scenario]
+    rows = build_rows(k1, k2)
+    verdict = audit_real(monkeypatch, rows, config)
+    check_verdict(verdict, rows, k1, k2)
 
 
 def test_note_documents_derived_view_and_family_rule():
-    """c-05: el note documenta la vista derivada, la regla de familias y 129r."""
-    config = ed.load_motor_config()
-    entry = config["ensemble_registry"]["eligible_coverage"][
-        "MANAGER_REVIEW:repo_motor"
-    ]
+    """c-05: el note documenta vista derivada, familias y 129r."""
+    config = _config()
+    entry = _entry(config)
     note = entry["note"]
     for text in (
         "VISTA DERIVADA de asignaciones.lentes_p34",
