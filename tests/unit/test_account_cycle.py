@@ -1006,6 +1006,23 @@ def test_m13_pareja_misma_ventana_y_reset_se_conserva():
     assert result[0]["tasa_razon"] == "pareja-valida"
 
 
+def test_m13_segundo_tick_persiste_identidad_de_ventana():
+    """Before: the first tick stores its observed quota-window identity.
+
+    During: run two production decisions with different quota windows.
+    After: the persisted history rejects the cross-window pair and uses the floor.
+    """
+    module = load_module()
+    first = readings(50, now=700)
+    first["ventana"] = "5h"
+    persisted, _ = module.decide(first, state(), 700, [])
+    second = readings(76, now=1000)
+    second["ventana"] = "weekly"
+    result, _ = module.decide(second, persisted, 1000, [])
+    assert persisted["lecturas"][-1]["ventana"] == "5h"
+    assert result["tasa_razon"] == "suelo-1pt-min"
+
+
 FIXTURE_205C = (
     Path(__file__).resolve().parents[1]
     / "fixtures"
@@ -1075,6 +1092,29 @@ def _materialize_fixture(tmp_path, brabander_checked_at=None):
     return cache_path
 
 
+def _materialize_window_cache(tmp_path, window):
+    """Create a fresh minimal cache carrying one explicit quota-window identity.
+
+    Before: ``window`` is the cache field under test.
+    During: write valid preferred-account measurements with the supplied identity.
+    After: return an isolated cache path for the production CLI.
+    """
+    now = time.time()
+    cache = {
+        "alvarovans": {
+            "pct": 50,
+            "weekly_pct": 20,
+            "resets": now + 600,
+            "weekly_resets": now + 3600,
+            "checked_at": now - 60,
+            "ventana": window,
+        }
+    }
+    path = tmp_path / "window-cache.json"
+    path.write_text(json.dumps(cache), encoding="utf-8")
+    return path
+
+
 def _write_state(tmp_path, value):
     """Write one isolated state snapshot for a subprocess test.
 
@@ -1101,6 +1141,36 @@ def test_205c_resets_none_phase_c_guard(tmp_path):
     assert result.returncode == 0
     assert payload["accion"] == "ESPERAR"
     assert payload["ejecutor"] is None
+    assert not payload["accion"].startswith("MOVE_")
+
+
+def test_m13_cli_propagates_window_into_persisted_decision_state(tmp_path):
+    """Before: the production cache reader receives a valid explicit window.
+
+    During: invoke the CLI route that reads the cache and decides without saving.
+    After: the emitted decision state retains that window identity.
+    """
+    cache_path = _materialize_window_cache(tmp_path, "5h")
+    state_path = _write_state(tmp_path, state())
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 0
+    assert payload["estado"]["lecturas"][-1]["ventana"] == "5h"
+
+
+@pytest.mark.parametrize("bad_window", [[], {"id": "5h"}])
+def test_m13_cli_invalid_window_fails_closed(tmp_path, bad_window):
+    """Before: the cache carries a non-scalar quota-window identity.
+
+    During: execute the production cache-reader and CLI path.
+    After: the guard returns rc9 with no movement action.
+    """
+    cache_path = _materialize_window_cache(tmp_path, bad_window)
+    state_path = _write_state(tmp_path, state())
+    result = _run_cli_files(cache_path, state_path)
+    payload = json.loads(result.stdout)
+    assert result.returncode == 9
+    assert payload["accion"] == "NONE"
     assert not payload["accion"].startswith("MOVE_")
 
 
