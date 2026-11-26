@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Native stop hook: barrera de clasificacion de evidencia (WOT-2026-044t).
+"""Native stop hook: barreras de clasificacion y consulta (WOT-2026-215b).
 
 Contexto
 --------
@@ -71,12 +71,13 @@ Revision adversarial: Codex (ADOPTAR CON CAMBIOS) exigio los 6 endurecimientos
 aplicados aqui, entre ellos tratar `stop_hook_active` AUSENTE como fail-open por ser
 campo no documentado en code.claude.com/docs/en/hooks.
 
-Rama P9 (WOT-2026-215a)
+Rama de consulta de parada (WOT-2026-215b)
 -----------------------
-P9 es una rama aditiva y fail-open que solo puede emitir un aviso local por
-stderr; el evento Stop no admite contexto adicional para el modelo. El caso
-positivo queda deshabilitado hasta que se ratifiquen las anclas de
-DECISION_USUARIO.
+La rama nueva es aditiva y fail-open. Lee un modo opt-in del vuelo y solo
+telemetria en ``<flight>/stop_consult_observations.jsonl``. Una excepcion,
+un transcript ilegible, un roster ambiguo o un store de T3 no verificable dejan
+pasar el Stop; la barrera nunca escribe en ``.agent/runtime`` del motor fuera
+del directorio de vuelo y nunca modifica el store.
 """
 
 from __future__ import annotations
@@ -153,16 +154,6 @@ _A_ESTRECHO_RE = re.compile(
 )
 ESPERA_MARKER_RE = re.compile(r"(?m)^[ \t>*_]{0,6}\[ESPERA:(HECHO|NADA):([^\]]*)\]")
 
-# WOT-2026-215a: DECISION_USUARIO pendiente (ficha s.2). El caso positivo
-# permanece deshabilitado por defecto hasta ratificar las anclas.
-P9_ANCHORS_RATIFIED = False
-P9_ANNOUNCE_ANCHORS: tuple[str, ...] = ()
-P9_EXECUTION_ANCHORS: tuple[str, ...] = ()
-_P9_NOTICE = (
-    "P9 (WOT-2026-215a): el cierre anuncia una accion futura sin ejecutar "
-    "y la cola de OPERACION no esta vacia: ejecuta o programa la espera."
-)
-
 #: WOT-2026-044x: edad maxima del centinela antes de tratarlo como inactivo.
 #: Criterio DECLARADO (no hay distribucion empirica de duraciones medida):
 #: cubre con margen las sesiones de "varias horas" que acota el DoD (d) de la
@@ -199,6 +190,27 @@ _ESPERA_REASON = (
     "[ESPERA:NADA: motivo] si no lo hubo; el motivo no puede estar vacio. "
     "Los ejemplos van dentro de una frase para no autoaprobar este reason."
 )
+
+# WOT-2026-215b: reason contractual de la consulta. A diferencia de 044t/160z,
+# no se recorta: la ficha exige igualdad literal y el texto supera 400 bytes.
+_CONSULT_REASON = (
+    "BARRERA DE PARADA (WOT-2026-215b): no dejas nada que te responda. Haz una: "
+    "(1) ejecuta ya el siguiente paso de tu cola dejando un respondedor "
+    "(delegate_task async, schedule_task o tarea en segundo plano); (2) consulta "
+    "a tu supervisora con t3_thread_send a <threadId de active_roles.supervisor> "
+    "con CONSULTA_SEGUIR_PARAR: <ultima accion> | <cola>, y lanza un temporizador "
+    "en segundo plano de 600 s."
+)
+CONSULT_MODE_RELPATH = Path("stop_consult_mode.json")
+CONSULT_PAUSE_RELPATH = Path("stop_consult_pause.json")
+CONSULT_OBSERVATIONS_RELPATH = Path("stop_consult_observations.jsonl")
+CONSULT_TRANSCRIPT_MAX_BYTES = 8 * 1024 * 1024
+CONSULT_TRANSCRIPT_HEAD_BYTES = 128 * 1024
+CONSULT_BLOCK_WINDOW_S = 60 * 60
+CONSULT_LIVE_WINDOW_S = 10 * 60
+CONSULT_ESCAPE_WINDOW_S = 15 * 60
+CONSULT_MAX_MINUTES = 60
+_CONSULT_ID_RE = re.compile(r"^Eres (CO-\d+),")
 
 
 def find_repo_root(start: Path) -> Path:
@@ -634,15 +646,6 @@ def _decide_espera(root: Path, payload: dict) -> dict:
     return {"continue": True}
 
 
-def p9_announces_without_acting(message: str) -> bool:
-    """Before: mensaje y anclas P9; During: compara anuncio y ejecucion; After: predicado P9."""
-    if not P9_ANCHORS_RATIFIED or not P9_ANNOUNCE_ANCHORS or not P9_EXECUTION_ANCHORS:
-        return False
-    announces = any(re.search(anchor, message) for anchor in P9_ANNOUNCE_ANCHORS)
-    executes = any(re.search(anchor, message) for anchor in P9_EXECUTION_ANCHORS)
-    return announces and not executes
-
-
 def _p9_resolve_co_activa(flight_dir: Path) -> str | None:
     """Before: vuelo con roster; During: detecta una sola clave CO; After: codigo o None fail-closed."""
     try:
@@ -674,29 +677,6 @@ def _p9_resolve_co_activa(flight_dir: Path) -> str | None:
     if not isinstance(session_code, str) or not session_code.strip():
         return None
     return session_code.strip()
-
-
-def _p9_cola_no_vacia(flight_dir: Path, co: str) -> bool:
-    """Before: vuelo y CO; During: lee la ultima Entrada; After: indica cola numerada."""
-    target = flight_dir / "diseno" / f"OPERACION_EN_CURSO_{co}.md"
-    try:
-        text = target.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return False
-    sections = re.findall(r"(?ms)^## Entrada\b.*?(?=^## Entrada\b|\Z)", text)
-    if not sections:
-        return False
-    section = sections[-1]
-    field = re.search(r"(?m)^\s*- COLA \(orden\):(.*)$", section)
-    if field is None:
-        return False
-    block_lines = [field.group(1)]
-    for line in section.splitlines()[section[: field.end()].count("\n") + 1 :]:
-        if line.startswith("- ") or line.startswith("#"):
-            break
-        block_lines.append(line)
-    block = "\n".join(block_lines)
-    return bool(re.search(r"(?m)^\s*\d{1,3}[.)]?\s+\S", block))
 
 
 def _p9_gitdir_topology(root: Path) -> tuple[list[Path], list[Path]]:
@@ -757,6 +737,713 @@ def _p9_linked_roots(root: Path) -> list[Path]:
     return [root, *bases, *_p9_destination_roots(links)]
 
 
+def _consult_flights(root: Path) -> list[Path]:
+    """Before: root may be a motor worktree or destination; During: censuses linked flights; After: returns unique flight dirs."""
+    candidates: dict[Path, Path] = {}
+    try:
+        for base in _p9_linked_roots(root):
+            flight_root = base / ".agent" / "runtime" / "flight"
+            for roster in flight_root.glob("*/flight_roster.json"):
+                if roster.is_file():
+                    resolved = roster.resolve()
+                    candidates[resolved] = resolved.parent
+    except (OSError, RuntimeError, ValueError):
+        return []
+    return sorted(candidates.values(), key=str)
+
+
+def _consult_read_mode(flight_dir: Path) -> tuple[str, dict]:
+    """Before: a flight directory; During: reads its opt-in mode tolerantly; After: returns mode and object."""
+    target = flight_dir / CONSULT_MODE_RELPATH
+    try:
+        if not target.is_file():
+            return "off", {}
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        return "off", {}
+    if not isinstance(data, dict) or data.get("mode") not in {
+        "off",
+        "observe",
+        "canary",
+        "block",
+    }:
+        return "off", {}
+    return str(data["mode"]), data
+
+
+def _consult_parse_dt(value: object) -> datetime | None:
+    """Before: an arbitrary timestamp; During: parses ISO-8601; After: returns UTC or None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        result = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (
+        result if result.tzinfo else result.replace(tzinfo=timezone.utc)
+    ).astimezone(timezone.utc)
+
+
+def _consult_text(row: dict) -> str | None:
+    """Before: one transcript row; During: extracts text blocks; After: returns joined text or None."""
+    message = row.get("message") if isinstance(row.get("message"), dict) else row
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return None
+    parts = [
+        block.get("text")
+        for block in content
+        if isinstance(block, dict) and isinstance(block.get("text"), str)
+    ]
+    return "".join(parts) if parts else None
+
+
+def _consult_blocks(row: dict, block_type: str) -> list[dict]:
+    """Before: transcript row; During: filters content blocks by type; After: returns dict blocks."""
+    message = row.get("message") if isinstance(row.get("message"), dict) else row
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return []
+    return [
+        block
+        for block in content
+        if isinstance(block, dict) and block.get("type") == block_type
+    ]
+
+
+def _consult_read_transcript(
+    path: Path, prompt_id: str
+) -> tuple[list[dict], dict, dict]:
+    """Before: readable JSONL transcript and prompt id; During: reads bounded tail/head; After: turn rows, first user and opener."""
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            handle.seek(max(0, size - CONSULT_TRANSCRIPT_MAX_BYTES))
+            tail = handle.read(CONSULT_TRANSCRIPT_MAX_BYTES)
+            handle.seek(0)
+            head = handle.read(CONSULT_TRANSCRIPT_HEAD_BYTES)
+    except (OSError, ValueError) as exc:
+        raise ValueError("transcript_ilegible") from exc
+
+    def decode_rows(raw: bytes) -> list[dict]:
+        result = []
+        for line in raw.decode("utf-8", "replace").splitlines():
+            try:
+                item = json.loads(line)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(item, dict):
+                result.append(item)
+        return result
+
+    tail_rows = decode_rows(tail)
+    turn = [row for row in tail_rows if row.get("promptId") == prompt_id]
+    all_head = decode_rows(head)
+    first_user = next((row for row in all_head if row.get("type") == "user"), None)
+    opener = next((row for row in turn if row.get("type") == "user"), None)
+    if not turn or first_user is None or opener is None:
+        raise ValueError("turno_no_delimitado")
+    return turn, first_user, opener
+
+
+def _consult_roster(flight_dir: Path) -> tuple[dict, dict]:
+    """Before: flight roster path; During: resolves the sole orchestrator role; After: returns roster and active entry."""
+    try:
+        data = json.loads(
+            (flight_dir / "flight_roster.json").read_text(encoding="utf-8-sig")
+        )
+        roles = data.get("active_roles") if isinstance(data, dict) else None
+        if not isinstance(roles, dict):
+            raise ValueError("active_roles ausente")
+        entry = orchestrator_entry(roles)
+    except (
+        OSError,
+        UnicodeDecodeError,
+        ValueError,
+        TypeError,
+        RosterRoleKeyError,
+    ) as exc:
+        raise ValueError("roster_no_medido") from exc
+    if not isinstance(entry, dict):
+        raise ValueError("roster_no_medido")
+    return data, entry
+
+
+def _consult_record(
+    flight_dir: Path,
+    payload: dict,
+    mode: str,
+    *,
+    es_orquestadora: bool | None,
+    respondedor: str | None,
+    pausa: bool,
+    decision: str,
+    motivo: str,
+    has_transcript_path: bool,
+    nota: str | None = None,
+) -> None:
+    """Before: privacy-safe decision metadata; During: appends one JSONL row; After: fails open on write errors."""
+    try:
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "session_id": payload.get("session_id"),
+            "prompt_id": payload.get("prompt_id")
+            if isinstance(payload.get("prompt_id"), str)
+            else None,
+            "es_orquestadora": es_orquestadora,
+            "modo": mode,
+            "respondedor": respondedor,
+            "pausa": bool(pausa),
+            "decision": decision,
+            "motivo": motivo,
+            "has_transcript_path": bool(has_transcript_path),
+            "payload_keys": sorted(str(key) for key in payload),
+        }
+        if nota:
+            record["nota"] = nota
+        target = flight_dir / CONSULT_OBSERVATIONS_RELPATH
+        target.parent.mkdir(parents=True, exist_ok=True)
+        raw = (
+            json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
+        descriptor = os.open(str(target), os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o600)
+        try:
+            os.write(descriptor, raw)
+        finally:
+            os.close(descriptor)
+    except (OSError, TypeError, ValueError):
+        return
+
+
+def _consult_tool_respondedor(  # noqa: C901
+    rows: list[dict], payload: dict, supervisor_thread: str | None
+) -> str | None:
+    """Before: delimited turn rows; During: pairs tool calls/results; After: accredited responder or None."""
+    if payload.get("background_tasks"):
+        return "background_tasks"
+    uses: list[dict] = []
+    results: dict[str, dict] = {}
+    for row in rows:
+        uses.extend(_consult_blocks(row, "tool_use"))
+        for block in _consult_blocks(row, "tool_result"):
+            tool_id = block.get("tool_use_id")
+            if isinstance(tool_id, str):
+                results[tool_id] = block
+    accredited: list[tuple[str, dict, dict]] = []
+    for use in uses:
+        tool_id = use.get("id")
+        result = results.get(tool_id) if isinstance(tool_id, str) else None
+        if result is not None and not result.get("is_error", False):
+            accredited.append(
+                (str(use.get("name", "")), use.get("input") or {}, result)
+            )
+    for name, input_data, _result in accredited:
+        if (
+            name.endswith("delegate_task")
+            and input_data.get("mode", "async") == "async"
+        ):
+            return "delegate_async"
+    for name, _input_data, _result in accredited:
+        if name.endswith("schedule_task"):
+            return "schedule_task"
+    for name, input_data, _result in accredited:
+        if (
+            name.endswith("t3_thread_send")
+            and isinstance(supervisor_thread, str)
+            and input_data.get("threadId") == supervisor_thread
+            and isinstance(input_data.get("message"), str)
+            and input_data["message"].startswith("CONSULTA_SEGUIR_PARAR")
+            and (
+                payload.get("background_tasks")
+                or any(n.endswith("schedule_task") for n, _, _ in accredited)
+            )
+        ):
+            return "consulta_supervisora"
+    return None
+
+
+def _consult_origin_user(  # noqa: C901
+    flight_dir: Path, opening: dict, roster_entry: dict
+) -> tuple[bool, bool]:
+    """Before: opening user row and orchestrator roster entry; During: reads T3 store RO and matches normalized text/time; After: (is_user, no_medido).
+
+    The text-plus-nearest-timestamp join is inherently fragile: transcript and
+    projection clocks can drift, and duplicate text can be ambiguous. Any such
+    uncertainty is deliberately reported as ``no_medido_origen`` and never
+    becomes a user exemption.
+    """
+    try:
+        opening_text = _consult_text(opening)
+        opening_dt = _consult_parse_dt(
+            opening.get("timestamp") or opening.get("created_at")
+        )
+        thread_id = roster_entry.get("threadId")
+        if (
+            not isinstance(opening_text, str)
+            or not opening_text
+            or opening_dt is None
+            or not isinstance(thread_id, str)
+        ):
+            raise ValueError("origen_no_extraible")
+        module_path = (
+            _MOTOR_ROOT / "scripts" / "flight" / "verify_user_authorization.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "_consult_verify_user_authorization", module_path
+        )
+        if spec is None or spec.loader is None:
+            raise ImportError("verify_user_authorization.py no disponible")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = module
+        try:
+            spec.loader.exec_module(module)
+        finally:
+            sys.modules.pop(spec.name, None)
+        db_path = os.environ.get("T3_STATE_DB") or str(
+            Path.home() / ".t3" / "userdata" / "statev2.sqlite"
+        )
+        connection = module.open_store_ro(db_path, timeout=1.0)
+        try:
+            module.check_schema(connection)
+            thread_spec = importlib.util.spec_from_file_location(
+                "_consult_thread_id",
+                _MOTOR_ROOT / "scripts" / "flight" / "thread_id.py",
+            )
+            if thread_spec is None or thread_spec.loader is None:
+                raise ImportError("thread_id.py no disponible")
+            thread_module = importlib.util.module_from_spec(thread_spec)
+            thread_spec.loader.exec_module(thread_module)
+            prefix = str(thread_module.MCP_PREFIX)
+            thread_ids = [thread_id]
+            if thread_id.startswith(prefix):
+                thread_ids.append(thread_id[len(prefix) :])
+            else:
+                thread_ids.append(prefix + thread_id)
+            placeholders = ",".join("?" for _ in thread_ids)
+            sql = (
+                f"SELECT message_id, thread_id, created_at, updated_at, streaming, payload_json "  # noqa: S608
+                f"FROM {module.SCHEMA_MESSAGES} WHERE thread_id IN ({placeholders})"
+            )
+            expected = module.normalize_text(opening_text)
+            if expected is None:
+                raise ValueError("texto_no_normalizable")
+            candidates = []
+            for row in connection.execute(sql, thread_ids).fetchall():
+                record = module._row_to_record(row)
+                if (
+                    record.normalized_text == expected
+                    and record.created_dt <= opening_dt
+                ):
+                    candidates.append(record)
+        finally:
+            connection.close()
+        if not candidates:
+            raise ValueError("origen_no_encontrado")
+        closest = min(opening_dt - candidate.created_dt for candidate in candidates)
+        nearest = [
+            candidate
+            for candidate in candidates
+            if opening_dt - candidate.created_dt == closest
+        ]
+        if len(nearest) != 1:
+            raise ValueError("origen_ambiguo")
+        return nearest[0].created_by == "user", False
+    except Exception:
+        return False, True
+
+
+def _consult_pause_valid(flight_dir: Path, roster: dict) -> bool:
+    """Before: current roster and optional pause JSON; During: checks authority, epoch and expiry; After: validity boolean."""
+    try:
+        data = json.loads(
+            (flight_dir / CONSULT_PAUSE_RELPATH).read_text(encoding="utf-8")
+        )
+        roles = roster["active_roles"]
+        supervisor = roles["supervisor"]
+        until = _consult_parse_dt(data.get("hasta"))
+        minutes = data.get("minutos")
+        return bool(
+            until
+            and datetime.now(timezone.utc) < until
+            and str(data.get("epoca")) == str(supervisor.get("version"))
+            and data.get("supervisor_threadId") == supervisor.get("threadId")
+            and isinstance(minutes, int)
+            and not isinstance(minutes, bool)
+            and minutes <= CONSULT_MAX_MINUTES
+        )
+    except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError):
+        return False
+
+
+def _consult_recent(
+    flight_dir: Path,
+    session_id: object,
+    *,
+    decision: str | None = None,
+    responder: str | None = None,
+    window: int,
+) -> bool:
+    """Before: flight observation log; During: scans one session and time window; After: matching boolean."""
+    try:
+        rows = [
+            json.loads(line)
+            for line in (flight_dir / CONSULT_OBSERVATIONS_RELPATH)
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        return False
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        if not isinstance(row, dict) or row.get("session_id") != session_id:
+            continue
+        stamp = _consult_parse_dt(row.get("ts"))
+        if (
+            stamp is None
+            or (now - stamp).total_seconds() < 0
+            or (now - stamp).total_seconds() > window
+        ):
+            continue
+        if decision is not None and row.get("decision") != decision:
+            continue
+        if responder is not None and row.get("respondedor") != responder:
+            continue
+        return True
+    return False
+
+
+def _consult_count(
+    flight_dir: Path, session_id: object, *, decision: str, window: int
+) -> int:
+    """Before: flight observation log; During: counts matching rows in one session/window; After: integer count or zero on read failure."""
+    try:
+        rows = [
+            json.loads(line)
+            for line in (flight_dir / CONSULT_OBSERVATIONS_RELPATH)
+            .read_text(encoding="utf-8")
+            .splitlines()
+            if line.strip()
+        ]
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        return 0
+    now = datetime.now(timezone.utc)
+    count = 0
+    for row in rows:
+        if (
+            not isinstance(row, dict)
+            or row.get("session_id") != session_id
+            or row.get("decision") != decision
+        ):
+            continue
+        stamp = _consult_parse_dt(row.get("ts"))
+        if stamp is None:
+            continue
+        age = (now - stamp).total_seconds()
+        if 0 <= age <= window:
+            count += 1
+    return count
+
+
+def _consult_branch(root: Path, payload: dict) -> dict:  # noqa: C901
+    """Before: Stop payload and resolved repo root; During: evaluates WOT-2026-215b; After: returns block reason or fail-open continue."""
+    flight_dir: Path | None = None
+    mode = "off"
+    active_mode = False
+    try:
+        flights = _consult_flights(root)
+        if len(flights) > 1:
+            sys.stderr.write(
+                "native_stop_hook: vuelo_ambiguo; consulta de parada omitida\n"
+            )
+            return {"block_reason": None}
+        if not flights:
+            return {"block_reason": None}
+        flight_dir = flights[0]
+        mode, mode_data = _consult_read_mode(flight_dir)
+        if mode == "off":
+            return {"block_reason": None}
+        active_mode = True
+        transcript_value = payload.get("transcript_path")
+        transcript = (
+            Path(transcript_value)
+            if isinstance(transcript_value, str) and transcript_value
+            else None
+        )
+        has_transcript = bool(transcript and transcript.is_file())
+        if "stop_hook_active" not in payload or payload.get("stop_hook_active"):
+            reason = (
+                "escape_segundo_cierre"
+                if _consult_recent(
+                    flight_dir,
+                    payload.get("session_id"),
+                    decision="block",
+                    window=CONSULT_ESCAPE_WINDOW_S,
+                )
+                else "reentrada"
+            )
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=None,
+                respondedor=None,
+                pausa=False,
+                decision="continue",
+                motivo=reason,
+                has_transcript_path=has_transcript,
+            )
+            return {"block_reason": None}
+        prompt_id = payload.get("prompt_id")
+        if not has_transcript or not isinstance(prompt_id, str) or not prompt_id:
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=None,
+                respondedor=None,
+                pausa=False,
+                decision="no_medido",
+                motivo="sin_transcript",
+                has_transcript_path=has_transcript,
+            )
+            return {"block_reason": None}
+        try:
+            rows, first_user, opening = _consult_read_transcript(transcript, prompt_id)
+        except ValueError as exc:
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=None,
+                respondedor=None,
+                pausa=False,
+                decision="no_medido",
+                motivo=str(exc),
+                has_transcript_path=has_transcript,
+            )
+            return {"block_reason": None}
+        identity_text = _consult_text(first_user)
+        identity = _CONSULT_ID_RE.match(identity_text or "")
+        if identity is None:
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=False,
+                respondedor=None,
+                pausa=False,
+                decision="continue",
+                motivo="no_orquestadora",
+                has_transcript_path=True,
+            )
+            return {"block_reason": None}
+        try:
+            roster, entry = _consult_roster(flight_dir)
+        except ValueError as exc:
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=None,
+                respondedor=None,
+                pausa=False,
+                decision="no_medido",
+                motivo=str(exc),
+                has_transcript_path=True,
+            )
+            return {"block_reason": None}
+        if entry.get("estado") != "ACTIVO":
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=None,
+                respondedor=None,
+                pausa=False,
+                decision="no_medido",
+                motivo="orquestadora_no_activa",
+                has_transcript_path=True,
+            )
+            return {"block_reason": None}
+        if entry.get("session_code") != identity.group(1):
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=False,
+                respondedor=None,
+                pausa=False,
+                decision="continue",
+                motivo="identidad_no_casa",
+                has_transcript_path=True,
+            )
+            return {"block_reason": None}
+        origin_note = None
+        is_user, origin_unmeasured = _consult_origin_user(flight_dir, opening, entry)
+        if origin_unmeasured:
+            origin_note = "no_medido_origen"
+        if is_user:
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=True,
+                respondedor=None,
+                pausa=False,
+                decision="continue",
+                motivo="turno_de_usuario",
+                has_transcript_path=True,
+            )
+            return {"block_reason": None}
+        supervisor = roster.get("active_roles", {}).get("supervisor", {})
+        supervisor_thread = (
+            supervisor.get("threadId") if isinstance(supervisor, dict) else None
+        )
+        responder = _consult_tool_respondedor(rows, payload, supervisor_thread)
+        if responder:
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=True,
+                respondedor=responder,
+                pausa=False,
+                decision="continue",
+                motivo=responder,
+                has_transcript_path=True,
+                nota=origin_note,
+            )
+            return {"block_reason": None}
+        if _consult_pause_valid(flight_dir, roster):
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=True,
+                respondedor=None,
+                pausa=True,
+                decision="continue",
+                motivo="pausa",
+                has_transcript_path=True,
+                nota=origin_note,
+            )
+            return {"block_reason": None}
+        if _consult_recent(
+            flight_dir,
+            payload.get("session_id"),
+            responder="consulta_supervisora",
+            window=CONSULT_LIVE_WINDOW_S,
+        ):
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=True,
+                respondedor=None,
+                pausa=False,
+                decision="continue",
+                motivo="espera_temporizador",
+                has_transcript_path=True,
+                nota=origin_note,
+            )
+            return {"block_reason": None}
+        if (
+            _consult_count(
+                flight_dir,
+                payload.get("session_id"),
+                decision="block",
+                window=CONSULT_BLOCK_WINDOW_S,
+            )
+            >= 5
+        ):
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=True,
+                respondedor=None,
+                pausa=False,
+                decision="tope",
+                motivo="tope",
+                has_transcript_path=True,
+                nota=origin_note,
+            )
+            return {"block_reason": None}
+        canary_matches = (
+            mode == "canary"
+            and isinstance(mode_data.get("canary_token"), str)
+            and mode_data["canary_token"] in (_consult_text(opening) or "")
+        )
+        if mode == "observe" or (mode == "canary" and not canary_matches):
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=True,
+                respondedor=None,
+                pausa=False,
+                decision="observe_habria_bloqueado",
+                motivo="observe_habria_bloqueado",
+                has_transcript_path=True,
+                nota=origin_note,
+            )
+            return {"block_reason": None}
+        _consult_record(
+            flight_dir,
+            payload,
+            mode,
+            es_orquestadora=True,
+            respondedor=None,
+            pausa=False,
+            decision="block",
+            motivo="candidato",
+            has_transcript_path=True,
+            nota=origin_note,
+        )
+        return {"block_reason": _CONSULT_REASON}
+    except Exception:
+        if flight_dir is not None and active_mode:
+            _consult_record(
+                flight_dir,
+                payload,
+                mode,
+                es_orquestadora=None,
+                respondedor=None,
+                pausa=False,
+                decision="no_medido",
+                motivo="excepcion",
+                has_transcript_path=False,
+            )
+        return {"block_reason": None}
+
+
+def _consult_malformed_input(start: Path) -> None:
+    """Before: stdin did not produce a payload; During: best-effort flight lookup; After: records no_medido only for one active flight."""
+    try:
+        flights = _consult_flights(start.resolve())
+        if len(flights) != 1:
+            return
+        flight = flights[0]
+        mode, _data = _consult_read_mode(flight)
+        if mode != "off":
+            _consult_record(
+                flight,
+                {},
+                mode,
+                es_orquestadora=None,
+                respondedor=None,
+                pausa=False,
+                decision="no_medido",
+                motivo="sin_transcript",
+                has_transcript_path=False,
+            )
+    except Exception:
+        return
+
+
 def _p9_flight_dir(root: Path) -> Path | None:
     """Before: raiz activa; During: censa vuelos vinculados; After: vuelo unico o None."""
     candidates: dict[Path, Path] = {}
@@ -773,29 +1460,6 @@ def _p9_flight_dir(root: Path) -> Path | None:
     if len(candidates) != 1:
         return None
     return next(iter(candidates.values()))
-
-
-def _p9_notice(root: Path, payload: dict) -> str | None:
-    """Before: payload Stop; During: aplica compuertas P9; After: aviso o None."""
-    if not _espera_guard_allows(payload):
-        return None
-    message = payload.get("last_assistant_message")
-    if not isinstance(message, str) or not message.strip():
-        return None
-    if not p9_announces_without_acting(message):
-        return None
-    sentinel = read_espera_sentinel(root)
-    if sentinel is None or sentinel.get("mode") not in ("observe", "block"):
-        return None
-    if sentinel_expiry(sentinel):
-        return None
-    flight_dir = _p9_flight_dir(root)
-    if flight_dir is None:
-        return None
-    co = _p9_resolve_co_activa(flight_dir)
-    if co is None or not _p9_cola_no_vacia(flight_dir, co):
-        return None
-    return _P9_NOTICE
 
 
 def needs_classification(payload: dict) -> bool:
@@ -937,14 +1601,26 @@ def _decide(payload: dict) -> dict:
         espera_resultado = {"continue": True}
 
     try:
-        p9_notice = _p9_notice(root, payload)
-        if p9_notice:
-            sys.stderr.write(p9_notice + "\n")
+        consult_result = _consult_branch(root, payload)
     except Exception:
-        p9_notice = None
+        consult_result = {"block_reason": None}
 
+    consult_reason = consult_result.get("block_reason")
+    reasons: list[str] = []
     if evidencia_bloquea:
-        return {"decision": "block", "reason": _REASON[:REASON_MAX_LEN]}
+        reasons.append(_REASON[:REASON_MAX_LEN])
+    if (
+        espera_resultado.get("decision") == "block"
+        and isinstance(consult_reason, str)
+        and consult_reason
+    ):
+        espera_reason = espera_resultado.get("reason")
+        if isinstance(espera_reason, str):
+            reasons.append(espera_reason)
+    if isinstance(consult_reason, str) and consult_reason:
+        reasons.append(consult_reason)
+    if reasons:
+        return {"decision": "block", "reason": "\n".join(reasons)}
     return espera_resultado
 
 
@@ -953,6 +1629,7 @@ def main() -> None:
     try:
         raw = sys.stdin.read()
     except Exception:  # pragma: no cover - stdin ilegible
+        _consult_malformed_input(Path.cwd())
         emit({"continue": True})
         return
 
@@ -965,6 +1642,7 @@ def main() -> None:
         sys.stderr.write(
             f"native_stop_hook: payload ilegible ({type(exc).__name__}); fail-open.\n"
         )
+        _consult_malformed_input(Path.cwd())
         emit({"continue": True})
         return
 

@@ -389,6 +389,8 @@ extra_guards:
   review_level: scripts/flight/review_level.py
   flight_stall_check: scripts/flight/flight_stall_check.py
   render_asignaciones: scripts/flight/render_asignaciones.py
+  # WOT-2026-215b: el hook Stop es una barrera real cableada en settings.json.
+  native_stop_hook: .agent/hooks/native_stop_hook.py
 
 wired_via:
   # WOT-2026-175e: el detector de latido carga check_l6 por ruta dinamica;
