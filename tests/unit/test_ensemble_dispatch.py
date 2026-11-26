@@ -6564,6 +6564,13 @@ def test_get_best_nan_for_task_skips_legacy_nan_api_profiles(tmp_path, monkeypat
 _BUNDLE_088D = "Documento real de prueba con suficiente contenido. " * 40
 
 
+def _fake_clock_088d(monkeypatch):
+    """Reloj falso: el transporte avanza `now[0]` y la latencia medida es exacta."""
+    now = [100.0]
+    monkeypatch.setattr(ed.time, "perf_counter", lambda: now[0])
+    return now
+
+
 def test_088d_smoke_con_contenido_envia_el_bundle_entero_y_juzga_por_nonce():
     """Before: se dispone de un bundle y un transporte hermetico.
 
@@ -6623,19 +6630,23 @@ def test_088d_smoke_con_contenido_reasoning_only_no_esta_vivo_aunque_el_nonce_es
 
 
 def test_088d_smoke_con_contenido_registra_latencia_chars_y_tipo_por_intento(
-    tmp_path, capsys
+    tmp_path, capsys, monkeypatch
 ):
     """Before: un bundle y una respuesta conocida se envían por el smoke.
 
-    During: comprueba la evidencia del resultado directo y del JSON del comando.
+    During: comprueba la evidencia del resultado directo y del JSON del comando
+        con un reloj falso que el transporte avanza 250 ms por intento.
     After: cada intento conserva latencia, tamaños y tipo con valores medidos.
     """
     response = "Resumen del bundle. PONG-019o"
+    now = _fake_clock_088d(monkeypatch)
+
+    def slow_transport(profile, backend_cfg, messages, timeout):
+        now[0] += 0.25
+        return response
+
     direct = ed.smoke_profile(
-        "p_prop",
-        config=_config(),
-        transport=_FakeTransport(replies=[response]),
-        content=_BUNDLE_088D,
+        "p_prop", config=_config(), transport=slow_transport, content=_BUNDLE_088D
     )
     evidence = direct["evidence"]
     assert set(evidence) == {
@@ -6644,7 +6655,7 @@ def test_088d_smoke_con_contenido_registra_latencia_chars_y_tipo_por_intento(
         "input_chars",
         "content_kind",
     }
-    assert evidence["latency_ms"] >= 0
+    assert evidence["latency_ms"] == 250
     assert evidence["output_chars"] == len(response)
     assert evidence["input_chars"] == len(_BUNDLE_088D)
     assert evidence["content_kind"] == "content"
@@ -6660,10 +6671,11 @@ def test_088d_smoke_con_contenido_registra_latencia_chars_y_tipo_por_intento(
         ),
         _config(),
         models_fetcher=_no_models_fetcher,
-        transport=lambda profile, backend_cfg, messages, timeout: response,
+        transport=slow_transport,
     )
     payload = json.loads(capsys.readouterr().out)
     command_evidence = payload["smoke"][0]["evidence"]
+    assert command_evidence["latency_ms"] == 250
     assert command_evidence["output_chars"] == len(response)
     assert command_evidence["input_chars"] == len(_BUNDLE_088D)
     assert command_evidence["content_kind"] == "content"
@@ -6696,18 +6708,22 @@ def test_088d_smoke_distingue_content_de_razonamiento_y_de_vacio():
 
     assert content["evidence"]["content_kind"] == "content"
     assert reasoning["evidence"]["content_kind"] == "reasoning_only"
+    assert reasoning["evidence"]["output_chars"] == len("deliberando")
     assert empty["evidence"]["content_kind"] == "empty"
     assert empty["evidence"]["output_chars"] == 0
 
 
-def test_088d_smoke_con_fallo_de_transporte_conserva_la_evidencia():
+def test_088d_smoke_con_fallo_de_transporte_conserva_la_evidencia(monkeypatch):
     """Before: el transporte lanza una excepción durante una carga real.
 
-    During: ejecuta el intento sin interceptar la clasificación de fallo.
+    During: ejecuta el intento sin interceptar la clasificación de fallo, con un
+        reloj falso que avanza 250 ms antes de lanzar.
     After: devuelve no vivo y conserva una evidencia vacía con el tamaño de entrada.
     """
+    now = _fake_clock_088d(monkeypatch)
 
     def transport(profile, backend_cfg, messages, timeout):
+        now[0] += 0.25
         raise RuntimeError("HTTP 503")
 
     result = ed.smoke_profile(
@@ -6719,7 +6735,7 @@ def test_088d_smoke_con_fallo_de_transporte_conserva_la_evidencia():
     assert evidence["content_kind"] == "empty"
     assert evidence["output_chars"] == 0
     assert evidence["input_chars"] == len(_BUNDLE_088D)
-    assert evidence["latency_ms"] >= 0
+    assert evidence["latency_ms"] == 250
 
 
 def test_088d_smoke_sin_contenido_no_cambia_el_dict_historico(capsys):
@@ -6862,6 +6878,148 @@ def test_088d_cmd_smoke_content_file_inexistente_da_rc2_sin_llamar_al_transporte
     assert str(missing) in captured.err
     assert calls == []
     assert captured.out == ""
+
+
+def test_088d_cmd_smoke_content_file_no_utf8_da_rc2_sin_llamar_al_transporte(
+    tmp_path, capsys
+):
+    """Before: el bundle existe pero contiene bytes que no son utf-8.
+
+    During: invoca el comando con un transporte falso contable.
+    After: retorna 2 (no un traceback), informa por stderr y no toca el transporte.
+    """
+    binary = tmp_path / "binario.bin"
+    binary.write_bytes(b"\xff\xfe\x00\x80\x81 no es utf-8")
+    calls: list[str] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        calls.append(profile["backend"])
+        return "PONG-019o"
+
+    rc = ed._cmd_smoke(
+        _smoke_args(
+            profile="p_prop",
+            content_file=binary,
+            timeout=None,
+            max_tokens=None,
+        ),
+        _config(),
+        models_fetcher=_no_models_fetcher,
+        transport=transport,
+    )
+    captured = capsys.readouterr()
+    assert rc == 2
+    assert "UnicodeDecodeError" in captured.err
+    assert calls == []
+    assert captured.out == ""
+
+
+def test_088d_cli_real_smoke_content_file_llega_con_techos_de_carga_real(
+    monkeypatch, tmp_path, capsys
+):
+    """Before: se invoca `ed.main` con el parser REAL y sin --timeout/--max-tokens.
+
+    During: un espia sustituye al manejador `smoke` y lo ejecuta con un
+        transporte falso, de modo que el parser decide los techos.
+    After: el parser entrega content_file como ruta y timeout/max_tokens None;
+        al transporte llegan 120 s y _API_MAX_TOKENS y la fila lleva evidence.
+    """
+    bundle_path = tmp_path / "bundle.md"
+    bundle_path.write_text(_BUNDLE_088D, encoding="utf-8")
+    original = ed._cmd_smoke
+    seen_args: list = []
+    seen_calls: list[tuple[int, int]] = []
+
+    def transport(profile, backend_cfg, messages, timeout):
+        seen_calls.append((timeout, backend_cfg["max_tokens"]))
+        return "Resumen. PONG-019o"
+
+    def spy(args, config, **_kwargs):
+        seen_args.append(args)
+        return original(
+            args, config, models_fetcher=_no_models_fetcher, transport=transport
+        )
+
+    monkeypatch.setattr(ed, "load_motor_config", _config)
+    monkeypatch.setattr(ed, "_cmd_smoke", spy)
+    rc = ed.main(
+        [
+            "smoke",
+            "--content-file",
+            str(bundle_path),
+            "--profile",
+            "p_prop",
+            "--project-root",
+            str(tmp_path),
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    assert seen_args[0].content_file == bundle_path
+    assert seen_args[0].timeout is None
+    assert seen_args[0].max_tokens is None
+    assert seen_calls == [(120, ed._API_MAX_TOKENS)]
+    assert payload["smoke"][0]["evidence"]["input_chars"] == len(_BUNDLE_088D)
+
+
+def test_088d_latencia_de_la_evidencia_no_incluye_el_scorecard(monkeypatch, tmp_path):
+    """Before: el transporte tarda 250 ms y la escritura del scorecard 400 ms.
+
+    During: ejecuta un smoke con project_root y con la escritura del scorecard
+        sustituida por una que avanza el reloj falso.
+    After: latency_ms mide solo el transporte (250), en el intento vivo y en
+        el que lanza una excepcion.
+    """
+    now = _fake_clock_088d(monkeypatch)
+
+    def slow_scorecard(*_args, **_kwargs):
+        now[0] += 0.4
+
+    monkeypatch.setattr(ed, "record_exploration_result", slow_scorecard)
+
+    def ok_transport(profile, backend_cfg, messages, timeout):
+        now[0] += 0.25
+        return "PONG-019o"
+
+    def failing_transport(profile, backend_cfg, messages, timeout):
+        now[0] += 0.25
+        raise RuntimeError("HTTP 503")
+
+    alive = ed.smoke_profile(
+        "p_prop",
+        config=_config(),
+        transport=ok_transport,
+        content=_BUNDLE_088D,
+        project_root=tmp_path,
+    )
+    failed = ed.smoke_profile(
+        "p_prop",
+        config=_config(),
+        transport=failing_transport,
+        content=_BUNDLE_088D,
+        project_root=tmp_path,
+    )
+    assert alive["evidence"]["latency_ms"] == 250
+    assert failed["evidence"]["latency_ms"] == 250
+
+
+def test_088d_fallo_de_transporte_devuelto_cuenta_como_salida_vacia():
+    """Before: el canal agent DEVUELVE prefijo de fallo + eco del prompt (bundle).
+
+    During: ejecuta el smoke de carga real con esa respuesta.
+    After: no esta vivo y la evidencia no presenta el eco como contenido.
+    """
+    reply = ed._TRANSPORT_FAILED_PREFIX + "rc=1 eco: " + _BUNDLE_088D + " PONG-019o"
+    result = ed.smoke_profile(
+        "p_prop",
+        config=_config(),
+        transport=_FakeTransport(replies=[reply]),
+        content=_BUNDLE_088D,
+    )
+    assert result["alive"] is False
+    assert result["evidence"]["content_kind"] == "empty"
+    assert result["evidence"]["output_chars"] == 0
+    assert result["evidence"]["input_chars"] == len(_BUNDLE_088D)
 
 
 def test_088d_tests_viven_antes_del_marcador_025z():

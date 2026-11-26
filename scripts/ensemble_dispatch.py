@@ -5309,6 +5309,9 @@ def smoke_profile(
         raise
     except Exception as exc:  # STEP_SKIP documentado: backend caido no aborta
         failure_class = _classify_transport_failure(exc)
+        # La evidencia se mide ANTES de escribir el scorecard: la latencia del
+        # intento no debe incluir el I/O de `record_exploration_result`.
+        evidence = _smoke_evidence(content, _t0, "", False)
         if project_root is not None:
             record_exploration_result(
                 project_root,
@@ -5325,10 +5328,20 @@ def smoke_profile(
             failure_class=failure_class,
             probe=probe,
             reasoning_only=False,
-            evidence=_smoke_evidence(content, _t0, "", False),
+            evidence=evidence,
         )
     reasoning_only = isinstance(reply, str) and reply.startswith(_REASONING_ONLY_MARKER)
     cleaned = reply[len(_REASONING_ONLY_MARKER) :] if reasoning_only else (reply or "")
+    # Evidencia por intento (088d), medida ANTES del scorecard. Un fallo de
+    # transporte DEVUELTO (canal agent: prefijo + eco del prompt, que lleva el
+    # bundle) no es contenido del modelo: cuenta como salida vacia.
+    transport_failed = _is_transport_failed_reply(reply)
+    evidence = _smoke_evidence(
+        content,
+        _t0,
+        "" if transport_failed else cleaned,
+        reasoning_only and not transport_failed,
+    )
     # El modelo que SI responde via deliberacion (reasoning sin content) esta
     # disponible: cuenta como vivo (DEC-086H-001 Decision 1), salvo que la
     # respuesta sea un fallo de transporte (WOT-2026-089g).
@@ -5336,7 +5349,7 @@ def smoke_profile(
         alive = False
     else:
         alive = _probe_alive(reply, nonce, reasoning_only=reasoning_only)
-    result_reasoning_only = reasoning_only and alive and content is None
+    result_reasoning_only = reasoning_only and alive
     if project_root is not None:
         record_exploration_result(
             project_root,
@@ -5353,7 +5366,7 @@ def smoke_profile(
         failure_class=None,
         probe=probe,
         reasoning_only=result_reasoning_only,
-        evidence=_smoke_evidence(content, _t0, cleaned, reasoning_only),
+        evidence=evidence,
     )
 
 
@@ -7736,11 +7749,17 @@ def _cmd_smoke(args, config, *, models_fetcher=None, transport=None) -> int:
     """Smoke rapido (WOT-2026-086h): paralelo por proveedor, con /v1/models.
 
     Before: `args` trae `profile`, `project_root`, `ignore_quarantine`,
-        `timeout` (15), `max_tokens` (64), `include_agents`,
-        `max_concurrent_per_provider` (4). `models_fetcher`/`transport` son
-        hooks OPT-IN de test (default: `_fetch_models_for_group` y el
-        transporte real de `send_to_profile`).
-    During: (1) resuelve el universo y separa canal `agent` (excluido por
+        `timeout`, `max_tokens` (ambos `None` si el operador no los pasa; 0
+        cuenta como no especificado), `content_file` (WOT-2026-088d: `None`
+        o ruta del bundle), `include_agents`, `max_concurrent_per_provider`
+        (4). `models_fetcher`/`transport` son hooks OPT-IN de test (default:
+        `_fetch_models_for_group` y el transporte real de `send_to_profile`).
+    During: (0) WOT-2026-088d: con `content_file` lee el bundle (utf-8); un
+        fichero ausente o ilegible termina con rc 2 y mensaje por stderr SIN
+        llamar al transporte. Los techos sin flags son 15 s / 64 tokens (ping)
+        o 120 s / `_API_MAX_TOKENS` (carga real); `--timeout`/`--max-tokens`
+        explicitos mandan. (1) resuelve el universo y separa canal `agent`
+        (excluido por
         defecto) y cuarentena; (2) UNA llamada `/v1/models` por PROVEEDOR;
         (3) smoke en paralelo con un `ThreadPoolExecutor` compartido de
         `max_concurrent * n_proveedores` workers y un semaforo POR PROVEEDOR
@@ -7755,7 +7774,9 @@ def _cmd_smoke(args, config, *, models_fetcher=None, transport=None) -> int:
     After: imprime el JSON con `denominador`/`inspeccionados`/`vivos`/
         `saltados` (consistente: `inspeccionados + len(saltados) ==
         denominador`) y retorna 0 si hay algun vivo, 1 si `inspeccionados==0`
-        o ninguno vivo. Un perfil que falla NO aborta el resto.
+        o ninguno vivo; 2 si el `content_file` no se puede leer o el
+        `--profile` pedido no existe. Con `content_file` cada resultado lleva `evidence`. Un
+        perfil que falla NO aborta el resto.
     """
     if models_fetcher is None:
         models_fetcher = _fetch_models_for_group
@@ -9454,14 +9475,16 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=None,
         help="techo EFECTIVO de cada ping (segundos): gana a "
-        "backends.<b>.timeout_s EN ESTA RUTA (default 15). No cambia "
-        "loop-round, que sigue respetando timeout_s",
+        "backends.<b>.timeout_s EN ESTA RUTA (default 15; 120 con "
+        "--content-file). No cambia loop-round, que sigue respetando "
+        "timeout_s",
     )
     p_smoke.add_argument(
         "--max-tokens",
         type=int,
         default=None,
-        help="max_tokens del body HTTP del ping (default 64); acota el "
+        help="max_tokens del body HTTP del ping (default 64; con "
+        "--content-file el tope de la ruta API, _API_MAX_TOKENS); acota el "
         "presupuesto de salida de la comprobacion",
     )
     p_smoke.add_argument(
