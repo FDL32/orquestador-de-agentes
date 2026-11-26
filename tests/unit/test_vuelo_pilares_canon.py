@@ -321,14 +321,14 @@ def test_real_canon_rows_are_well_formed_and_portable() -> None:
 
 
 def test_m01_real_canon_has_38_rows_with_eight_columns() -> None:
-    """m-01: the canonical table has 38 data rows, each with eight columns."""
+    """m-01: the canonical table has 39 data rows, each with eight columns."""
     text = _real_canon_text()
     raw_rows = [
         line
         for line in text.splitlines()
         if line.startswith("| P") and not line.startswith("| Pilar")
     ]
-    assert len(raw_rows) == 38
+    assert len(raw_rows) == 39
     assert all(len(_row_cells(line)) == 8 for line in raw_rows)
 
 
@@ -732,7 +732,7 @@ def _assert_operational_ambito(rows: list[dict[str, str]]) -> None:
     After: return only when all ratified rows satisfy the DoD invariant.
     """
     ratified = [row for row in rows if row["state"] == "RATIFICADA"]
-    assert len(ratified) == 35
+    assert len(ratified) == 36
     for row in ratified:
         assert row["ambito"]
         assert {

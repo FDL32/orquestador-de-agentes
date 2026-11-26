@@ -32,6 +32,7 @@
 | P36 | docs/protocol/sistema_agnostico_celdas_y_lentes.md |
 | P37 | docs/protocol/ciclo_vida_artefactos_vuelo.md |
 | P38 | sin_fichero: PROPUESTA_KAIZEN_p34_convergencia_v2 P-1 |
+| P39 | DECISIONES_USUARIO_20261112.md |
 | P4 | NORMA_RELEVO_AL_CERRAR_OBJETIVO_20261105.md |
 | P5 | PROPUESTA_OBJETIVO_POR_PRESUPUESTO_CONTEXTO_v2_20261106.md |
 | P6 | GO_RELEVO_24H_REGISTRO.md |
