@@ -137,22 +137,25 @@ def resolve_deliverable_type_from_content(content: str) -> tuple[str, str]:
 
     Before: ``content`` es la prosa cruda de un ``work_plan.md`` y puede estar
         vacia o malformada.
-    During: corta la seccion ``## Metadata`` y busca alli una declaracion del
-        campo; extrae las palabras del vocabulario ignorando puntuacion y
-        decoracion. Una palabra resuelve a ese tipo; dos o mas distintas se
+    During: corta la seccion ``## Metadata`` y busca alli TODAS las lineas de
+        una declaracion del campo; extrae las palabras del vocabulario
+        ignorando puntuacion y decoracion. Una palabra distinta resuelve a
+        ese tipo; dos o mas distintas entre lineas o dentro de una linea se
         normalizan a ``mixed``.
     After: devuelve un tipo valido y un motivo nombrado; ninguna palabra
-        devuelve el default ``code`` y conserva el camino estricto.
+        encontrada en las lineas del campo devuelve el default ``code`` y
+        conserva el camino estricto.
     """
     section = metadata_section(content)
     if section is None:
         return DEFAULT_DELIVERABLE_TYPE, REASON_NO_SECTION
-    match = _DELIVERABLE_TYPE_FIELD.search(section)
-    if match is None:
+    lines = _DELIVERABLE_TYPE_FIELD.findall(section)
+    if not lines:
         return DEFAULT_DELIVERABLE_TYPE, REASON_NO_FIELD
     found = {
         word
-        for word in _WORD.findall(match.group(1).lower())
+        for line in lines
+        for word in _WORD.findall(line.lower())
         if word in VALID_DELIVERABLE_TYPES
     }
     if not found:

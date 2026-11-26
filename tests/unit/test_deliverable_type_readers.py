@@ -153,7 +153,7 @@ def test_resolve_motivos_exactos():
     )
 
 
-def test_compuesto_invalido_y_normalizacion():
+def test_compuesto_es_mixed_y_valor_invalido_cae_al_default():
     """Composite, invalid, and mixed-case values follow the vocabulary contract."""
     assert _wpa.resolve_deliverable_type_from_content(_plan("code+documentation")) == (
         "mixed",
@@ -270,7 +270,7 @@ def _write_last_run(repo: Path, head: str) -> None:
     ],
     ids=["sin_campo", "campo_declarado", "plan_ausente"],
 )
-def test_sello_de_preflight_closeout_nombra_el_motivo(
+def test_sello_de_preflight_closeout_nombra_el_motivo_del_default(
     monkeypatch, tmp_path, content, expected_type, expected_reason
 ):
     """Preflight seals the REAL resolver reason, not a constant (3 reasons)."""
@@ -361,6 +361,58 @@ def test_plan_activo_no_decodificable_es_work_plan_unreadable(tmp_path):
         "code",
         "work_plan_unreadable",
     )
+
+
+def _repeated(first: str, second: str) -> str:
+    """Plan whose Metadata declares the field twice (two physical lines)."""
+    return _plan(
+        first,
+        field_line=(
+            f"- **deliverable_type:** {first}\n- **deliverable_type:** {second}"
+        ),
+    )
+
+
+@READERS
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("documentation", "code"), ("code", "documentation"), ("analysis", "research")],
+    ids=["doc_luego_code", "code_luego_doc", "analysis_luego_research"],
+)
+def test_campo_repetido_con_valores_distintos_es_mixed(reader, first, second, tmp_path):
+    """Two Metadata declarations that disagree are `mixed`: first-match-wins
+    must never let a relaxed type shadow a `code` declaration (suite required)."""
+    assert reader(_repeated(first, second), tmp_path) == "mixed"
+
+
+def test_campo_repetido_con_el_mismo_valor_mantiene_ese_valor():
+    """Control anti-sobre-correccion: the same value twice is not ambiguous."""
+    assert _wpa.resolve_deliverable_type_from_content(
+        _repeated("documentation", "documentation")
+    ) == ("documentation", "metadata_field")
+
+
+def test_valor_invalido_antes_del_valido_no_oculta_la_declaracion():
+    """An unrecognised first declaration does not hide a later valid one."""
+    assert _wpa.resolve_deliverable_type_from_content(_repeated("TBD", "code")) == (
+        "code",
+        "metadata_field",
+    )
+
+
+def test_mencion_a_mitad_de_linea_dentro_de_metadata_no_es_el_campo():
+    """A prose mention mid-line inside Metadata is not a field declaration
+    (line anchor). Without the anchor it would add `documentation` -> `mixed`."""
+    plan = (
+        "## Metadata\n"
+        "- **Nota:** ver deliverable_type: documentation del plan viejo\n"
+        "- **deliverable_type:** code\n"
+    )
+    assert _wpa.resolve_deliverable_type_from_content(plan) == (
+        "code",
+        "metadata_field",
+    )
+    assert _pg._read_deliverable_type_from_content(plan) == "code"
 
 
 def test_session_close_conserva_unknown_sin_campo(tmp_path):
