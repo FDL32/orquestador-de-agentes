@@ -5320,7 +5320,7 @@ def test_im_sin_asentar_mutation_m01_disparo_por_recibo_y_por_run_completed(box)
 
     assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-101", "TR-102"}
     assert len(found) == 2
-    assert all(item[:2] == ("im-sin-asentar", "AVISO") for item in found)
+    assert all(item[1] == "AVISO" for item in found)
 
 
 def test_im_sin_asentar_mutation_m01_sesion_activa_en_curso_no_dispara(box):
@@ -5480,3 +5480,66 @@ def test_im_sin_asentar_mutation_asentada_en_registry_no_dispara(box):
     _im_tr_cfg(box)
 
     assert box.m.check_im_sin_asentar({}, {}) == []
+
+
+def test_im_sin_asentar_m03_incluye_raiz_terminada_sin_filtro_activa(box):
+    """m-03: el store conserva una raiz terminada que sigue pendiente de asiento."""
+    _im_tr_store(
+        box,
+        [_im_tr_row("thread-live"), _im_tr_row("thread-done")],
+        [("thread-live", "completed", 1), ("thread-done", "completed", 1)],
+    )
+    _im_tr_registry(
+        box,
+        [
+            _im_tr_session("IM-901", "thread-live", status="ACTIVA"),
+            _im_tr_session("TR-902", "thread-done", status="TERMINADA"),
+        ],
+    )
+    _im_tr_cfg(box)
+
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-901", "TR-902"}
+    assert {item[0] for item in found} == {
+        "im-sin-asentar-IM-901",
+        "im-sin-asentar-TR-902",
+    }
+
+
+def test_im_sin_asentar_m04_clave_propia_por_sesion(box):
+    """m-04: cada IM/TR mantiene una clave de alerta independiente."""
+    _im_tr_store(
+        box,
+        [_im_tr_row("thread-a"), _im_tr_row("thread-b")],
+        [("thread-a", "completed", 1), ("thread-b", "completed", 1)],
+    )
+    _im_tr_registry(
+        box,
+        [
+            _im_tr_session("IM-903", "thread-a"),
+            _im_tr_session("TR-904", "thread-b"),
+        ],
+    )
+    _im_tr_cfg(box)
+
+    found = box.m.check_im_sin_asentar({}, {})
+
+    assert {item[0] for item in found} == {
+        "im-sin-asentar-IM-903",
+        "im-sin-asentar-TR-904",
+    }
+
+
+def test_im_sin_asentar_m05_terminada_es_urgente(box):
+    """m-05: una raiz terminada sin asiento se publica como URGENTE."""
+    _im_tr_store(box, [_im_tr_row("thread-done")], [("thread-done", "completed", 1)])
+    _im_tr_registry(box, [_im_tr_session("IM-905", "thread-done", status="TERMINADA")])
+    _im_tr_cfg(box)
+
+    found = box.m.check_im_sin_asentar({}, {})
+
+    assert found == [
+        ("im-sin-asentar-IM-905", "URGENTE", "IM/TR sin asentar: IM-905 (thread-done)")
+    ]

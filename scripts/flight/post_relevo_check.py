@@ -135,7 +135,14 @@ def _load_sibling(name: str):
     return module
 
 
-def _alert(key: str, message: str, ops_dir: Path, session_code: str) -> int:
+def _alert(
+    key: str,
+    message: str,
+    ops_dir: Path,
+    session_code: str,
+    *,
+    level: str = "URGENTE",
+) -> int:
     """Emit one alert through comms_alert and preserve its ledger contract.
 
     Before: ops_dir is the explicit heartbeat operations directory.
@@ -147,7 +154,7 @@ def _alert(key: str, message: str, ops_dir: Path, session_code: str) -> int:
         alerts.configure(str(ops_dir))
         return alerts.event(
             key,
-            "URGENTE",
+            level,
             "Post-relevo",
             message,
             False,
@@ -238,6 +245,36 @@ def _apta_unclaimed(backlog: Path, registry_path: Path) -> bool:
     return any(item.get("apta") and not item.get("tiene_brief") for item in decisions)
 
 
+def _co_outside_triad(sessions: list[dict], roles: object) -> list[str]:
+    """Return unsettled coordinator rows whose identity is outside the active triad.
+
+    Before: ``sessions`` is the validated registry list and ``roles`` is the roster
+        active-role mapping.
+    During: collect session-code and thread-id identities from all active roles,
+        then select CO rows that are not settled and do not belong to that set.
+    After: return deterministic coordinator codes without mutating either input.
+    """
+    triad = set()
+    if isinstance(roles, dict):
+        for role in roles.values():
+            if isinstance(role, dict):
+                for field in ("session_code", "threadId"):
+                    value = role.get(field)
+                    if isinstance(value, str) and value.strip():
+                        triad.add(value)
+    candidates = []
+    for session in sessions:
+        code = session.get("code")
+        if not isinstance(code, str) or not code.startswith("CO-"):
+            continue
+        if str(session.get("status", "")).startswith("ASENTADA"):
+            continue
+        if code in triad or session.get("threadId") in triad:
+            continue
+        candidates.append(code)
+    return sorted(set(candidates))
+
+
 def _reproduction_command(
     flight_dir: Path, ops_dir: Path, backlog: Path, observed: datetime
 ) -> str:
@@ -309,6 +346,11 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
             reasons.append("sin IM/TR creados tras el ACTIVO con reporta_a")
         if _apta_unclaimed(backlog, registry_path):
             reasons.append("ficha APTA sin brief")
+        co_candidates = _co_outside_triad(sessions, roster.get("active_roles"))
+        if not reasons and co_candidates:
+            reasons.append(
+                "CO asentable fuera de la terna: " + ", ".join(co_candidates)
+            )
         if not reasons:
             if key in active_keys:
                 rc = _resolve(key, ops_dir)

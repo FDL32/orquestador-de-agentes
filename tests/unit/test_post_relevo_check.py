@@ -391,3 +391,46 @@ def test_alert_key_is_unique_and_resolves(tmp_path, monkeypatch):
     clean = module.evaluate(flight, ops, backlog, now="2026-11-16T17:22:00+00:00")
     assert clean.rc == 0
     assert json.loads((ops / "post_relevo_state.json").read_text())["active"] == []
+
+
+def test_m07_p24_detecta_co_asentable_fuera_de_la_terna(tmp_path, monkeypatch):
+    """m-07: el tick posterior a gracia mide una CO asentable fuera de la terna."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].append(
+        {
+            "code": "IM-NEW-1",
+            "role": "implantacion",
+            "started": "2026-11-16T17:08:00+00:00",
+            "status": "ACTIVA",
+            "reporta_a": "CO-IN",
+        }
+    )
+    registry["sessions"].append(
+        {
+            "code": "IM-NEW-2",
+            "role": "implantacion",
+            "started": "2026-11-16T17:08:30+00:00",
+            "status": "ACTIVA",
+            "reporta_a": "CO-IN",
+        }
+    )
+    registry["sessions"].append(
+        {
+            "code": "CO-OUT",
+            "role": "orquestadora",
+            "threadId": "co-out-thread",
+            "started": "2026-11-16T17:08:00+00:00",
+            "status": "ACTIVA",
+        }
+    )
+    _write_json(flight / "session_registry.json", registry)
+    calls = []
+    monkeypatch.setattr(
+        module, "_alert", lambda *args, **kwargs: calls.append(args) or 0
+    )
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    assert "CO asentable fuera de la terna" in result.message
+    assert calls

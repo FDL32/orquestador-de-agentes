@@ -2851,7 +2851,7 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
             continue
         if not isinstance(code, str) or not isinstance(status, str):
             return blind("registry no medido")
-        if not status.startswith("ACTIVA"):
+        if status.startswith("ASENTADA"):
             continue
         thread_id = session.get("threadId")
         if not isinstance(thread_id, str) or not thread_id.strip():
@@ -2874,20 +2874,29 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
             )
 
     out["im_sin_asentar"] = unsettled
-    found = [
-        (
-            "im-sin-asentar",
-            "AVISO",
-            f"IM/TR sin asentar: {item['code']} ({item['threadId']})",
+    found = []
+    for item in unsettled:
+        session = next(
+            session for session in sessions if session.get("code") == item["code"]
         )
-        for item in unsettled
-    ]
+        level = (
+            "URGENTE"
+            if not str(session.get("status", "")).startswith("ACTIVA")
+            else "AVISO"
+        )
+        found.append(
+            (
+                f"im-sin-asentar-{item['code']}",
+                level,
+                f"IM/TR sin asentar: {item['code']} ({item['threadId']})",
+            )
+        )
     total_im = sum(item["code"].startswith("IM-") for item in unsettled)
     total_tr = sum(item["code"].startswith("TR-") for item in unsettled)
     if total_im > IM_TOPE:
         found.append(
             (
-                "im-sin-asentar",
+                "im-sin-asentar-tope-im",
                 "AVISO",
                 f"IM sin asentar supera tope {IM_TOPE}: {total_im}",
             )
@@ -2895,7 +2904,7 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
     if total_tr > TR_TOPE:
         found.append(
             (
-                "im-sin-asentar",
+                "im-sin-asentar-tope-tr",
                 "AVISO",
                 f"TR sin asentar supera tope {TR_TOPE}: {total_tr}",
             )
