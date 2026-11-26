@@ -1,3 +1,11 @@
+---
+paths:
+  - ".claude/**"
+  - ".env*"
+  - "privada/**"
+  - ".agent/hooks/**"
+  - "scripts/pip_audit_project.py"
+---
 # Arquitectura de Seguridad y Controles Automáticos
 
 > Reglas operativas básicas (no tocar `privada/`, no commitear secretos, no desactivar `guard_paths`): ver [AGENTS.md sección "Secretos y seguridad"](../../AGENTS.md#secretos-y-seguridad). Este archivo añade detalles técnicos específicos de Claude Code (hooks, pip-audit, allowlist).
