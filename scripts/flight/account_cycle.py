@@ -101,7 +101,8 @@ def _tasa(historial, lecturas):
 
     Before: history is ordered reading data and ``lecturas`` is the current reading.
     During: accept only increasing finite pairs at least sixty seconds apart and on the
-        same observed reset when both resets are present; otherwise apply the one-point floor.
+        same observed window and reset when both identities are present; otherwise apply the
+        one-point floor.
     After: return ``(rate, reason)`` with a persisted explanation for every valid reading.
     """
     candidates = [
@@ -110,6 +111,7 @@ def _tasa(historial, lecturas):
             "ts": lecturas["checked_at"],
             "pct": lecturas["pct"],
             "reset": lecturas.get("resets"),
+            "ventana": lecturas.get("ventana"),
         },
     ]
     latest = None
@@ -122,6 +124,11 @@ def _tasa(historial, lecturas):
             and newer["ts"] - older["ts"] >= 60
             and _numeric(older.get("pct"))
             and _numeric(newer.get("pct"))
+            and not (
+                older.get("ventana") is not None
+                and newer.get("ventana") is not None
+                and older.get("ventana") != newer.get("ventana")
+            )
             and not (
                 older.get("reset") is not None
                 and newer.get("reset") is not None
@@ -156,6 +163,7 @@ def _remember(state, readings):
             "ts": readings["checked_at"],
             "pct": readings["pct"],
             "reset": readings.get("resets"),
+            "ventana": readings.get("ventana"),
         }
     )
     state["lecturas"] = items[-5:]
@@ -402,6 +410,15 @@ def _read_cache(path, estado=None, ahora=None):  # noqa: C901
             key: entry.get(key)
             for key in ("pct", "weekly_pct", "resets", "weekly_resets")
         }
+        window = entry.get("ventana", entry.get("window"))
+        windows = entry.get("windows")
+        if window is None and isinstance(windows, list) and len(windows) == 1:
+            only_window = windows[0]
+            if isinstance(only_window, dict):
+                window = only_window.get("id", only_window.get("label"))
+        if window is not None and not isinstance(window, (str, int)):
+            raise ValueError("ventana no numerica o textual")
+        readings["ventana"] = window
         readings["checked_at"] = checked_at
         for key in ("pct", "weekly_pct"):
             if not _numeric(readings[key]):

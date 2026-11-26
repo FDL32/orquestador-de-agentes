@@ -970,6 +970,42 @@ def test_m13_control_pareja_valida_tasa_cero_rem5_30():
     assert result[0]["tasa_razon"] == "pareja-valida-tasa-no-positiva"
 
 
+def test_m13_ventanas_distintas_no_forman_pareja_y_usan_suelo():
+    """Before: adjacent finite readings belong to different quota windows.
+
+    During: project the current reading with the persisted reading from another window.
+    After: the pair is rejected and the conservative one-point-per-minute floor is used.
+    """
+    module = load_module()
+    current = readings(76)
+    current["ventana"] = "weekly"
+    result = module.decide(
+        current,
+        state(lecturas=[{"ts": 700, "pct": 50, "reset": 2000, "ventana": "5h"}]),
+        1000,
+        [],
+    )
+    assert result[0]["tasa_razon"] == "suelo-1pt-min"
+
+
+def test_m13_pareja_misma_ventana_y_reset_se_conserva():
+    """Before: two finite readings share their window and reset identity.
+
+    During: calculate the rate from the adjacent readings.
+    After: the valid pair is used instead of the conservative floor.
+    """
+    module = load_module()
+    current = readings(76, resets=2000)
+    current["ventana"] = "5h"
+    result = module.decide(
+        current,
+        state(lecturas=[{"ts": 700, "pct": 50, "reset": 2000, "ventana": "5h"}]),
+        1000,
+        [],
+    )
+    assert result[0]["tasa_razon"] == "pareja-valida"
+
+
 FIXTURE_205C = (
     Path(__file__).resolve().parents[1]
     / "fixtures"
