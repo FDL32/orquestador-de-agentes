@@ -360,23 +360,39 @@ def test_created_by_user_time_window(tmp_path, monkeypatch):
 
 
 def test_pause_hasta_respects_minutos_and_now(tmp_path):
-    """Before: pauses have future expiry; During: checks set_at/minutes and now bounds; After: only a legitimate pause validates."""
+    """Before: pauses vary duration and current horizon; During: checks each bound independently; After: only a legitimate pause validates."""
     _root, flight = _make_flight(tmp_path, "block")
     now = datetime.now(timezone.utc)
-    pause = {
-        "hasta": (now + timedelta(hours=3)).isoformat(),
-        "epoca": "7",
-        "supervisor_threadId": "mcp:sup-thread",
-        "set_at": now.isoformat(),
-        "minutos": 30,
-        "consulta": "espera",
-        "acting_thread": "mcp:sup-thread",
-    }
-    (flight / "stop_consult_pause.json").write_text(json.dumps(pause), encoding="utf-8")
     roster = json.loads((flight / "flight_roster.json").read_text())
+
+    def write_pause(set_at: datetime, until: datetime, minutes: int) -> None:
+        """Before: pause timestamps; During: writes one synthetic pause; After: hook can validate that exact file."""
+        (flight / "stop_consult_pause.json").write_text(
+            json.dumps(
+                {
+                    "hasta": until.isoformat(),
+                    "epoca": "7",
+                    "supervisor_threadId": "mcp:sup-thread",
+                    "set_at": set_at.isoformat(),
+                    "minutos": minutes,
+                    "consulta": "espera",
+                    "acting_thread": "mcp:sup-thread",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    # C3a discriminant: current horizon is valid, declared duration is not.
+    write_pause(now, now + timedelta(minutes=50), 10)
     assert not native_stop_hook._consult_pause_valid(flight, roster)
-    pause["hasta"] = (now + timedelta(minutes=30)).isoformat()
-    (flight / "stop_consult_pause.json").write_text(json.dumps(pause), encoding="utf-8")
+
+    # C3b discriminant: declared duration is valid, current horizon is not.
+    future_set = now + timedelta(hours=2)
+    write_pause(future_set, future_set + timedelta(minutes=30), 30)
+    assert not native_stop_hook._consult_pause_valid(flight, roster)
+
+    # Positive control: both bounds are valid.
+    write_pause(now, now + timedelta(minutes=30), 30)
     assert native_stop_hook._consult_pause_valid(flight, roster)
 
 
