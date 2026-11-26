@@ -10,6 +10,7 @@ import ast
 import datetime as dt
 import importlib.util
 import json
+import locale
 import math
 import os
 import re
@@ -1153,8 +1154,11 @@ def test_busqueda_huerfana_m08_enumeracion_real_incluye_pid_propio():
     assert sum(row["pid"] == os.getpid() for row in rows) == 1
 
 
-def test_enumerate_processes_inyectable_tolera_salida_powershell_cp1252():
-    """La salida PowerShell no rompe el enumerador por un byte local no UTF-8."""
+@pytest.mark.parametrize("locale_encoding", ["utf-8", "cp1252"])
+def test_enumerate_processes_inyectable_tolera_salida_powershell_cp1252(
+    monkeypatch, locale_encoding
+):
+    """La salida PowerShell conserva ``¡`` con cualquier locale reportado."""
     module = _load()
     payload = json.dumps(
         [
@@ -1175,6 +1179,7 @@ def test_enumerate_processes_inyectable_tolera_salida_powershell_cp1252():
         calls.append((command, kwargs))
         return types.SimpleNamespace(returncode=0, stdout=payload, stderr=b"")
 
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda _false: locale_encoding)
     rows = module._enumerate_processes(runner=runner)
 
     assert rows[0]["command_line"] == "prueba ¡"

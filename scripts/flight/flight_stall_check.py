@@ -27,7 +27,6 @@ import glob
 import hashlib
 import importlib.util
 import json
-import locale
 import math
 import os
 import re
@@ -1374,8 +1373,8 @@ def _decode_process_stream(value):
 
     Before: ``value`` is stdout/stderr captured as bytes from the Windows PowerShell
         process.
-    During: prefer UTF-8, then the active Windows locale, and finally replacement for
-        an isolated undecodable byte; JSON syntax remains observable to the caller.
+    During: prefer UTF-8, then the Windows PowerShell codepage (cp1252), with replacement
+        for an isolated undecodable byte; JSON syntax remains observable to the caller.
     After: return text suitable for diagnostics or JSON parsing without raising a
         ``UnicodeDecodeError`` from the subprocess reader.
     """
@@ -1386,7 +1385,7 @@ def _decode_process_stream(value):
     try:
         return value.decode("utf-8")
     except UnicodeDecodeError:
-        return value.decode(locale.getpreferredencoding(False), errors="replace")
+        return value.decode("cp1252", errors="replace")
 
 
 def _enumerate_processes(*, runner=None):
