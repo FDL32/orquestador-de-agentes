@@ -122,7 +122,8 @@ def _enrich_row(row: dict[str, Any], base: Path) -> dict[str, Any]:
     """
     result = dict(row)
     zip_path = _artifact_path(row, "zip", base)
-    if not zip_path.is_file() or not _artifact_path(row, "manifest", base).is_file():
+    manifest_path = _artifact_path(row, "manifest", base)
+    if not zip_path.is_file() or not manifest_path.is_file():
         raise ValueError(f"archive artifacts missing for {row.get('family')}")
     expected_hash = row.get("zip_sha256")
     if (
@@ -130,6 +131,13 @@ def _enrich_row(row: dict[str, Any], base: Path) -> dict[str, Any]:
         and p7_common.sha256_file(zip_path).lower() != str(expected_hash).lower()
     ):
         raise ValueError(f"zip hash mismatch for {zip_path}")
+    expected_manifest_hash = row.get("manifest_sha256")
+    if (
+        expected_manifest_hash
+        and p7_common.sha256_file(manifest_path).lower()
+        != str(expected_manifest_hash).lower()
+    ):
+        raise ValueError(f"manifest hash mismatch for {manifest_path}")
     entries = _manifest_entries(row, base)
     canonical = [
         {"rel": str(item["rel"]).replace("\\", "/"), "sha256": str(item["sha256"])}
@@ -186,6 +194,12 @@ def _migration_rows(
     for source_row in source_rows:
         if source_row.get("status") not in {LEGACY_STATUS, ARCHIVED_STATUS}:
             continue
+        archived_exists = any(
+            row.get("status") == ARCHIVED_STATUS
+            and row.get("family") == source_row.get("family")
+            and row.get("zip") == source_row.get("zip")
+            for row in result
+        )
         if source_row.get("status") == ARCHIVED_STATUS and any(
             row.get("status") == RETIRED_STATUS
             and row.get("migration") == "WOT-2026-175d"
@@ -196,6 +210,8 @@ def _migration_rows(
             continue
         migrated += 1
         for generated in _generated_rows(source_row, base):
+            if generated.get("status") == ARCHIVED_STATUS and archived_exists:
+                continue
             key = _row_key(generated)
             if key in existing:
                 continue

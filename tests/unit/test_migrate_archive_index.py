@@ -49,12 +49,17 @@ def _legacy_row() -> dict[str, object]:
     }
 
 
-def _prepare_fixture(path: Path, rows: list[dict[str, object]]) -> None:
+def _prepare_fixture(
+    path: Path,
+    rows: list[dict[str, object]],
+    manifest_entries: list[dict[str, str]] | None = None,
+) -> None:
     """Before: rows reference artifacts in an isolated fixture directory.
     During: create minimal valid zip/manifests and repair only fixture hashes.
     After: the migration can validate real archive evidence without D: access.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    entries = manifest_entries or [{"rel": "clone-a/README.md", "sha256": "c" * 64}]
     for row in rows:
         zip_path = path.parent / str(row["zip"])
         manifest_path = path.parent / str(row["manifest"])
@@ -62,11 +67,9 @@ def _prepare_fixture(path: Path, rows: list[dict[str, object]]) -> None:
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         payload = b"fixture-zip"
         zip_path.write_bytes(payload)
-        manifest_path.write_text(
-            json.dumps([{"rel": "clone-a/README.md", "sha256": "c" * 64}]),
-            encoding="utf-8",
-        )
+        manifest_path.write_text(json.dumps(entries), encoding="utf-8")
         row["zip_sha256"] = hashlib.sha256(payload).hexdigest()
+        row["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     _write_index(path, rows)
 
 
@@ -141,6 +144,54 @@ def test_apply_is_idempotent_and_keeps_clone_names(tmp_path: Path) -> None:
         json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
     ]
     assert rows[1]["clone_names"] == ["clone-a", "clone-b"]
+
+
+def test_existing_archived_row_gets_only_retired_transition(tmp_path: Path) -> None:
+    """Before: the source already contains one imported ARCHIVADO row.
+    During: apply the migration to a new disposable target.
+    After: keep that ARCHIVADO row and add exactly one RETIRADO row, rather
+           than emitting a second enriched ARCHIVADO copy.
+    """
+    source = tmp_path / "index_kilo.jsonl"
+    target = tmp_path / "out" / "index.jsonl"
+    archived = _legacy_row()
+    archived["status"] = "ARCHIVADO"
+    _prepare_fixture(source, [archived])
+
+    result = migrate_index(source, target, apply=True)
+    rows = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert result.migrated == 1
+    assert result.added_rows == 1
+    assert [row["status"] for row in rows] == ["ARCHIVADO", "RETIRADO"]
+    assert rows[0] == archived
+    assert rows[1]["migration"] == "WOT-2026-175d"
+
+
+def test_clone_names_are_derived_from_manifest_entries(tmp_path: Path) -> None:
+    """Before: a clone batch row has no trusted clone-name list.
+    During: derive names from two manifest relative paths.
+    After: both generated lifecycle rows contain the canonical names.
+    """
+    source = tmp_path / "index.jsonl"
+    target = tmp_path / "out" / "index.jsonl"
+    row = _legacy_row()
+    row.pop("clone_names")
+    row["family"] = "batch_family"
+    entries = [
+        {"rel": "clone-b/README.md", "sha256": "b" * 64},
+        {"rel": "clone-a/README.md", "sha256": "a" * 64},
+    ]
+    _prepare_fixture(source, [row], entries)
+
+    migrate_index(source, target, apply=True)
+    rows = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert rows[1]["clone_names"] == rows[2]["clone_names"] == ["clone-a", "clone-b"]
 
 
 def test_rejects_in_place_source_and_target(tmp_path: Path) -> None:
