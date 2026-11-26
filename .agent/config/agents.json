@@ -3281,10 +3281,15 @@
     "tr.triador": {
       "candidatos": [
         {
-          "backend_key": "BA09"
+          "tipo": "t3_session",
+          "familia": "claude",
+          "nivel": "alto",
+          "instanceId": "claudeAgent",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
         }
       ],
-      "nivel": "base",
+      "nivel": "alto",
       "refugio": [
         {
           "backend_key": "BA05",
@@ -3296,7 +3301,7 @@
         }
       ],
       "orden": {
-        "messageId": "d99b0f8a-8136-49e2-8062-f7a85f014c9d"
+        "messageId": "7de3b6a7-76a2-4269-af97-2135d82e3349"
       }
     },
     "tr.revisor": {

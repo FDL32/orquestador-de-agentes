@@ -1001,7 +1001,7 @@ def _write_recall_log(
         )
 
 
-# ASIGNACIONES:BEGIN sha=6f32ba581f8df1be
+# ASIGNACIONES:BEGIN sha=c39884659423c70e
 # **Asignaciones del vuelo**:
 # refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
 # - co [alto]: claude:claudeAgent/claude-sonnet-5-5
@@ -1011,7 +1011,7 @@ def _write_recall_log(
 # - im.revisor [medio]: claude:claudeAgent/claude-sonnet-5
 # - im.v1 [medio]: qwen nan/qwen3.6 > gemma nan/gemma4
 # - im.subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
-# - tr.triador [base]: gemma nan/gemma4
+# - tr.triador [alto]: claude:claudeAgent/claude-sonnet-5-5
 # - tr.revisor [medio]: codex gpt-5.6-luna
 # - tr.subagentes [base]: gemma nan/gemma4 PENDIENTE > qwen nan/qwen3.6 PENDIENTE
 # - lentes_p34 [medio]: mimo nan/mimo-v2.6-flash > gemini:antigravity/gemini-3.8-flash-high > qwen nan/qwen3.6 PENDIENTE > gemma nan/gemma4 PENDIENTE > mistral mistral-large-2512 PENDIENTE > codestral codestral-2508 PENDIENTE
