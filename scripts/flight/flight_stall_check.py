@@ -2940,7 +2940,7 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
         if isinstance(started, str):
             try:
                 started_at = dt.datetime.fromisoformat(started)
-            except ValueError:
+            except (ValueError, TypeError):
                 started_at = None
             receipt_trigger = bool(
                 started_at is not None

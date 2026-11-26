@@ -5456,11 +5456,16 @@ def test_im_sin_asentar_146f_m05_ticket_slot_y_frontera(box):
     """m-05: solo el slot posterior a la frontera dispara por el recibo sintetico."""
     sessions = [
         _im_tr_session(
-            "IM-902", "post-thread", status="TERMINADA", slot="implantador-902z"
+            "IM-902",
+            "post-thread",
+            ticket=None,
+            status="TERMINADA",
+            slot="implantador-902z",
         ),
         _im_tr_session(
             "IM-903",
             "before-thread",
+            ticket=None,
             status="TERMINADA",
             started="2026-11-26T17:00:00+01:00",
             slot="implantador-902z",
@@ -5468,6 +5473,7 @@ def test_im_sin_asentar_146f_m05_ticket_slot_y_frontera(box):
         _im_tr_session(
             "IM-904",
             "missing-thread",
+            ticket=None,
             status="TERMINADA",
             started=None,
             slot="implantador-902z",
@@ -5481,18 +5487,26 @@ def test_im_sin_asentar_146f_m05_ticket_slot_y_frontera(box):
         ),
         _im_tr_session(
             "IM-906",
-            "explicit-thread",
-            ticket="WOT-2026-901z",
+            "invalid-started-thread",
             status="TERMINADA",
+            started="ayer",
             slot="implantador-902z",
         ),
         _im_tr_session(
             "IM-907",
+            "integer-started-thread",
+            status="TERMINADA",
+            started=123,
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-908",
             "long-slot-thread",
             status="TERMINADA",
             slot="vuelo-" + "20261026b",
         ),
     ]
+    assert all("ticket" not in session for session in sessions[:3])
     rows = [_im_tr_row(session["threadId"]) for session in sessions]
     _im_tr_store(
         box, rows, [(session["threadId"], "running", 1) for session in sessions]
@@ -5507,6 +5521,73 @@ def test_im_sin_asentar_146f_m05_ticket_slot_y_frontera(box):
     assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-902"}
     assert out["im_sin_asentar"][0]["ticket"] == "WOT-2026-902z"
     assert len(found) == 1
+
+
+def test_im_sin_asentar_146f_ticket_explicito_prevalece_sobre_slot(box):
+    """D6: an explicit ticket prevents a conflicting slot ticket from matching."""
+    session = _im_tr_session(
+        "IM-909",
+        "explicit-ticket-thread",
+        ticket="WOT-2026-901z",
+        status="TERMINADA",
+        slot="implantador-902z",
+    )
+    _im_tr_store(
+        box,
+        [_im_tr_row("explicit-ticket-thread")],
+        [("explicit-ticket-thread", "running", 1)],
+    )
+    _im_tr_registry(box, [session])
+    _im_tr_receipts(box, ["WOT-2026-902z"])
+    _im_tr_cfg(box)
+    out = {}
+
+    assert box.m.check_im_sin_asentar(out, {}) == []
+    assert out["im_sin_asentar"] == []
+
+
+def test_im_sin_asentar_146f_started_ilegible_no_rompe(box, monkeypatch):
+    """D6: invalid and non-string started values do not break receipt measurement."""
+    sessions = [
+        _im_tr_session(
+            "IM-910",
+            "invalid-started-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="ayer",
+            slot="implantador-910z",
+        ),
+        _im_tr_session(
+            "IM-911",
+            "integer-started-thread",
+            ticket=None,
+            status="TERMINADA",
+            started=123,
+            slot="implantador-911z",
+        ),
+    ]
+    _im_tr_store(
+        box,
+        [_im_tr_row(session["threadId"]) for session in sessions],
+        [(session["threadId"], "running", 1) for session in sessions],
+    )
+    _im_tr_registry(box, sessions)
+    _im_tr_receipts(box, ["WOT-2026-910z", "WOT-2026-911z"])
+    _im_tr_cfg(box)
+
+    out = {}
+    assert box.m.check_im_sin_asentar(out, {}) == []
+    assert out["im_sin_asentar"] == []
+
+    class DateTimeRaising:
+        @staticmethod
+        def fromisoformat(value):
+            raise TypeError(value)
+
+    monkeypatch.setattr(box.m.dt, "datetime", DateTimeRaising)
+    out = {}
+    assert box.m.check_im_sin_asentar(out, {}) == []
+    assert out["im_sin_asentar"] == []
 
 
 def test_im_sin_asentar_mutation_m01_disparo_por_recibo_y_por_run_completed(box):
