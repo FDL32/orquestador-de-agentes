@@ -261,10 +261,22 @@ def _write_last_run(repo: Path, head: str) -> None:
     )
 
 
-def test_sello_de_preflight_closeout_nombra_el_motivo(monkeypatch, tmp_path):
-    """Preflight includes the resolver reason and the two suite policies."""
+@pytest.mark.parametrize(
+    ("content", "expected_type", "expected_reason"),
+    [
+        (_plan(None, prose=TRAP), "code", "no_field_in_metadata"),
+        (_plan("documentation", prose=TRAP), "documentation", "metadata_field"),
+        (None, "code", "work_plan_unreadable"),
+    ],
+    ids=["sin_campo", "campo_declarado", "plan_ausente"],
+)
+def test_sello_de_preflight_closeout_nombra_el_motivo(
+    monkeypatch, tmp_path, content, expected_type, expected_reason
+):
+    """Preflight seals the REAL resolver reason, not a constant (3 reasons)."""
     pc = _load("preflight_closeout")
-    _write_active_plan(tmp_path, _plan(None, prose=TRAP))
+    if content is not None:
+        _write_active_plan(tmp_path, content)
 
     monkeypatch.setattr(
         _pg,
@@ -292,9 +304,68 @@ def test_sello_de_preflight_closeout_nombra_el_motivo(monkeypatch, tmp_path):
         ticket_id="WOT-2026-074e",
         motor_root=motor,
     )
-    assert report["deliverable_type"] == "code"
-    assert report["deliverable_type_reason"] == "no_field_in_metadata"
-    assert "no_field_in_metadata" in pc._render_human(report)
+    assert report["deliverable_type"] == expected_type
+    assert report["deliverable_type_reason"] == expected_reason
+    assert expected_reason in pc._render_human(report)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "documentation_and_code",
+        "documentation, code",
+        "documentation and code",
+        "documentation/code",
+        "code (no documentation)",
+    ],
+)
+def test_valor_ambiguo_nunca_relaja_la_suite(value):
+    """A value naming SEVERAL vocabulary types is `mixed` (suite required).
+
+    Regression of the lens finding: a greedy prefix match resolved
+    `documentation, code` to `documentation` and skipped the canonical suite.
+    """
+    plan = _plan(value)
+    assert _wpa.resolve_deliverable_type_from_content(plan) == (
+        "mixed",
+        "metadata_field",
+    )
+    assert _pg._read_deliverable_type_from_content(plan) == "mixed"
+
+
+@pytest.mark.parametrize("value", ["`documentation`", '"documentation"'])
+def test_valor_con_backticks_o_comillas_se_resuelve(value):
+    """Markdown/quote decoration around a single value does not hide it."""
+    assert _wpa.resolve_deliverable_type_from_content(_plan(value)) == (
+        "documentation",
+        "metadata_field",
+    )
+
+
+def test_mixed_literal_en_metadata_es_valido():
+    """`mixed` declared directly (no `+`) is a valid vocabulary member."""
+    assert _wpa.resolve_deliverable_type_from_content(_plan("mixed")) == (
+        "mixed",
+        "metadata_field",
+    )
+
+
+def test_plan_activo_no_decodificable_es_work_plan_unreadable(tmp_path):
+    """Undecodable bytes (UnicodeDecodeError is not OSError) fail closed to code."""
+    collaboration = tmp_path / ".agent" / "collaboration"
+    collaboration.mkdir(parents=True)
+    (collaboration / "work_plan.md").write_bytes(
+        b"## Metadata\n- **deliverable_type:** documentation\n\xff\xfe\n"
+    )
+    assert _pg.resolve_deliverable_type_from_active_plan(tmp_path) == (
+        "code",
+        "work_plan_unreadable",
+    )
+
+
+def test_session_close_conserva_unknown_sin_campo(tmp_path):
+    """Without a Metadata field the observer keeps the literal `unknown`."""
+    assert _read_sco(_plan(None, prose=TRAP), tmp_path) == "unknown"
 
 
 def test_plan_activo_alimenta_el_gate_canonico_punta_a_punta(tmp_path):

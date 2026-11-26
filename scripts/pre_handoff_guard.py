@@ -648,7 +648,7 @@ def resolve_deliverable_type_from_active_plan(
         return _import_work_plan_authority().resolve_deliverable_type_from_content(
             work_plan.read_text(encoding="utf-8")
         )
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return "code", "work_plan_unreadable"
 
 

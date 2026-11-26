@@ -58,10 +58,10 @@ VALID_DELIVERABLE_TYPES = ("code", "documentation", "research", "analysis", "mix
 DEFAULT_DELIVERABLE_TYPE = "code"
 
 _DELIVERABLE_TYPE_FIELD = re.compile(
-    r"^\s*(?:[-*]\s+)?\*{0,2}deliverable_type\*{0,2}\s*:\s*\*{0,2}"
-    r"\s*([A-Za-z]+(?:\s*\+\s*[A-Za-z]+)*)",
+    r"^\s*(?:[-*]\s+)?\*{0,2}deliverable_type\*{0,2}\s*:(.*)$",
     re.IGNORECASE | re.MULTILINE,
 )
+_WORD = re.compile(r"[a-z]+")
 
 
 def _import_scope_gate():
@@ -138,9 +138,11 @@ def resolve_deliverable_type_from_content(content: str) -> tuple[str, str]:
     Before: ``content`` es la prosa cruda de un ``work_plan.md`` y puede estar
         vacia o malformada.
     During: corta la seccion ``## Metadata`` y busca alli una declaracion del
-        campo; un valor compuesto con ``+`` se normaliza a ``mixed``.
-    After: devuelve un tipo valido y un motivo nombrado; el default ``code``
-        conserva el camino estricto cuando falta la declaracion.
+        campo; extrae las palabras del vocabulario ignorando puntuacion y
+        decoracion. Una palabra resuelve a ese tipo; dos o mas distintas se
+        normalizan a ``mixed``.
+    After: devuelve un tipo valido y un motivo nombrado; ninguna palabra
+        devuelve el default ``code`` y conserva el camino estricto.
     """
     section = metadata_section(content)
     if section is None:
@@ -148,12 +150,16 @@ def resolve_deliverable_type_from_content(content: str) -> tuple[str, str]:
     match = _DELIVERABLE_TYPE_FIELD.search(section)
     if match is None:
         return DEFAULT_DELIVERABLE_TYPE, REASON_NO_FIELD
-    value = match.group(1).strip().lower()
-    if "+" in value:
-        return "mixed", REASON_METADATA_FIELD
-    if value not in VALID_DELIVERABLE_TYPES:
+    found = {
+        word
+        for word in _WORD.findall(match.group(1).lower())
+        if word in VALID_DELIVERABLE_TYPES
+    }
+    if not found:
         return DEFAULT_DELIVERABLE_TYPE, REASON_NO_FIELD
-    return value, REASON_METADATA_FIELD
+    if len(found) > 1:
+        return "mixed", REASON_METADATA_FIELD
+    return found.pop(), REASON_METADATA_FIELD
 
 
 def read_deliverable_type(content: str) -> str:
