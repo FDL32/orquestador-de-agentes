@@ -5214,6 +5214,16 @@ def _classify_transport_failure(exc: Exception) -> str:
     return _FAILURE_CLASS_UNKNOWN
 
 
+# WOT-2026-088d: el smoke con carga real conserva la comprobacion por nonce,
+# pero envia el bundle completo para probar el canal con el mismo tipo de carga
+# que recibira una ronda real.
+_SMOKE_CONTENT_PROMPT = (
+    "Lee el documento siguiente y devuelve una respuesta breve. "
+    "Incluye exactamente este nonce en el contenido de tu respuesta: {nonce}"
+    "\n\n---DOCUMENTO---\n{content}"
+)
+
+
 def smoke_profile(
     profile_name: str,
     *,
@@ -5240,6 +5250,7 @@ def smoke_profile(
     peticion_usuario: str | None = None,
     peticion_store_path: Path | None = None,
     peticion_anchor: str | None = None,
+    content: str | None = None,
 ) -> dict:
     """Smoke round-trip por CONTENIDO: el token debe volver en la respuesta.
 
@@ -5256,13 +5267,24 @@ def smoke_profile(
         el camino de `resolve_fallback_backend`/`resolve_similar_fallback`
         EXACTAMENTE como estaba. Con `probe=True`, un razonador que solo
         emite `reasoning_content` cuenta como `ok_razonador` disponible.
+
+    WOT-2026-088d: con `content` se envia el bundle entero y se anade
+        `evidence` con latencia, tamaños y tipo de salida. Sin `content`, el
+        dict y el prompt conservan el contrato historico.
+
+    Before: requiere un perfil resoluble y un transporte compatible con
+        `send_to_profile`.
+    During: envia el ping trivial o el bundle, clasifica la respuesta y mide
+        la latencia del intento.
+    After: devuelve el resultado del smoke; una excepcion de transporte se
+        clasifica como no vivo y `DispatchBlockedError` se propaga.
     """
-    messages = [
-        {
-            "role": "user",
-            "content": (f"Reply with exactly this token and nothing else: {nonce}"),
-        }
-    ]
+    prompt = (
+        f"Reply with exactly this token and nothing else: {nonce}"
+        if content is None
+        else _SMOKE_CONTENT_PROMPT.format(nonce=nonce, content=content)
+    )
+    messages = [{"role": "user", "content": prompt}]
     call_config = _config_with_backend_override(
         config, profile_name, backend_cfg_override
     )
@@ -5287,6 +5309,9 @@ def smoke_profile(
         raise
     except Exception as exc:  # STEP_SKIP documentado: backend caido no aborta
         failure_class = _classify_transport_failure(exc)
+        # La evidencia se mide ANTES de escribir el scorecard: la latencia del
+        # intento no debe incluir el I/O de `record_exploration_result`.
+        evidence = _smoke_evidence(content, _t0, "", False)
         if project_root is not None:
             record_exploration_result(
                 project_root,
@@ -5303,14 +5328,28 @@ def smoke_profile(
             failure_class=failure_class,
             probe=probe,
             reasoning_only=False,
+            evidence=evidence,
         )
     reasoning_only = isinstance(reply, str) and reply.startswith(_REASONING_ONLY_MARKER)
     cleaned = reply[len(_REASONING_ONLY_MARKER) :] if reasoning_only else (reply or "")
+    # Evidencia por intento (088d), medida ANTES del scorecard. Un fallo de
+    # transporte DEVUELTO (canal agent: prefijo + eco del prompt, que lleva el
+    # bundle) no es contenido del modelo: cuenta como salida vacia.
+    transport_failed = _is_transport_failed_reply(reply)
+    evidence = _smoke_evidence(
+        content,
+        _t0,
+        "" if transport_failed else cleaned,
+        reasoning_only and not transport_failed,
+    )
     # El modelo que SI responde via deliberacion (reasoning sin content) esta
     # disponible: cuenta como vivo (DEC-086H-001 Decision 1), salvo que la
     # respuesta sea un fallo de transporte (WOT-2026-089g).
-    alive = _probe_alive(reply, nonce, reasoning_only=reasoning_only)
-    reasoning_only = reasoning_only and alive
+    if content is not None and reasoning_only:
+        alive = False
+    else:
+        alive = _probe_alive(reply, nonce, reasoning_only=reasoning_only)
+    result_reasoning_only = reasoning_only and alive
     if project_root is not None:
         record_exploration_result(
             project_root,
@@ -5326,7 +5365,8 @@ def smoke_profile(
         detail=cleaned[:200].strip(),
         failure_class=None,
         probe=probe,
-        reasoning_only=reasoning_only,
+        reasoning_only=result_reasoning_only,
+        evidence=evidence,
     )
 
 
@@ -5395,8 +5435,14 @@ def _smoke_result(
     failure_class: str | None,
     probe: bool,
     reasoning_only: bool,
+    evidence: dict | None = None,
 ) -> dict:
-    """Dict de resultado del smoke; con `probe=True` anade `class` (taxonomia)."""
+    """Construye el resultado del smoke y anade campos optativos.
+
+    Before: recibe el veredicto y las clasificaciones del intento.
+    During: materializa las claves historicas y anade solo los campos pedidos.
+    After: devuelve un dict sin `evidence` cuando no hubo carga real.
+    """
     result = {
         "profile": profile_name,
         "alive": alive,
@@ -5407,7 +5453,32 @@ def _smoke_result(
         result["class"] = _smoke_class(
             alive=alive, failure_class=failure_class, reasoning_only=reasoning_only
         )
+    if evidence is not None:
+        result["evidence"] = evidence
     return result
+
+
+def _smoke_evidence(
+    content: str | None, started_at: float, cleaned: str, reasoning_only: bool
+) -> dict | None:
+    """Devuelve la evidencia de una sonda con bundle o `None` para el ping.
+
+    Before: `started_at` marca el inicio del intento y `cleaned` no contiene el
+        marcador interno de razonamiento.
+    During: calcula latencia y tamaños desde el bundle y la respuesta recibida.
+    After: entrega las cuatro claves de evidencia o no cambia el contrato viejo.
+    """
+    if content is None:
+        return None
+    content_kind = (
+        "reasoning_only" if reasoning_only else "content" if cleaned else "empty"
+    )
+    return {
+        "latency_ms": round((time.perf_counter() - started_at) * 1000),
+        "output_chars": len(cleaned),
+        "input_chars": len(content),
+        "content_kind": content_kind,
+    }
 
 
 def _smoke_class(
@@ -7500,8 +7571,14 @@ def _probe_one_profile(
     peticion_usuario: str | None,
     peticion_store_path: Path | None,
     peticion_anchor: str | None,
+    content: str | None = None,
 ) -> dict:
-    """Prueba UN perfil: `/v1/models` ausente -> skip; si no, smoke con tope."""
+    """Prueba UN perfil: `/v1/models` ausente -> skip; si no, smoke con tope.
+
+    Before: `name` pertenece a `profiles` y su proveedor tiene semáforo.
+    During: aplica los techos efectivos y propaga el bundle opcional al smoke.
+    After: devuelve el resultado del perfil o su skip por modelo ausente.
+    """
     profile = profiles[name]
     backend = profile.get("backend")
     model = profile.get("model")
@@ -7542,6 +7619,7 @@ def _probe_one_profile(
             peticion_usuario=peticion_usuario,
             peticion_store_path=peticion_store_path,
             peticion_anchor=peticion_anchor,
+            content=content,
         )
 
 
@@ -7559,9 +7637,14 @@ def _probe_all_profiles(
     peticion_usuario: str | None = None,
     peticion_store_path: Path | None = None,
     peticion_anchor: str | None = None,
+    content: str | None = None,
 ) -> dict[str, dict]:
     """Smoke en paralelo con un `ThreadPoolExecutor` compartido + semaforo POR
     PROVEEDOR.
+
+    Before: `names`, grupos y límites ya están resueltos por `_cmd_smoke`.
+    During: ejecuta cada perfil con su semáforo y propaga la carga opcional.
+    After: devuelve resultados indexados por nombre; un fallo aislado no aborta.
 
     Workers = tope x n_proveedores (deriva del runtime, sin total fijo): los
     grupos de proveedores corren a la vez y cada uno queda acotado a
@@ -7586,6 +7669,7 @@ def _probe_all_profiles(
             peticion_usuario=peticion_usuario,
             peticion_store_path=peticion_store_path,
             peticion_anchor=peticion_anchor,
+            content=content,
         )
 
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -7665,11 +7749,17 @@ def _cmd_smoke(args, config, *, models_fetcher=None, transport=None) -> int:
     """Smoke rapido (WOT-2026-086h): paralelo por proveedor, con /v1/models.
 
     Before: `args` trae `profile`, `project_root`, `ignore_quarantine`,
-        `timeout` (15), `max_tokens` (64), `include_agents`,
-        `max_concurrent_per_provider` (4). `models_fetcher`/`transport` son
-        hooks OPT-IN de test (default: `_fetch_models_for_group` y el
-        transporte real de `send_to_profile`).
-    During: (1) resuelve el universo y separa canal `agent` (excluido por
+        `timeout`, `max_tokens` (ambos `None` si el operador no los pasa; 0
+        cuenta como no especificado), `content_file` (WOT-2026-088d: `None`
+        o ruta del bundle), `include_agents`, `max_concurrent_per_provider`
+        (4). `models_fetcher`/`transport` son hooks OPT-IN de test (default:
+        `_fetch_models_for_group` y el transporte real de `send_to_profile`).
+    During: (0) WOT-2026-088d: con `content_file` lee el bundle (utf-8); un
+        fichero ausente o ilegible termina con rc 2 y mensaje por stderr SIN
+        llamar al transporte. Los techos sin flags son 15 s / 64 tokens (ping)
+        o 120 s / `_API_MAX_TOKENS` (carga real); `--timeout`/`--max-tokens`
+        explicitos mandan. (1) resuelve el universo y separa canal `agent`
+        (excluido por
         defecto) y cuarentena; (2) UNA llamada `/v1/models` por PROVEEDOR;
         (3) smoke en paralelo con un `ThreadPoolExecutor` compartido de
         `max_concurrent * n_proveedores` workers y un semaforo POR PROVEEDOR
@@ -7684,12 +7774,32 @@ def _cmd_smoke(args, config, *, models_fetcher=None, transport=None) -> int:
     After: imprime el JSON con `denominador`/`inspeccionados`/`vivos`/
         `saltados` (consistente: `inspeccionados + len(saltados) ==
         denominador`) y retorna 0 si hay algun vivo, 1 si `inspeccionados==0`
-        o ninguno vivo. Un perfil que falla NO aborta el resto.
+        o ninguno vivo; 2 si el `content_file` no se puede leer o el
+        `--profile` pedido no existe. Con `content_file` cada resultado lleva `evidence`. Un
+        perfil que falla NO aborta el resto.
     """
     if models_fetcher is None:
         models_fetcher = _fetch_models_for_group
-    timeout = int(getattr(args, "timeout", 15) or 15)
-    max_tokens = int(getattr(args, "max_tokens", 64) or 64)
+    content_file = getattr(args, "content_file", None)
+    content = None
+    if content_file is not None:
+        content_path = Path(content_file)
+        try:
+            content = content_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            print(
+                f"[smoke] ERROR: no se pudo leer --content-file '{content_path}': "
+                f"{type(exc).__name__}: {exc}",
+                file=sys.stderr,
+            )
+            return 2
+    timeout = int(
+        getattr(args, "timeout", None) or (120 if content is not None else 15)
+    )
+    max_tokens = int(
+        getattr(args, "max_tokens", None)
+        or (_API_MAX_TOKENS if content is not None else 64)
+    )
     include_agents = bool(getattr(args, "include_agents", False))
     max_concurrent = int(getattr(args, "max_concurrent_per_provider", 4) or 4)
     profiles = config.get("ensemble_profiles") or {}
@@ -7754,6 +7864,7 @@ def _cmd_smoke(args, config, *, models_fetcher=None, transport=None) -> int:
             peticion_usuario=peticion_usuario,
             peticion_store_path=peticion_store_path,
             peticion_anchor=peticion_anchor,
+            content=content,
         )
 
     return _emit_smoke_report(
@@ -9340,6 +9451,18 @@ def main(argv: list[str] | None = None) -> int:
     p_smoke.add_argument("--peticion-store-path", type=Path, default=None)
     p_smoke.add_argument("--peticion-anchor", default=None)
     p_smoke.add_argument(
+        "--content-file",
+        type=Path,
+        default=None,
+        help=(
+            "envia el bundle entero como carga real y juzga por nonce; usalo "
+            "con --profile porque cada perfil recibe el bundle completo y, sin "
+            "ese filtro, se lanza una peticion grande por cada perfil API. "
+            "Con esta opcion los techos por defecto pasan a 120 s y "
+            "_API_MAX_TOKENS; --timeout y --max-tokens explicitos mandan"
+        ),
+    )
+    p_smoke.add_argument(
         "--ignore-quarantine",
         action="store_true",
         help="fuerza el intento aunque el perfil este en cuarentena "
@@ -9350,16 +9473,18 @@ def main(argv: list[str] | None = None) -> int:
     p_smoke.add_argument(
         "--timeout",
         type=int,
-        default=15,
+        default=None,
         help="techo EFECTIVO de cada ping (segundos): gana a "
-        "backends.<b>.timeout_s EN ESTA RUTA (default 15). No cambia "
-        "loop-round, que sigue respetando timeout_s",
+        "backends.<b>.timeout_s EN ESTA RUTA (default 15; 120 con "
+        "--content-file). No cambia loop-round, que sigue respetando "
+        "timeout_s",
     )
     p_smoke.add_argument(
         "--max-tokens",
         type=int,
-        default=64,
-        help="max_tokens del body HTTP del ping (default 64); acota el "
+        default=None,
+        help="max_tokens del body HTTP del ping (default 64; con "
+        "--content-file el tope de la ruta API, _API_MAX_TOKENS); acota el "
         "presupuesto de salida de la comprobacion",
     )
     p_smoke.add_argument(
