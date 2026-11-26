@@ -152,13 +152,13 @@ Al esperar, no cierres el turno ni bloquees una llamada >300 s (en segundo plano
 ### Orden de trabajo: AGRUPA los commits, la suite va la ULTIMA (WOT-2026-026t)
 
 **La suite canonica es el ULTIMO paso antes del push, nunca uno intermedio.** El contrato exige
-`tested_commit_sha == HEAD` (`pre_handoff_guard.py:561`), asi que **cualquier commit posterior a la
+`tested_commit_sha == HEAD` (`pre_handoff_guard.py::assert_canonical_suite_green`), asi que **cualquier commit posterior a la
 suite la invalida** y obliga a re-correrla entera (~7 min).
 
 ```
 ORDEN CORRECTO                          ORDEN QUE DESPERDICIA
 1. TODOS los commits                    suite -> commit -> suite -> commit -> suite
-2. suite canonica (UNA vez)             (medido 2026-08-04: 3 corridas, ~15 min tirados)
+2. suite canonica (UNA vez)             (2026-08-04: ~15 min)
 3. verificar tested_commit_sha == HEAD
 4. push
 ```
