@@ -2740,6 +2740,98 @@ def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
     return [("co-sin-asentar", "AVISO", text)]
 
 
+FRONTERA_RECIBO_IM_TR = dt.datetime.fromisoformat("2026-11-26T17:28:44+01:00")
+
+
+def _im_tr_thread_id(session):
+    """Resolve the current and legacy registry keys for an IM/TR thread.
+
+    Before: ``session`` is a registry row that may use either the current or
+        legacy thread-key spelling.
+    During: inspect ``threadId`` first, then ``thread_id``, accepting only
+        non-empty strings after stripping for the readability guard.
+    After: return the selected original string or ``None`` when neither key is
+        readable.
+    """
+    for key in ("threadId", "thread_id"):
+        value = session.get(key)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
+def _im_tr_receipt_roots():
+    """Return the legacy roots and the first real ancestor receipt root.
+
+    Before: ``CFG.registry`` points to a readable flight registry path.
+    During: preserve the three historical parent probes and cwd, then inspect
+        at most eight resolved ancestors for the first integration-receipt dir.
+    After: return candidate roots without raising path-resolution errors.
+    """
+    roots = []
+    with contextlib.suppress(IndexError, OSError, ValueError):
+        roots.extend(
+            CFG.registry.parent.parents[index]
+            / ".agent"
+            / "runtime"
+            / "integration_receipts"
+            for index in range(3)
+        )
+    roots.append(Path.cwd() / ".agent" / "runtime" / "integration_receipts")
+    try:
+        resolved_registry = CFG.registry.resolve()
+        for ancestor in list(resolved_registry.parents)[:8]:
+            candidate = ancestor / ".agent" / "runtime" / "integration_receipts"
+            if candidate.is_dir():
+                roots.append(candidate)
+                break
+    except (OSError, ValueError):
+        pass
+    return roots
+
+
+def _im_tr_ticket(session):
+    """Derive the receipt ticket from an explicit field or the session slot.
+
+    Before: ``session`` is an IM/TR registry row with optional ``ticket`` and
+        ``slot`` values.
+    During: prefer a non-empty ticket string, otherwise find the first bounded
+        three-digit/lowercase-letter token in ``slot``.
+    After: return a normalized ``WOT-2026-NNNx`` ticket or ``None``.
+    """
+    ticket = session.get("ticket")
+    if isinstance(ticket, str) and ticket.strip():
+        return ticket.strip()
+    slot = session.get("slot")
+    if not isinstance(slot, str):
+        return None
+    match = re.search(r"(?<!\d)(\d{3}[a-z])(?![a-z0-9])", slot)
+    return f"WOT-2026-{match.group(1)}" if match else None
+
+
+def _im_tr_started(value):
+    """Parse an IM/TR start timestamp, including Python 3.10 UTC suffixes.
+
+    Before: ``value`` may be a registry timestamp string, a non-string, or an
+        invalid/naive timestamp.
+    During: trim the value, normalize only a final ``Z``/``z`` to ``+00:00``,
+        parse it, and reject parse errors and timestamps without timezone data.
+    After: return an aware datetime or ``None`` without propagating parse errors.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text[-1:] in ("Z", "z"):
+        if text[-2:-1] in ("Z", "z"):
+            return None
+        text = text[:-1] + "+00:00"
+    try:
+        started_at = dt.datetime.fromisoformat(text)
+    except (ValueError, TypeError):
+        return None
+    return started_at if started_at.tzinfo is not None else None
+
+
 def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrato
     """Detect active IM/TR sessions whose integration is not settled.
 
@@ -2751,6 +2843,7 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
         observable fail-closed AVISO when the store or registry cannot be measured.
     """
     del st
+    out["im_sin_asentar_omitidas"] = []
 
     def blind(cause):
         """Return the fixed-key finding for an unreadable measurement.
@@ -2823,29 +2916,7 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
     except (OSError, TypeError, ValueError, json.JSONDecodeError, RecursionError):
         return blind("registry no medido")
 
-    receipt_roots = []
-    try:
-        receipt_roots.append(
-            CFG.registry.parent.parents[0]
-            / ".agent"
-            / "runtime"
-            / "integration_receipts"
-        )
-        receipt_roots.append(
-            CFG.registry.parent.parents[1]
-            / ".agent"
-            / "runtime"
-            / "integration_receipts"
-        )
-        receipt_roots.append(
-            CFG.registry.parent.parents[2]
-            / ".agent"
-            / "runtime"
-            / "integration_receipts"
-        )
-    except IndexError:
-        pass
-    receipt_roots.append(Path.cwd() / ".agent" / "runtime" / "integration_receipts")
+    receipt_roots = _im_tr_receipt_roots()
     integrated = set()
     for root in receipt_roots:
         try:
@@ -2880,23 +2951,27 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
             return blind("registry no medido")
         if status.startswith("ASENTADA"):
             continue
-        thread_id = session.get("threadId")
-        if not isinstance(thread_id, str) or not thread_id.strip():
-            return blind("registry no medido")
-        slot = code.split("-", 1)[1] if "-" in code else code
-        ticket_candidates = {
-            value
-            for value in (session.get("ticket"), f"WOT-2026-{slot}", code)
-            if isinstance(value, str) and value
-        }
-        receipt_trigger = bool(ticket_candidates & integrated)
+        thread_id = _im_tr_thread_id(session)
+        if thread_id is None:
+            if status.startswith("ACTIVA"):
+                return blind("registry no medido")
+            out["im_sin_asentar_omitidas"].append(code)
+            continue
+        ticket = _im_tr_ticket(session)
+        started_at = _im_tr_started(session.get("started"))
+        receipt_trigger = bool(
+            started_at is not None
+            and started_at >= FRONTERA_RECIBO_IM_TR
+            and ticket is not None
+            and ticket in integrated
+        )
         run_trigger = thread_state.get(thread_id, False)
         if receipt_trigger or run_trigger:
             unsettled.append(
                 {
                     "code": code,
                     "threadId": thread_id,
-                    "ticket": session.get("ticket") or f"WOT-2026-{slot}",
+                    "ticket": ticket,
                 }
             )
 

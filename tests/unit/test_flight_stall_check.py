@@ -5272,22 +5272,25 @@ def _im_tr_store(box, rows, runs=(), archived_at_map=None):
     return db
 
 
-def _im_tr_registry(box, sessions):
+def _im_tr_registry(box, sessions, flight=None):
     """Before: ``sessions`` contiene las sesiones del vuelo.
     During: serializa el registro canónico en ``box.flight``.
     After: devuelve la ruta del registro escrito.
     """
-    path = box.flight / "session_registry.json"
+    flight = Path(flight) if flight is not None else box.flight
+    flight.mkdir(parents=True, exist_ok=True)
+    path = flight / "session_registry.json"
     path.write_text(json.dumps({"sessions": sessions}), encoding="utf-8")
     return path
 
 
-def _im_tr_receipts(box, tickets):
+def _im_tr_receipts(box, tickets, root=None):
     """Before: ``tickets`` identifica tickets integrados.
     During: escribe un recibo JSON por ticket bajo la ruta de integración.
     After: devuelve la carpeta de recibos.
     """
-    directory = box.root / ".agent" / "runtime" / "integration_receipts"
+    root = Path(root) if root is not None else box.root
+    directory = root / ".agent" / "runtime" / "integration_receipts"
     directory.mkdir(parents=True, exist_ok=True)
     for ticket in tickets:
         if isinstance(ticket, dict):
@@ -5302,25 +5305,38 @@ def _im_tr_receipts(box, tickets):
     return directory
 
 
-def _im_tr_cfg(box):
+def _im_tr_cfg(box, flight=None):
     """Before: las rutas temporales del vuelo están listas.
     During: resuelve CFG con la misma función usada por ``main``.
     After: deja ``box.m.CFG`` preparado para la llamada directa al detector.
     """
     args = types.SimpleNamespace(
-        flight_dir=str(box.flight), motor_wt=str(box.wt), quota_file=None
+        flight_dir=str(flight or box.flight), motor_wt=str(box.wt), quota_file=None
     )
     box.m.CFG, _causes, _fatal = box.m._resolve_paths(args, box.ops)
     return box.m.CFG
 
 
-def _im_tr_session(code, thread_id, ticket=None, status="ACTIVA"):
-    return {
+def _im_tr_session(
+    code,
+    thread_id,
+    ticket=None,
+    status="ACTIVA",
+    started="2026-11-26T18:00:00+01:00",
+    slot=None,
+):
+    session = {
         "code": code,
-        "threadId": thread_id,
-        "ticket": ticket or code,
         "status": status,
+        "started": started,
     }
+    if thread_id is not None:
+        session["threadId"] = thread_id
+    if ticket is not None:
+        session["ticket"] = ticket
+    if slot is not None:
+        session["slot"] = slot
+    return session
 
 
 def _im_tr_row(thread_id, title=None, **kwargs):
@@ -5330,6 +5346,396 @@ def _im_tr_row(thread_id, title=None, **kwargs):
         "payload": {"settled": False},
         **kwargs,
     }
+
+
+def test_im_sin_asentar_146f_m01_thread_id_legado(box):
+    """m-01: una fila con ``thread_id`` legado sigue el run y no ciega el detector."""
+    legacy = _im_tr_session("IM-701", "legacy-thread", status="TERMINADA")
+    legacy["thread_id"] = legacy.pop("threadId")
+    settled = _im_tr_session("TR-701", None, status="ASENTADA")
+    _im_tr_store(
+        box,
+        [_im_tr_row("legacy-thread"), _im_tr_row("settled-thread")],
+        [("legacy-thread", "completed", 1)],
+    )
+    _im_tr_registry(box, [legacy, settled])
+    _im_tr_cfg(box)
+    out = {}
+
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-701"}
+    assert found[0][0] == "im-sin-asentar-IM-701"
+    assert "im_sin_asentar_ciego" not in out
+
+
+def test_im_sin_asentar_146f_m02_omitidas(box):
+    """m-02: una fila historica sin hilo se observa como omitida y no aborta las demas."""
+    _im_tr_store(
+        box, [_im_tr_row("measurable-thread")], [("measurable-thread", "completed", 1)]
+    )
+    _im_tr_registry(
+        box,
+        [
+            _im_tr_session("IM-702", None, status="COMPLETED"),
+            _im_tr_session("TR-702", None, status="ASENTADA"),
+            _im_tr_session("IM-703", "measurable-thread"),
+        ],
+    )
+    _im_tr_cfg(box)
+    out = {}
+
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert out["im_sin_asentar_omitidas"] == ["IM-702"]
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-703"}
+    assert len(found) == 1
+    assert "im_sin_asentar_ciego" not in out
+
+    _im_tr_registry(box, [_im_tr_session("IM-704", "measurable-thread")])
+    out = {}
+    assert box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+
+
+def test_im_sin_asentar_146f_m03_activa_tras_legada(box):
+    """m-03: una ACTIVA sin hilo conserva el fail-closed aunque haya una fila legada antes."""
+    legacy = _im_tr_session("IM-705", "legacy-thread", status="TERMINADA")
+    legacy["thread_id"] = legacy.pop("threadId")
+    _im_tr_store(
+        box,
+        [_im_tr_row("legacy-thread")],
+        [("legacy-thread", "completed", 1)],
+    )
+    _im_tr_registry(
+        box,
+        [legacy, _im_tr_session("TR-705", None, status="ACTIVA")],
+    )
+    _im_tr_cfg(box)
+    out = {}
+
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+    assert found[0] == (
+        "im-sin-asentar",
+        "AVISO",
+        "IM/TR sin asentar: registry no medido",
+    )
+
+
+def test_im_sin_asentar_146f_m04_recibo_profundidad_real(box, tmp_path):
+    """m-04: la raiz real de recibos se descubre desde un registry a cuatro niveles."""
+    flight = box.root / ".agent" / "runtime" / "flight" / "vuelo-sintetico"
+    _im_tr_store(
+        box, [_im_tr_row("receipt-thread")], [("receipt-thread", "running", 1)]
+    )
+    _im_tr_registry(
+        box,
+        [_im_tr_session("IM-901", "receipt-thread", "WOT-2026-901z")],
+        flight,
+    )
+    receipts = _im_tr_receipts(box, ["WOT-2026-901z"], box.root)
+    _im_tr_cfg(box, flight)
+    cwd = tmp_path / "cwd-vacio"
+    cwd.mkdir()
+    box.monkeypatch.chdir(cwd)
+
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-901"}
+    assert len(found) == 1
+    receipts.joinpath("WOT-2026-901z.json").unlink()
+    out = {}
+    assert box.m.check_im_sin_asentar(out, {}) == []
+    assert out["im_sin_asentar"] == []
+
+
+def test_im_sin_asentar_146f_m05_ticket_slot_y_frontera(box):
+    """m-05: solo el slot posterior a la frontera dispara por el recibo sintetico."""
+    sessions = [
+        _im_tr_session(
+            "IM-902",
+            "post-thread",
+            ticket=None,
+            status="TERMINADA",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-903",
+            "before-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-26T17:00:00+01:00",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-904",
+            "missing-thread",
+            ticket=None,
+            status="TERMINADA",
+            started=None,
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-905",
+            "naive-thread",
+            status="TERMINADA",
+            started="2026-11-26T18:00:00",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-906",
+            "invalid-started-thread",
+            status="TERMINADA",
+            started="ayer",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-907",
+            "integer-started-thread",
+            status="TERMINADA",
+            started=123,
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-908",
+            "long-slot-thread",
+            status="TERMINADA",
+            slot="vuelo-" + "20261026b",
+        ),
+    ]
+    assert all("ticket" not in session for session in sessions[:3])
+    rows = [_im_tr_row(session["threadId"]) for session in sessions]
+    _im_tr_store(
+        box, rows, [(session["threadId"], "running", 1) for session in sessions]
+    )
+    _im_tr_registry(box, sessions)
+    _im_tr_receipts(box, ["WOT-2026-902z"])
+    _im_tr_cfg(box)
+
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-902"}
+    assert out["im_sin_asentar"][0]["ticket"] == "WOT-2026-902z"
+    assert len(found) == 1
+
+
+def test_im_sin_asentar_146f_ticket_explicito_prevalece_sobre_slot(box):
+    """D6: an explicit ticket prevents a conflicting slot ticket from matching."""
+    session = _im_tr_session(
+        "IM-909",
+        "explicit-ticket-thread",
+        ticket="WOT-2026-901z",
+        status="TERMINADA",
+        slot="implantador-902z",
+    )
+    _im_tr_store(
+        box,
+        [_im_tr_row("explicit-ticket-thread")],
+        [("explicit-ticket-thread", "running", 1)],
+    )
+    _im_tr_registry(box, [session])
+    _im_tr_receipts(box, ["WOT-2026-902z"])
+    _im_tr_cfg(box)
+    out = {}
+
+    assert box.m.check_im_sin_asentar(out, {}) == []
+    assert out["im_sin_asentar"] == []
+
+
+def test_im_sin_asentar_146f_started_ilegible_no_rompe(box, monkeypatch):
+    """D6: invalid and non-string started values do not break receipt measurement."""
+    sessions = [
+        _im_tr_session(
+            "IM-910",
+            "invalid-started-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="ayer",
+            slot="implantador-910z",
+        ),
+        _im_tr_session(
+            "IM-911",
+            "integer-started-thread",
+            ticket=None,
+            status="TERMINADA",
+            started=123,
+            slot="implantador-911z",
+        ),
+    ]
+    _im_tr_store(
+        box,
+        [_im_tr_row(session["threadId"]) for session in sessions],
+        [(session["threadId"], "running", 1) for session in sessions],
+    )
+    _im_tr_registry(box, sessions)
+    _im_tr_receipts(box, ["WOT-2026-910z", "WOT-2026-911z"])
+    _im_tr_cfg(box)
+
+    out = {}
+    assert box.m.check_im_sin_asentar(out, {}) == []
+    assert out["im_sin_asentar"] == []
+
+    class DateTimeRaising:
+        @staticmethod
+        def fromisoformat(value):
+            raise TypeError(value)
+
+    monkeypatch.setattr(box.m.dt, "datetime", DateTimeRaising)
+    out = {}
+    assert box.m.check_im_sin_asentar(out, {}) == []
+    assert out["im_sin_asentar"] == []
+
+
+def test_im_sin_asentar_146f_omitidas_existe_tambien_en_rutas_ciegas(box):
+    """D3: the omissions list is present even when measurement is blind."""
+    missing_store = box.root / "missing-store.sqlite"
+    box.monkeypatch.setenv("T3_STATE_DB", str(missing_store))
+    _im_tr_registry(box, [_im_tr_session("IM-914", "thread-914")])
+    _im_tr_cfg(box)
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "store no medido"
+    assert found[0][:2] == ("im-sin-asentar", "AVISO")
+
+    missing_store.write_bytes(b"not sqlite")
+    _im_tr_cfg(box)
+    out = {}
+    box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "store no medido"
+
+    _im_tr_store(box, [_im_tr_row("thread-914")], [("thread-914", "running", 1)])
+    registry = _im_tr_registry(box, [_im_tr_session("IM-914", "thread-914")])
+    registry.unlink()
+    _im_tr_cfg(box)
+    out = {}
+    box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+
+    registry.write_text("{invalid", encoding="utf-8")
+    _im_tr_cfg(box)
+    out = {}
+    box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+
+    _im_tr_registry(
+        box, [{"code": "IM-914", "role": "implantacion", "status": "ACTIVA"}]
+    )
+    _im_tr_cfg(box)
+    out = {}
+    box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+
+
+def test_im_sin_asentar_146f_frontera_igualdad_exacta(box):
+    """D6: a receipt at the exact frontier fires, one second before does not."""
+    sessions = [
+        _im_tr_session(
+            "IM-915",
+            "frontier-equal-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-26T17:28:44+01:00",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-916",
+            "frontier-before-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-26T17:28:43+01:00",
+            slot="implantador-901z",
+        ),
+    ]
+    assert all("ticket" not in session for session in sessions)
+    _im_tr_store(
+        box,
+        [_im_tr_row(session["threadId"]) for session in sessions],
+        [(session["threadId"], "running", 1) for session in sessions],
+    )
+    _im_tr_registry(box, sessions)
+    _im_tr_receipts(box, ["WOT-2026-901z", "WOT-2026-902z"])
+    _im_tr_cfg(box)
+
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-915"}
+    assert out["im_sin_asentar"][0]["ticket"] == "WOT-2026-902z"
+    assert len(found) == 1
+
+
+def test_im_sin_asentar_146f_started_sufijo_z(box):
+    """D6: Python 3.10 accepts a final UTC Z after detector normalization."""
+    sessions = [
+        _im_tr_session(
+            "IM-917",
+            "z-late-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-27T10:00:00Z",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-918",
+            "z-early-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-26T16:00:00Z",
+            slot="implantador-901z",
+        ),
+        _im_tr_session(
+            "IM-919",
+            "z-equal-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-26T16:28:44Z",
+            slot="implantador-901z",
+        ),
+        _im_tr_session(
+            "IM-920",
+            "z-invalid-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="zz",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-921",
+            "zz-invalid-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-27T10:00:00ZZ",
+            slot="implantador-902z",
+        ),
+    ]
+    assert all("ticket" not in session for session in sessions)
+    _im_tr_store(
+        box,
+        [_im_tr_row(session["threadId"]) for session in sessions],
+        [(session["threadId"], "running", 1) for session in sessions],
+    )
+    _im_tr_registry(box, sessions)
+    _im_tr_receipts(box, ["WOT-2026-901z", "WOT-2026-902z"])
+    _im_tr_cfg(box)
+
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-917", "IM-919"}
+    assert {item["ticket"] for item in out["im_sin_asentar"]} == {
+        "WOT-2026-901z",
+        "WOT-2026-902z",
+    }
+    assert len(found) == 2
 
 
 def test_im_sin_asentar_mutation_m01_disparo_por_recibo_y_por_run_completed(box):
