@@ -167,6 +167,21 @@ Recorre ítem por ítem.
    dar el PLAN por listo. Si la Metadata es tabla: FALLA con severidad ALTO
    (bloquea el handoff antes de que Builder arranque).
 
+13. **Alcanzabilidad del contrato frente al FLT y al estado post-DoD**
+   ¿El auditor ha EJECUTADO `check_deliverables_exist.py` —no se limita a
+   leerlo, citarlo o comprobar que existe— contra una copia temporal que
+   represente el estado posterior a aplicar el DoD, usando el mismo mecanismo
+   de resolución de proyecto (`AGENT_PROJECT_ROOT`/`TEST_PROJECT_ROOT`)? Cruza
+   después los paths declarados en `Files Likely Touched` (FLT) con verbos de
+   reubicación del DoD, como `mover`, `archivar` o `git mv`, y señala cualquier
+   caso en que el DoD ordene reubicar una ruta que el FLT declara como artefacto
+   fijo. Esta detección por verbos es una heurística textual: puede producir un
+   falso positivo cuando el DoD menciona `git mv` o un verbo de reubicación en
+   prosa histórica o explicativa sin ordenar una reubicación real; el auditor
+   debe revisar el contexto. Como recomendación no prescriptiva para reducir
+   ese análisis manual, puede considerarse `deliverables_gate_receipt`; este
+   item no exige añadir ese campo ni prescribe la solución del sub-ticket 3.
+
 ---
 
 ## Verificaciones adicionales
