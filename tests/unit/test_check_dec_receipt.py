@@ -1387,3 +1387,138 @@ def test_043a_project_root_con_solo_buzones_conocidos_sigue_universo_vacio(
     rc = cdr.main(["--motor-root", str(motor), "--project-root", str(destino)])
 
     assert rc == cdr.EXIT_EMPTY_UNIVERSE
+
+
+# WOT-2026-089d: pines de mutantes K6/K7 y clausulas menores d-05 a d-07.
+
+
+def test_089d_k6_el_ejemplo_del_diagnostico_no_conserva_espacios_finales(
+    tmp_path: Path,
+) -> None:
+    """Mata K6b: el ejemplo se recorta tambien por el extremo derecho.
+
+    El mutante hermano K6a es NO-PINEABLE: `load_destino_registry` usa
+    `_RE_DESTINO_HEADING`, cuyo final admite `\\s*(?:--|$)`, y `^#{1,6}` solo
+    mira el inicio; por eso un blanco final no cambia el id cargado.
+    """
+    registry = _write_registry_file(
+        tmp_path / "decisions.md", ["### DEC-001 - viejo \t"]
+    )
+
+    assert cdr.destino_heading_diagnostic(registry) == (
+        1,
+        0,
+        "### DEC-001 - viejo",
+    )
+
+
+def test_089d_k7_cargador_usa_reemplazo_para_bytes_invalidos(tmp_path: Path) -> None:
+    """Mata K7 en `load_destino_registry`: el byte invalido rompe el id."""
+    registry = tmp_path / "decisions.md"
+    registry.write_bytes(b"### DEC-RDS-\xff001 -- titulo\n")
+
+    assert cdr.load_destino_registry(registry) == set()
+
+
+def test_089d_k7_diagnostico_conserva_el_reemplazo_en_el_ejemplo(
+    tmp_path: Path,
+) -> None:
+    """Mata K7 en `destino_heading_diagnostic`: replace deja el ejemplo roto."""
+    registry = tmp_path / "decisions.md"
+    registry.write_bytes(b"### DEC-RDS-\xff001 -- titulo\n### DEC-001 - viejo\n")
+
+    assert cdr.destino_heading_diagnostic(registry) == (
+        2,
+        0,
+        "### DEC-RDS-\ufffd001 -- titulo",
+    )
+
+
+def test_089d_k7_check_file_rechaza_el_id_con_byte_invalido(tmp_path: Path) -> None:
+    """Mata K7 en `check_file`: replace impide aceptar un id corrupto."""
+    ficha = tmp_path / "FP-20261126-k7-check-file.tickets.md"
+    ficha.write_bytes(b"Recibo: DEC-RDS-\xff001 (motor)\n")
+
+    assert cdr.check_file(ficha, {"RDS-001"}, None) == (
+        "ERROR",
+        "FP-20261126-k7-check-file.tickets.md: sin recibo DEC valido. "
+        "Formas aceptadas: 'DEC-<id> (motor)', 'DEC-<id> (destino)', "
+        "'DEC-no-aplica: <motivo>'. Un DEC-<id> citado debe EXISTIR en el "
+        "registro que su scope declara.",
+    )
+
+
+def test_089d_k7_count_frozen_no_ignora_byte_invalido(tmp_path: Path) -> None:
+    """Mata K7 en `count_frozen_contracts`: replace conserva status no valido."""
+    contracts = tmp_path / "ticket_contracts.md"
+    contracts.write_bytes(b"## T-0001-001 -- x\n- **status:** froz\xffen\n")
+
+    assert cdr.count_frozen_contracts(contracts) == 0
+
+
+def test_089d_k7_contratos_no_ignora_byte_invalido_en_la_cita(
+    tmp_path: Path,
+) -> None:
+    """Mata K7 en `check_ticket_contracts_file`: replace no crea una cita valida."""
+    contracts = tmp_path / "ticket_contracts.md"
+    contracts.write_bytes(
+        b"## T-0001-001 -- x\n"
+        b"- **status:** frozen\n"
+        b"- `DEC-RDS-\xff001` (`<MOTOR>/docs/decisions/DEC-RDS-\xff001-real.md`, "
+        b"Estado: DECIDED)\n"
+    )
+
+    assert cdr.check_ticket_contracts_file(contracts, {"RDS-001"}, None) == []
+
+
+def test_089d_menor_el_diagnostico_no_escribe_en_ningun_sitio(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Mata d-05: el diagnostico solo lee y cualquier escritura es un fallo."""
+    registry = _write_registry_file(tmp_path / "decisions.md", ["### DEC-001 - viejo"])
+
+    def _rechazar_escritura(*args: object, **kwargs: object) -> None:
+        raise AssertionError("el diagnostico no puede escribir")
+
+    monkeypatch.setattr(Path, "write_text", _rechazar_escritura)
+    monkeypatch.setattr(Path, "write_bytes", _rechazar_escritura)
+    monkeypatch.setattr(Path, "mkdir", _rechazar_escritura)
+    monkeypatch.setattr(Path, "unlink", _rechazar_escritura)
+
+    original_open = Path.open
+
+    def _open_solo_lectura(
+        self: Path, mode: str = "r", *args: object, **kwargs: object
+    ) -> object:
+        if any(flag in mode for flag in ("w", "a", "x", "+")):
+            raise AssertionError("el diagnostico no puede abrir para escritura")
+        return original_open(self, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _open_solo_lectura)
+
+    assert cdr.destino_heading_diagnostic(registry) == (
+        1,
+        0,
+        "### DEC-001 - viejo",
+    )
+
+
+def test_089d_menor_el_ejemplo_no_conserva_ningun_id_de_un_segmento() -> None:
+    """Mata d-06: ambos ficheros de ejemplo rechazan cualquier `DEC-<n>`."""
+    base = _EXAMPLES_DIR / "python_service_minimal"
+    single_segment = re.compile(r"DEC-\d+(?![\d-])")
+
+    for path in (base / "decisions.md", base / "evidence_catalog.md"):
+        text = path.read_text(encoding="utf-8")
+        assert single_segment.search(text) is None, path
+
+
+def test_089d_menor_el_prompt_ensena_al_menos_una_cabecera_nueva() -> None:
+    """Mata d-07: el prompt conserva al menos una cabecera de schema nueva."""
+    headings = [
+        line
+        for line in _SCHEMA_PROMPT.read_text(encoding="utf-8").splitlines()
+        if line.startswith("### DEC-<familia>-<NNN> -- <titulo corto>")
+    ]
+
+    assert len(headings) >= 1
