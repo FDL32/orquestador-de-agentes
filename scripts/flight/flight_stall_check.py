@@ -2809,6 +2809,29 @@ def _im_tr_ticket(session):
     return f"WOT-2026-{match.group(1)}" if match else None
 
 
+def _im_tr_started(value):
+    """Parse an IM/TR start timestamp, including Python 3.10 UTC suffixes.
+
+    Before: ``value`` may be a registry timestamp string, a non-string, or an
+        invalid/naive timestamp.
+    During: trim the value, normalize only a final ``Z``/``z`` to ``+00:00``,
+        parse it, and reject parse errors and timestamps without timezone data.
+    After: return an aware datetime or ``None`` without propagating parse errors.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text[-1:] in ("Z", "z"):
+        if text[-2:-1] in ("Z", "z"):
+            return None
+        text = text[:-1] + "+00:00"
+    try:
+        started_at = dt.datetime.fromisoformat(text)
+    except (ValueError, TypeError):
+        return None
+    return started_at if started_at.tzinfo is not None else None
+
+
 def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrato
     """Detect active IM/TR sessions whose integration is not settled.
 
@@ -2935,20 +2958,13 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
             out["im_sin_asentar_omitidas"].append(code)
             continue
         ticket = _im_tr_ticket(session)
-        receipt_trigger = False
-        started = session.get("started")
-        if isinstance(started, str):
-            try:
-                started_at = dt.datetime.fromisoformat(started)
-            except (ValueError, TypeError):
-                started_at = None
-            receipt_trigger = bool(
-                started_at is not None
-                and started_at.tzinfo is not None
-                and started_at >= FRONTERA_RECIBO_IM_TR
-                and ticket is not None
-                and ticket in integrated
-            )
+        started_at = _im_tr_started(session.get("started"))
+        receipt_trigger = bool(
+            started_at is not None
+            and started_at >= FRONTERA_RECIBO_IM_TR
+            and ticket is not None
+            and ticket in integrated
+        )
         run_trigger = thread_state.get(thread_id, False)
         if receipt_trigger or run_trigger:
             unsettled.append(

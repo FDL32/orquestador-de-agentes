@@ -5673,6 +5673,71 @@ def test_im_sin_asentar_146f_frontera_igualdad_exacta(box):
     assert len(found) == 1
 
 
+def test_im_sin_asentar_146f_started_sufijo_z(box):
+    """D6: Python 3.10 accepts a final UTC Z after detector normalization."""
+    sessions = [
+        _im_tr_session(
+            "IM-917",
+            "z-late-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-27T10:00:00Z",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-918",
+            "z-early-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-26T16:00:00Z",
+            slot="implantador-901z",
+        ),
+        _im_tr_session(
+            "IM-919",
+            "z-equal-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-26T16:28:44Z",
+            slot="implantador-901z",
+        ),
+        _im_tr_session(
+            "IM-920",
+            "z-invalid-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="zz",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-921",
+            "zz-invalid-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-27T10:00:00ZZ",
+            slot="implantador-902z",
+        ),
+    ]
+    assert all("ticket" not in session for session in sessions)
+    _im_tr_store(
+        box,
+        [_im_tr_row(session["threadId"]) for session in sessions],
+        [(session["threadId"], "running", 1) for session in sessions],
+    )
+    _im_tr_registry(box, sessions)
+    _im_tr_receipts(box, ["WOT-2026-901z", "WOT-2026-902z"])
+    _im_tr_cfg(box)
+
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-917", "IM-919"}
+    assert {item["ticket"] for item in out["im_sin_asentar"]} == {
+        "WOT-2026-901z",
+        "WOT-2026-902z",
+    }
+    assert len(found) == 2
+
+
 def test_im_sin_asentar_mutation_m01_disparo_por_recibo_y_por_run_completed(box):
     """M-01: un recibo y un run completed son dos disparadores independientes."""
     rows = [_im_tr_row("im-thread"), _im_tr_row("tr-thread")]
