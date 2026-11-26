@@ -1,14 +1,25 @@
+---
+paths:
+  - ".claude/**"
+  - ".env*"
+  - "privada/**"
+  - ".agent/hooks/**"
+  - "scripts/pip_audit_project.py"
+  - ".agent/collaboration/**"
+  - "agent_system/refactor_kit/**"
+  - "skills/**"
+---
 # Claude Code Rules (Modular Context)
 
 > **Ojo: en Claude Code TODO `.md` de este directorio sin frontmatter `paths:` se autocarga en
 > cada sesion** (no es "bajo demanda") y suma al gate Claude (`measure_agents_md_units.py` lo
 > cuenta: `autoloaded_rules`). Aqui solo va lo que una sesion necesita siempre o
-> casi siempre; lo condicional vive en `.agent/rules/common/` (no se autocarga).
+> casi siempre; lo condicional declara `paths:` y se carga solo al tocar superficies coincidentes.
 
-## En este directorio (se autocargan en Claude Code):
-- `00-startup.md`: protocolo de inicio, carga de memoria y puntero a quality gates.
-- `01-security-architecture.md`: si tocas variables de entorno, hooks o permisos.
-- `README.md`: este indice y router.
+## En este directorio:
+- `00-startup.md` se autocarga en cada sesion (sin `paths:`).
+- `01-security-architecture.md` es condicional (`paths:`) y se carga al tocar `.claude/**`, `.env*`, `privada/**`, `.agent/hooks/**` o `scripts/pip_audit_project.py`.
+- `README.md` es indice/router condicional (`paths:`).
 
 ## Router (si tocas X, lee Y; no se autocarga):
 - `.agent/collaboration/` (work_plan, logs, TURN, backlog): `.agent/rules/common/session_artifacts.md`.
