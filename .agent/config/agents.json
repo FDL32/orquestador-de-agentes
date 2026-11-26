@@ -2577,7 +2577,6 @@
     "eligible_coverage": {
       "MANAGER_REVIEW:repo_motor": {
         "backend_keys": [
-          "BA257",
           "BA258",
           "BA259",
           "BA150",
@@ -3352,9 +3351,9 @@
     "lentes_p34": {
       "candidatos": [
         {
-          "backend_key": "BA257",
+          "backend_key": "BA258",
           "orden": {
-            "messageId": "2ebbe20e-2f64-48ad-b298-3187da4861cc"
+            "messageId": "0ab5373a-0d35-49e7-af4f-e3e7c38d8c15"
           }
         },
         {
@@ -3367,9 +3366,6 @@
           "orden": {
             "messageId": "2ebbe20e-2f64-48ad-b298-3187da4861cc"
           }
-        },
-        {
-          "backend_key": "BA258"
         },
         {
           "backend_key": "BA259"

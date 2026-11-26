@@ -805,7 +805,6 @@ def test_real_derived_eligible_and_pending_posts():
     module = _load_module()
     document, assignments = module.load_declaration(module.DEFAULT_AGENTS_JSON)
     assert module.derive_eligible(assignments, document) == [
-        "BA257",
         "BA258",
         "BA259",
         "BA150",
@@ -840,11 +839,11 @@ def test_real_derived_eligible_and_pending_posts():
         assignments,
         "lentes_p34",
         backends,
-        excluir_familias=("codex", "claude", "mimo"),
+        excluir_familias=("codex", "claude", "qwen"),
     )
     assert (first["candidato"]["backend_key"], first["info"]["familia"]) == (
-        "BA257",
-        "mimo",
+        "BA258",
+        "qwen",
     )
     assert (second["info"]["tipo"], second["info"]["familia"]) == (
         "t3_session",
@@ -875,7 +874,7 @@ def test_cli_main_success_pending_and_unreadable(tmp_path, capsys):
         == 0
     )
     payload = json.loads(capsys.readouterr().out)
-    assert payload["candidato"]["backend_key"] == "BA257"
+    assert payload["candidato"]["backend_key"] == "BA258"
     assert (
         module.main(["im.revisor", "--agents-json", str(tmp_path / "missing.json")])
         == 3
