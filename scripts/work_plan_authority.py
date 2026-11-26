@@ -38,6 +38,7 @@ After:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -52,6 +53,15 @@ REASON_NO_SECTION = "no_metadata_section"
 _METADATA_HEADING = "Metadata"
 
 _ABSENT = object()
+
+VALID_DELIVERABLE_TYPES = ("code", "documentation", "research", "analysis", "mixed")
+DEFAULT_DELIVERABLE_TYPE = "code"
+
+_DELIVERABLE_TYPE_FIELD = re.compile(
+    r"^\s*(?:[-*]\s+)?\*{0,2}deliverable_type\*{0,2}\s*:\s*\*{0,2}"
+    r"\s*([A-Za-z]+(?:\s*\+\s*[A-Za-z]+)*)",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 def _import_scope_gate():
@@ -120,3 +130,32 @@ def resolve_delivery_authority_from_content(content: str) -> tuple[str, str]:
 def read_delivery_authority(content: str) -> str:
     """Version valor-unico para consumidores con firma ``-> str``."""
     return resolve_delivery_authority_from_content(content)[0]
+
+
+def resolve_deliverable_type_from_content(content: str) -> tuple[str, str]:
+    """Devuelve ``(valor, motivo)`` del campo ``deliverable_type``.
+
+    Before: ``content`` es la prosa cruda de un ``work_plan.md`` y puede estar
+        vacia o malformada.
+    During: corta la seccion ``## Metadata`` y busca alli una declaracion del
+        campo; un valor compuesto con ``+`` se normaliza a ``mixed``.
+    After: devuelve un tipo valido y un motivo nombrado; el default ``code``
+        conserva el camino estricto cuando falta la declaracion.
+    """
+    section = metadata_section(content)
+    if section is None:
+        return DEFAULT_DELIVERABLE_TYPE, REASON_NO_SECTION
+    match = _DELIVERABLE_TYPE_FIELD.search(section)
+    if match is None:
+        return DEFAULT_DELIVERABLE_TYPE, REASON_NO_FIELD
+    value = match.group(1).strip().lower()
+    if "+" in value:
+        return "mixed", REASON_METADATA_FIELD
+    if value not in VALID_DELIVERABLE_TYPES:
+        return DEFAULT_DELIVERABLE_TYPE, REASON_NO_FIELD
+    return value, REASON_METADATA_FIELD
+
+
+def read_deliverable_type(content: str) -> str:
+    """Version valor-unico para consumidores con firma ``-> str``."""
+    return resolve_deliverable_type_from_content(content)[0]
