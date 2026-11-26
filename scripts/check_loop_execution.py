@@ -1238,6 +1238,77 @@ def nonce_fanouts(
     return fanouts
 
 
+def backend_labs_from_config(config: dict | None = None) -> dict[str, str]:
+    """Extrae el mapa estricto ``backend_key -> lab`` del registro del motor.
+
+    Before: ``config`` es la configuracion del motor o ``None`` para cargarla.
+    During: acepta solo entradas con ``lab`` string no vacio bajo
+        ``ensemble_registry.backend_keys``; cualquier forma degenerada se
+        omite sin inferir el laboratorio desde otra seccion.
+    After: devuelve un mapa valido, o `{}` si la carga o la estructura falla.
+    """
+    try:
+        source = config if config is not None else load_motor_config()
+        registry = source.get("ensemble_registry")
+        backend_keys = (
+            registry.get("backend_keys") if isinstance(registry, dict) else None
+        )
+        if not isinstance(backend_keys, dict):
+            return {}
+        return {
+            key: entry["lab"]
+            for key, entry in backend_keys.items()
+            if isinstance(key, str)
+            and key
+            and isinstance(entry, dict)
+            and isinstance(entry.get("lab"), str)
+            and entry["lab"].strip()
+        }
+    except Exception:
+        return {}
+
+
+def lab_independence_warnings(
+    scorecard_rows: list[dict],
+    emitted: list[dict],
+    *,
+    commit_sha: str,
+    backend_labs: dict[str, str] | None,
+    loop_id: str | None = None,
+) -> list[dict]:
+    """Nombra nonces cuya diversidad de laboratorios es menor que la de claves.
+
+    Before: ``scorecard_rows`` y ``emitted`` son las entradas del mismo commit;
+        ``backend_labs`` es el mapa validado por `backend_labs_from_config`.
+    During: reutiliza ``nonce_fanouts`` y asigna a cada clave desconocida una
+        identidad propia ``unknown:<backend_key>``; cada nonce se evalua aislado.
+    After: devuelve una entrada por nonce con aviso, sin modificar el veredicto
+        de ejecucion ni producir avisos cuando el mapa esta vacio.
+    """
+    if not backend_labs:
+        return []
+    warnings: list[dict] = []
+    fanouts = nonce_fanouts(
+        scorecard_rows, emitted, commit_sha=commit_sha, loop_id=loop_id
+    )
+    for nonce, backends in sorted(fanouts.items()):
+        lab_ids = {
+            backend_labs.get(backend_key) or f"unknown:{backend_key}"
+            for backend_key in backends
+        }
+        if len(lab_ids) < len(backends):
+            warnings.append(
+                {
+                    "nonce": nonce,
+                    "backends": sorted(backends),
+                    "labs": sorted(lab_ids),
+                    "distinct_backends": len(backends),
+                    "distinct_labs": len(lab_ids),
+                }
+            )
+    return warnings
+
+
 def fabricated_nonce_rounds(
     scorecard_rows: list[dict],
     emitted: list[dict],
@@ -1674,6 +1745,7 @@ def audit_commit(
     commit_sha: str,
     min_distinct: int,
     loop_id: str | None = None,
+    backend_labs: dict[str, str] | None = None,
 ) -> dict:
     """Veredicto para UN commit: {commit_sha, distinct_backends, min_distinct, ok}.
 
@@ -1702,6 +1774,13 @@ def audit_commit(
         }
         for nonce, instancia in sorted(fanouts.items())
     ]
+    lab_warnings = lab_independence_warnings(
+        scorecard_rows,
+        emitted,
+        commit_sha=commit_sha,
+        backend_labs=backend_labs,
+        loop_id=loop_id,
+    )
 
     def is_level_candidate(row: dict) -> bool:
         if row.get("event", "ronda") != "ronda":
@@ -1751,6 +1830,8 @@ def audit_commit(
     }
     if level_failures:
         result["level_failures"] = level_failures
+    if lab_warnings:
+        result["lab_warnings"] = lab_warnings
     return result
 
 
@@ -1821,9 +1902,14 @@ def audit(
     coverage_entry: dict | None = None
     coverage_reason: str | None = None
     coverage_key: str | None = None
-    cfg: dict | None = None
+    cfg: dict | None = config
+    if cfg is None:
+        try:
+            cfg = load_motor_config()
+        except Exception:
+            cfg = {}
+    backend_labs = backend_labs_from_config(cfg)
     if phase is not None and delivery_authority is not None:
-        cfg = config if config is not None else load_motor_config()
         coverage_entry, coverage_reason, coverage_key = load_eligible_coverage(
             cfg, phase, delivery_authority
         )
@@ -1864,6 +1950,7 @@ def audit(
             commit_sha=sha,
             min_distinct=plan["applied_min"],
             loop_id=loop_id,
+            backend_labs=backend_labs,
         )
         if plan["eligible"] is not None:
             reason_map = apply_eligible_reasons(coverage_entry or {}, plan["removed"])
@@ -2124,6 +2211,22 @@ def _print_reserve(v: dict) -> None:
         )
 
 
+def _print_lab_warnings(v: dict) -> None:
+    """Imprime una linea ``WARN-LAB`` por cada nonce con laboratorios repetidos.
+
+    Before: ``v`` es un veredicto que puede contener ``lab_warnings``.
+    During: recorre solo esas entradas y deja intactos el estado y el exit code.
+    After: imprime una advertencia informativa por nonce, o nada si no existe.
+    """
+    for warning in v.get("lab_warnings") or []:
+        print(
+            f"[loop-exec]   WARN-LAB {warning['nonce'][:12]}...: "
+            f"{warning['distinct_labs']}/{warning['distinct_backends']} "
+            f"laboratorios distintos para {warning['backends']} "
+            f"(labs={warning['labs']})"
+        )
+
+
 def _print_verdict(v: dict) -> None:
     """Imprime UN veredicto por-commit y sus senales, todas NOMBRADAS.
 
@@ -2137,6 +2240,7 @@ def _print_verdict(v: dict) -> None:
         f"{len(v['distinct_backends'])}/{v['min_distinct']} lentes distintas "
         f"{v['distinct_backends']}"
     )
+    _print_lab_warnings(v)
     # WOT-2026-129y: bloqueos de cobertura NOMBRADOS (DoD 2) antes de senales.
     if v.get("coverage_error"):
         print(f"[loop-exec]   COBERTURA {v.get('coverage_key')}: {v['coverage_error']}")
