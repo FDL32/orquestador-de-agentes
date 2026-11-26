@@ -157,4 +157,5 @@ def test_m08_removing_real_commit_trace_is_detected(tmp_path: Path) -> None:
 def test_m10_docstring_declares_limit_and_surface_source() -> None:
     text = SCRIPT.read_text(encoding="utf-8")
     assert "LIMITE DECLARADO" in text
-    assert "GUARD_SURFACE" in text
+    assert "GUARD_DIRS" in text
+    assert "GUARD_PREFIXES" in text

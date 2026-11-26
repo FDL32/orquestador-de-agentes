@@ -12,8 +12,9 @@ classification is missing.
 LIMITE DECLARADO: this protects the session-close evidence path for commits
 that touch the declared guard surfaces and gate machinery. It does not detect
 an unblock that touches neither surface, and it does not prevent local commits.
-The source of guard surfaces is the versioned ``GUARD_SURFACE_PREFIXES``
-constant below; the gate-machinery list is ``GATE_SURFACES``.
+The source of guard surfaces is the versioned ``GUARD_DIRS`` and
+``GUARD_PREFIXES`` imported from ``scripts/check_guard_wiring.py``; the
+gate-machinery list is ``GATE_SURFACES``.
 """
 
 from __future__ import annotations
@@ -24,17 +25,16 @@ import subprocess
 from pathlib import Path
 
 
+try:
+    from scripts.check_guard_wiring import GUARD_DIRS, GUARD_PREFIXES
+except ModuleNotFoundError:
+    from check_guard_wiring import GUARD_DIRS, GUARD_PREFIXES
+
+
 MOTOR_ROOT = Path(__file__).resolve().parent.parent
 # Measured from the repo_destino, not from the motor. Keep this explicit so a
 # future maintainer cannot silently replace it with motor HEAD^.
 CUTOFF_SHA = "ac56dcc77d80dbe350a73b7deaf9286e7f74d5c1"
-GUARD_SURFACE_PREFIXES = (
-    "scripts/check_",
-    "scripts/validate_",
-    "scripts/guard_",
-    "scripts/prepush_check.py",
-    ".agent/hooks/",
-)
 GATE_SURFACES = frozenset(
     {
         "scripts/prepush_check.py",
@@ -99,7 +99,14 @@ def _commit_data(root: Path, sha: str) -> tuple[int, str, list[str], str]:
 
 
 def _is_guard_surface(path: str) -> bool:
-    return any(path.startswith(prefix) for prefix in GUARD_SURFACE_PREFIXES)
+    normalized = path.replace("\\", "/")
+    if not normalized.endswith(".py"):
+        return False
+    stem = Path(normalized).stem
+    return stem.startswith(GUARD_PREFIXES) and any(
+        normalized == directory or normalized.startswith(f"{directory}/")
+        for directory in GUARD_DIRS
+    )
 
 
 def _is_grandfathered(sha: str) -> bool:
