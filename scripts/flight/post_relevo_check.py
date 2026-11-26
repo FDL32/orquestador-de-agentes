@@ -60,6 +60,13 @@ except Exception as _role_key_exc:
 
 ACK_RE = re.compile(r"ACTIVA\s*\(ACK medido\s+(?P<ts>[^)]+)\)")
 STATE_NAME = "post_relevo_state.json"
+_CO_CURRENT_STATUS_PREFIXES = ("ACTIVA", "SUPERVISORA", "FALLIDA", "ENTREGADO")
+_CO_SETTLED_STATUS_MARKERS = (
+    "ASENTADA",
+    "SETTLED",
+    "CASCADA DE CONTEXTO",
+    "CASCADA ASENTADA",
+)
 
 
 @dataclass(frozen=True)
@@ -135,7 +142,14 @@ def _load_sibling(name: str):
     return module
 
 
-def _alert(key: str, message: str, ops_dir: Path, session_code: str) -> int:
+def _alert(
+    key: str,
+    message: str,
+    ops_dir: Path,
+    session_code: str,
+    *,
+    level: str = "URGENTE",
+) -> int:
     """Emit one alert through comms_alert and preserve its ledger contract.
 
     Before: ops_dir is the explicit heartbeat operations directory.
@@ -147,7 +161,7 @@ def _alert(key: str, message: str, ops_dir: Path, session_code: str) -> int:
         alerts.configure(str(ops_dir))
         return alerts.event(
             key,
-            "URGENTE",
+            level,
             "Post-relevo",
             message,
             False,
@@ -238,6 +252,48 @@ def _apta_unclaimed(backlog: Path, registry_path: Path) -> bool:
     return any(item.get("apta") and not item.get("tiene_brief") for item in decisions)
 
 
+def _co_outside_triad(  # noqa: C901 - triad/status classification mirrors contract clauses
+    sessions: list[dict], roles: object
+) -> list[str]:
+    """Return current coordinator rows whose identity is outside the active triad.
+
+    Before: ``sessions`` is the validated registry list and ``roles`` is the roster
+        active-role mapping.
+    During: collect session-code and thread-id identities from all active roles,
+        then select only CO rows with a current status (ACTIVA, SUPERVISORA,
+        FALLIDA or ENTREGADO), excluding ASENTADA/SETTLED and historical
+        CASCADA DE CONTEXTO variants, that do not belong to that set.
+    After: return deterministic coordinator codes without mutating either input.
+    """
+
+    def is_current_status(value: object) -> bool:
+        """Classify only explicitly current CO status vocabulary."""
+        status = str(value or "").strip().upper()
+        if not status or any(marker in status for marker in _CO_SETTLED_STATUS_MARKERS):
+            return False
+        return status.startswith(_CO_CURRENT_STATUS_PREFIXES)
+
+    triad = set()
+    if isinstance(roles, dict):
+        for role in roles.values():
+            if isinstance(role, dict):
+                for field in ("session_code", "threadId"):
+                    value = role.get(field)
+                    if isinstance(value, str) and value.strip():
+                        triad.add(value)
+    candidates = []
+    for session in sessions:
+        code = session.get("code")
+        if not isinstance(code, str) or not code.startswith("CO-"):
+            continue
+        if not is_current_status(session.get("status")):
+            continue
+        if code in triad or session.get("threadId") in triad:
+            continue
+        candidates.append(code)
+    return sorted(set(candidates))
+
+
 def _reproduction_command(
     flight_dir: Path, ops_dir: Path, backlog: Path, observed: datetime
 ) -> str:
@@ -266,8 +322,17 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
         roster = _load_json(flight_dir / "flight_roster.json")
         registry_path = flight_dir / "session_registry.json"
         registry = _load_json(registry_path)
+        sessions = registry.get("sessions")
+        if not isinstance(sessions, list) or not all(
+            isinstance(item, dict) for item in sessions
+        ):
+            raise ValueError("registry sessions ilegible")
         incoming_entry = orchestrator_entry(roster["active_roles"])
-        if not isinstance(incoming_entry, dict):
+        if (
+            not isinstance(incoming_entry, dict)
+            or not isinstance(incoming_entry.get("session_code"), str)
+            or not incoming_entry["session_code"].strip()
+        ):
             raise ValueError("coordinadora ausente en active_roles")
         incoming = incoming_entry["session_code"]
         session = _session(registry, incoming)
@@ -287,9 +352,6 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
             return CheckResult(
                 0, f"NO EVALUADO: plazo activo hasta {deadline.isoformat()}"
             )
-        sessions = [
-            item for item in registry.get("sessions", []) if isinstance(item, dict)
-        ]
         checker = _load_sibling("check_cell_conformance.py")
         live_ims = sum(
             item.get("role") == "implantacion" and checker.is_activa(item.get("status"))
@@ -303,29 +365,62 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
             reasons.append("sin IM/TR creados tras el ACTIVO con reporta_a")
         if _apta_unclaimed(backlog, registry_path):
             reasons.append("ficha APTA sin brief")
-        if not reasons:
-            if key in active_keys:
-                rc = _resolve(key, ops_dir)
-                if rc not in (0, 10):
-                    return CheckResult(2, "ERROR: no se pudo resolver alerta")
-                active_keys.remove(key)
-                state["active"] = sorted(active_keys)
+        co_candidates = _co_outside_triad(sessions, roster.get("active_roles"))
+        if co_candidates:
+            reasons.append(
+                "CO asentable fuera de la terna: " + ", ".join(co_candidates)
+            )
+        p24_key = f"{key}-p24"
+        alert_items = []
+        base_reasons = [
+            reason
+            for reason in reasons
+            if not reason.startswith("CO asentable fuera de la terna:")
+        ]
+        if base_reasons:
+            alert_items.append((key, "; ".join(base_reasons)))
+        alert_items.extend(
+            [(p24_key, "CO asentable fuera de la terna: " + ", ".join(co_candidates))]
+            if co_candidates
+            else []
+        )
+        live_keys = {item_key for item_key, _ in alert_items}
+        owned_keys = {
+            item_key
+            for item_key in active_keys
+            if item_key in (key, p24_key) or item_key.startswith(f"{p24_key}-")
+        }
+        for stale_key in sorted(owned_keys - live_keys):
+            rc = _resolve(stale_key, ops_dir)
+            if rc not in (0, 10):
+                return CheckResult(2, "ERROR: no se pudo resolver alerta")
+            active_keys.discard(stale_key)
+        if not alert_items:
+            state["active"] = sorted(active_keys)
+            if owned_keys:
                 _write_state(state_path, state)
             return CheckResult(0, "OK: relevo atendido")
-        message = f"{incoming}: " + "; ".join(reasons)
         command = _reproduction_command(flight_dir, ops_dir, backlog, observed)
-        if key not in active_keys:
-            rc = _alert(key, message, ops_dir, incoming)
+        for alert_key, alert_reason in alert_items:
+            message = f"{incoming}: {alert_reason}"
+            rc = _alert(alert_key, message, ops_dir, incoming)
             if rc not in (0, 10):
                 return CheckResult(
                     2,
-                    f"ERROR: {key}; {message}; comando: {command}",
+                    f"ERROR: {alert_key}; {message}; comando: {command}",
                     tuple(reasons),
                 )
-            active_keys.add(key)
-            state["active"] = sorted(active_keys)
-            _write_state(state_path, state)
-        return CheckResult(1, f"{key}; {message}; comando: {command}", tuple(reasons))
+            active_keys.add(alert_key)
+        state["active"] = sorted(active_keys)
+        _write_state(state_path, state)
+        messages = " | ".join(
+            f"{incoming}: {alert_reason}" for _, alert_reason in alert_items
+        )
+        return CheckResult(
+            1,
+            f"{key}; " + "; ".join(reasons) + f"; {messages}; comando: {command}",
+            tuple(reasons),
+        )
     except (
         OSError,
         KeyError,

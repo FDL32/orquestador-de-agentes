@@ -1368,12 +1368,34 @@ def _huerfano_registry():
         raise ValueError("registry-missing") from exc
 
 
-def _enumerate_processes():
+def _decode_process_stream(value):
+    """Decode PowerShell bytes without letting a locale kill its reader thread.
+
+    Before: ``value`` is stdout/stderr captured as bytes from the Windows PowerShell
+        process.
+    During: prefer UTF-8, then the Windows PowerShell codepage (cp1252), with replacement
+        for an isolated undecodable byte; JSON syntax remains observable to the caller.
+    After: return text suitable for diagnostics or JSON parsing without raising a
+        ``UnicodeDecodeError`` from the subprocess reader.
+    """
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, bytes):
+        return str(value or "")
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError:
+        return value.decode("cp1252", errors="replace")
+
+
+def _enumerate_processes(*, runner=None):
     """Enumerate Windows processes with the production system tools.
 
     Before: Windows exposes ``Get-CimInstance`` and ``Get-Process`` through PowerShell.
     During: collect pid, ppid, executable, command line, creation time, and CPU seconds
-        in one PowerShell invocation, without adding a Python dependency.
+        in one PowerShell invocation, without adding a Python dependency. Capture bytes
+        and decode explicitly so a locale-specific diagnostic cannot break the reader;
+        ``runner`` is injectable for deterministic tests and omitted in production.
     After: return a list of dictionaries, or raise a descriptive error when enumeration fails.
     """
     if os.name != "nt":
@@ -1391,19 +1413,24 @@ def _enumerate_processes():
         "cpu_seconds=if($null -eq $p){0.0}else{[double]$p.CPU}} "
         "} | ConvertTo-Json -Compress"
     )
-    result = subprocess.run(  # noqa: S603 - executable is resolved from system PowerShell PATH
+    run = subprocess.run if runner is None else runner
+    result = run(  # noqa: S603 - executable is resolved from system PowerShell PATH
         [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True,
-        text=True,
+        text=False,
         timeout=30,
         creationflags=NO_WINDOW,
         check=False,
     )
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip().replace("\n", " ")
+        detail = (
+            _decode_process_stream(result.stderr or result.stdout)
+            .strip()
+            .replace("\n", " ")
+        )
         raise RuntimeError(f"powershell-rc-{result.returncode}: {detail[:120]}")
     try:
-        payload = json.loads(result.stdout or "[]")
+        payload = json.loads(_decode_process_stream(result.stdout or b"[]"))
     except json.JSONDecodeError as exc:
         raise RuntimeError("powershell-json-invalido") from exc
     if isinstance(payload, dict):
@@ -2844,15 +2871,18 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
         code = session.get("code")
         role = session.get("role")
         status = session.get("status")
+        if not (
+            role in ("implantacion", "triaje")
+            or (isinstance(code, str) and code.startswith(("IM-", "TR-")))
+        ):
+            continue
         if not isinstance(code, str) or not isinstance(status, str):
-            continue
-        if not (role in ("implantacion", "triaje") or code.startswith(("IM-", "TR-"))):
-            continue
-        if not status.startswith("ACTIVA"):
+            return blind("registry no medido")
+        if status.startswith("ASENTADA"):
             continue
         thread_id = session.get("threadId")
-        if not isinstance(thread_id, str):
-            continue
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            return blind("registry no medido")
         slot = code.split("-", 1)[1] if "-" in code else code
         ticket_candidates = {
             value
@@ -2871,20 +2901,29 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
             )
 
     out["im_sin_asentar"] = unsettled
-    found = [
-        (
-            "im-sin-asentar",
-            "AVISO",
-            f"IM/TR sin asentar: {item['code']} ({item['threadId']})",
+    found = []
+    for item in unsettled:
+        session = next(
+            session for session in sessions if session.get("code") == item["code"]
         )
-        for item in unsettled
-    ]
+        level = (
+            "URGENTE"
+            if not str(session.get("status", "")).startswith("ACTIVA")
+            else "AVISO"
+        )
+        found.append(
+            (
+                f"im-sin-asentar-{item['code']}",
+                level,
+                f"IM/TR sin asentar: {item['code']} ({item['threadId']})",
+            )
+        )
     total_im = sum(item["code"].startswith("IM-") for item in unsettled)
     total_tr = sum(item["code"].startswith("TR-") for item in unsettled)
     if total_im > IM_TOPE:
         found.append(
             (
-                "im-sin-asentar",
+                "im-sin-asentar-tope-im",
                 "AVISO",
                 f"IM sin asentar supera tope {IM_TOPE}: {total_im}",
             )
@@ -2892,7 +2931,7 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
     if total_tr > TR_TOPE:
         found.append(
             (
-                "im-sin-asentar",
+                "im-sin-asentar-tope-tr",
                 "AVISO",
                 f"TR sin asentar supera tope {TR_TOPE}: {total_tr}",
             )

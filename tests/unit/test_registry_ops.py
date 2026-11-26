@@ -2,6 +2,7 @@ import importlib.util
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -79,6 +80,35 @@ def session(code="IM-1"):
         "brief": "preserve me",
         "worktree": "tree-1",
     }
+
+
+@pytest.fixture(autouse=True)
+def synthetic_t3_store(tmp_path, monkeypatch):
+    """Provide a deterministic read-only T3 fixture for ASENTADA tests.
+
+    Before: registry operations must not consult the user's live state store.
+    During: create only the projection tables consumed by ``_t3_settled`` and
+        settle the default synthetic ``thread-1`` row.
+    After: subprocess and direct-module tests resolve the same isolated store.
+    """
+    db = tmp_path / "statev2.sqlite"
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_threads ("
+        "thread_id TEXT, deleted_at TEXT, payload_json TEXT, provider_instance_id TEXT)"
+    )
+    connection.execute(
+        "INSERT INTO orchestration_v2_projection_threads VALUES (?, ?, ?, ?)",
+        (
+            "thread-1",
+            None,
+            json.dumps({"settledAt": "2026-11-11T10:00:00+00:00"}),
+            "t3",
+        ),
+    )
+    connection.commit()
+    connection.close()
+    monkeypatch.setenv("T3_STATE_DB", str(db))
 
 
 def snapshot_entry(thread_id="thread-1", **overrides):
@@ -3576,6 +3606,133 @@ def test_asiento_asentada_con_dos_veredictos_rc0(tmp_path):
         *_settle_args([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}]),
     )
     assert result.returncode == 0
+
+
+def test_asiento_asentada_exige_prueba_t3_por_thread_id(tmp_path, monkeypatch):
+    """m-01: two lenses are insufficient when T3 cannot prove settlement."""
+    registry = tmp_path / "registry.json"
+    write_registry(
+        registry,
+        [{**session(), "role": "implantacion", "started": "2026-11-11T10:00:00+01:00"}],
+    )
+    missing = tmp_path / "missing.sqlite"
+    monkeypatch.setenv("T3_STATE_DB", str(missing))
+
+    result = run_cli(
+        registry,
+        *_settle_args([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}]),
+    )
+
+    assert result.returncode == 2
+    assert "T3 ilegible" in result.stderr
+
+
+def test_asiento_t3_no_medido_sin_motivo_sigue_fail_closed(tmp_path, monkeypatch):
+    """m-02 rojo: el escape de T3 exige un motivo no vacio y no es implícito."""
+    registry = tmp_path / "registry.json"
+    write_registry(
+        registry,
+        [{**session(), "role": "implantacion", "started": "2026-11-11T10:00:00+01:00"}],
+    )
+    monkeypatch.setenv("T3_STATE_DB", str(tmp_path / "missing.sqlite"))
+
+    result = run_cli(
+        registry,
+        *_settle_args([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}]),
+    )
+
+    assert result.returncode != 0
+    assert "settle-no-medido-motivo" in result.stderr
+
+
+def test_asiento_t3_no_medido_con_motivo_registra_escape_identificable(
+    tmp_path, monkeypatch
+):
+    """m-02: el escape acotado permite aplicar y deja una fila auditable nueva."""
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "registry_changes.jsonl"
+    write_registry(
+        registry,
+        [{**session(), "role": "implantacion", "started": "2026-11-11T10:00:00+01:00"}],
+    )
+    monkeypatch.setenv("T3_STATE_DB", str(tmp_path / "missing.sqlite"))
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        "ASENTADA",
+        "--lentes",
+        json.dumps([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}]),
+        "--settle-no-medido-motivo",
+        "store T3 ausente en fixture",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+        "--apply",
+        ledger=str(ledger),
+    )
+
+    assert result.returncode == 0
+    row = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    assert "settle-no-medido-motivo:store T3 ausente en fixture" in row["detail"]
+
+
+def test_asiento_t3_medible_rechaza_motivo_de_escape(tmp_path):
+    """m-02 negativo: el motivo no sustituye una medicion T3 disponible."""
+    registry = tmp_path / "registry.json"
+    write_registry(
+        registry,
+        [{**session(), "role": "implantacion", "started": "2026-11-11T10:00:00+01:00"}],
+    )
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--status",
+        "ASENTADA",
+        "--lentes",
+        json.dumps([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}]),
+        "--settle-no-medido-motivo",
+        "no corresponde",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    )
+
+    assert result.returncode != 0
+    assert "solo aplica" in result.stderr
+
+
+def test_registry_rejects_duplicate_thread_id_before_any_mutation(tmp_path):
+    """m-02: one session key cannot identify two registry rows."""
+    registry = tmp_path / "registry.json"
+    write_registry(
+        registry,
+        [{**session("IM-1")}, {**session("IM-2")}],
+    )
+    before = registry.read_bytes()
+
+    result = run_cli(
+        registry,
+        "nota",
+        "--code",
+        "IM-1",
+        "--nota",
+        "no debe escribir",
+        "--by",
+        "test",
+        "--reason",
+        "test",
+    )
+
+    assert result.returncode == 2
+    assert "threadId duplicado" in result.stderr
+    assert registry.read_bytes() == before
 
 
 @pytest.mark.parametrize("status", ["ASENTADA: done", "ASENTADA (x)", "ASENTADA"])

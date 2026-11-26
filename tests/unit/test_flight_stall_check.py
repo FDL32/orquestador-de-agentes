@@ -10,6 +10,7 @@ import ast
 import datetime as dt
 import importlib.util
 import json
+import locale
 import math
 import os
 import re
@@ -1151,6 +1152,38 @@ def test_busqueda_huerfana_m08_enumeracion_real_incluye_pid_propio():
     rows = module._enumerate_processes()
 
     assert sum(row["pid"] == os.getpid() for row in rows) == 1
+
+
+@pytest.mark.parametrize("locale_encoding", ["utf-8", "cp1252"])
+def test_enumerate_processes_inyectable_tolera_salida_powershell_cp1252(
+    monkeypatch, locale_encoding
+):
+    """La salida PowerShell conserva ``¡`` con cualquier locale reportado."""
+    module = _load()
+    payload = json.dumps(
+        [
+            {
+                "pid": 123,
+                "ppid": 1,
+                "executable": "python.exe",
+                "command_line": "prueba ¡",
+                "created_at": "2026-11-26T15:00:00.0000000Z",
+                "cpu_seconds": 0.0,
+            }
+        ],
+        ensure_ascii=False,
+    ).encode("cp1252")
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append((command, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout=payload, stderr=b"")
+
+    monkeypatch.setattr(locale, "getpreferredencoding", lambda _false: locale_encoding)
+    rows = module._enumerate_processes(runner=runner)
+
+    assert rows[0]["command_line"] == "prueba ¡"
+    assert calls[0][1]["text"] is False
 
 
 def _write_cell_fixtures(box, count, statuses=None, settled_threads=None):
@@ -5320,7 +5353,7 @@ def test_im_sin_asentar_mutation_m01_disparo_por_recibo_y_por_run_completed(box)
 
     assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-101", "TR-102"}
     assert len(found) == 2
-    assert all(item[:2] == ("im-sin-asentar", "AVISO") for item in found)
+    assert all(item[1] == "AVISO" for item in found)
 
 
 def test_im_sin_asentar_mutation_m01_sesion_activa_en_curso_no_dispara(box):
@@ -5418,6 +5451,21 @@ def test_im_sin_asentar_mutation_m04_fail_closed_store_y_registry(box):
     assert found[0][:2] == ("im-sin-asentar", "AVISO")
 
 
+def test_im_sin_asentar_m04_registry_activo_sin_thread_id_is_ciego(box):
+    """m-04: an active IM/TR without its T3 key is unreadable evidence."""
+    _im_tr_store(box, [_im_tr_row("thread-401")], [("thread-401", "running", 1)])
+    _im_tr_registry(
+        box, [{"code": "IM-401", "role": "implantacion", "status": "ACTIVA"}]
+    )
+    _im_tr_cfg(box)
+    out = {}
+
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+    assert found[0][:2] == ("im-sin-asentar", "AVISO")
+
+
 def test_im_sin_asentar_mutation_m05_solo_lectura_y_m08_no_muta(box):
     """M-05/M-08: medir IM/TR no modifica store, registry ni recibos."""
     import hashlib
@@ -5465,3 +5513,95 @@ def test_im_sin_asentar_mutation_asentada_en_registry_no_dispara(box):
     _im_tr_cfg(box)
 
     assert box.m.check_im_sin_asentar({}, {}) == []
+
+
+def test_im_sin_asentar_m03_incluye_raiz_terminada_sin_filtro_activa(box):
+    """m-03: el store conserva una raiz terminada que sigue pendiente de asiento."""
+    _im_tr_store(
+        box,
+        [_im_tr_row("thread-live"), _im_tr_row("thread-done")],
+        [("thread-live", "completed", 1), ("thread-done", "completed", 1)],
+    )
+    _im_tr_registry(
+        box,
+        [
+            _im_tr_session("IM-901", "thread-live", status="ACTIVA"),
+            _im_tr_session("TR-902", "thread-done", status="TERMINADA"),
+        ],
+    )
+    _im_tr_cfg(box)
+
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-901", "TR-902"}
+    assert {item[0] for item in found} == {
+        "im-sin-asentar-IM-901",
+        "im-sin-asentar-TR-902",
+    }
+
+
+def test_im_sin_asentar_m04_clave_propia_por_sesion(box):
+    """m-04: cada IM/TR mantiene una clave de alerta independiente."""
+    _im_tr_store(
+        box,
+        [_im_tr_row("thread-a"), _im_tr_row("thread-b")],
+        [("thread-a", "completed", 1), ("thread-b", "completed", 1)],
+    )
+    _im_tr_registry(
+        box,
+        [
+            _im_tr_session("IM-903", "thread-a"),
+            _im_tr_session("TR-904", "thread-b"),
+        ],
+    )
+    _im_tr_cfg(box)
+
+    found = box.m.check_im_sin_asentar({}, {})
+
+    assert {item[0] for item in found} == {
+        "im-sin-asentar-IM-903",
+        "im-sin-asentar-TR-904",
+    }
+
+
+def test_im_sin_asentar_m05_terminada_es_urgente(box):
+    """m-05: una raiz terminada sin asiento se publica como URGENTE."""
+    _im_tr_store(box, [_im_tr_row("thread-done")], [("thread-done", "completed", 1)])
+    _im_tr_registry(box, [_im_tr_session("IM-905", "thread-done", status="TERMINADA")])
+    _im_tr_cfg(box)
+
+    found = box.m.check_im_sin_asentar({}, {})
+
+    assert found == [
+        ("im-sin-asentar-IM-905", "URGENTE", "IM/TR sin asentar: IM-905 (thread-done)")
+    ]
+
+
+def test_im_sin_asentar_m05_public_alert_repeats_acknowledges_and_resolves(box):
+    """m-05: URGENTE usa comms_alert real por tick, backoff, ack y desaparición."""
+    _im_tr_store(box, [_im_tr_row("thread-done")], [("thread-done", "completed", 1)])
+    _im_tr_registry(box, [_im_tr_session("IM-905", "thread-done", status="TERMINADA")])
+    _im_tr_cfg(box)
+    found = box.m.check_im_sin_asentar({}, {})
+    args = types.SimpleNamespace(baseline=False, dry_run=False)
+
+    assert box.m._notify_all(box.ca, found, args, {}) == 1
+    assert len(box.sent) == 1
+    box.clock.now += 29 * 60
+    assert box.m._notify_all(box.ca, found, args, {}) == 1
+    assert len(box.sent) == 1
+    box.clock.now += 60
+    assert box.m._notify_all(box.ca, found, args, {}) == 1
+    assert len(box.sent) == 2
+
+    key = "im-sin-asentar-IM-905"
+    assert box.ca.ack(key) == 0
+    box.clock.now += 4 * 60 * 60
+    assert box.m._notify_all(box.ca, found, args, {}) == 1
+    assert len(box.sent) == 2
+
+    box.ca.event("other-session", "URGENTE", None, "other", False, False, owner="stall")
+    box.m._reconcile(box.ca, {}, [], args)
+    assert "event:" + key not in box.ca.load_state()
+    assert "event:other-session" in box.ca.load_state()

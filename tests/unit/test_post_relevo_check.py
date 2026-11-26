@@ -117,6 +117,19 @@ def test_no_marker_is_not_evaluated(tmp_path):
     assert "NO EVALUADO" in result.message
 
 
+def test_m04_registry_with_non_object_session_is_unreadable(tmp_path):
+    """m-04: post-relevo does not silently discard malformed registry rows."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].append("corrupta")
+    _write_json(flight / "session_registry.json", registry)
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    assert result.rc == 2
+    assert result.message.startswith("ERROR: post-relevo no medible:")
+
+
 def test_deadline_window_is_fail_open_until_expired(tmp_path, monkeypatch):
     """The detector does not evaluate or alert before the deadline.
 
@@ -345,12 +358,14 @@ def test_resolution_appends_public_ledger_row(tmp_path, monkeypatch):
     assert resolution["resultado"] == "RESOLVED"
 
 
-def test_alert_key_is_unique_and_resolves(tmp_path, monkeypatch):
-    """A repeated condition alerts once and a later clean tick resolves it.
+def test_alert_key_is_stable_and_public_backoff_handles_repetition(
+    tmp_path, monkeypatch
+):
+    """A repeated condition is delegated each tick to the public alert flow.
 
     Before: the same expired condition is evaluated twice.
     During: the fake alert backend records event and resolution operations.
-    After: the second alert is suppressed and the clean tick resolves the key.
+    After: the public comms flow receives both ticks and the clean tick resolves the key.
     """
     module = _load_module()
     flight, ops, backlog, registry = _fixture(tmp_path)
@@ -363,7 +378,7 @@ def test_alert_key_is_unique_and_resolves(tmp_path, monkeypatch):
     first = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
     second = module.evaluate(flight, ops, backlog, now="2026-11-16T17:21:00+00:00")
     assert first.rc == second.rc == 1
-    assert len(events) == 1
+    assert len(events) == 2
 
     registry["sessions"].append(
         {
@@ -378,3 +393,251 @@ def test_alert_key_is_unique_and_resolves(tmp_path, monkeypatch):
     clean = module.evaluate(flight, ops, backlog, now="2026-11-16T17:22:00+00:00")
     assert clean.rc == 0
     assert json.loads((ops / "post_relevo_state.json").read_text())["active"] == []
+
+
+def test_m07_p24_se_anade_con_otra_razon_y_separa_dos_co(tmp_path, monkeypatch):
+    """m-07: P24 no depende de reasons vacio y agrega todos los CO en una clave."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].extend(
+        [
+            {
+                "code": "CO-OUT-1",
+                "role": "orquestadora",
+                "threadId": "co-out-1",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+            },
+            {
+                "code": "CO-OUT-2",
+                "role": "orquestadora",
+                "threadId": "co-out-2",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+            },
+        ]
+    )
+    _write_json(flight / "session_registry.json", registry)
+    calls = []
+    monkeypatch.setattr(
+        module, "_alert", lambda *args, **kwargs: calls.append(args) or 0
+    )
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    keys = {call[0] for call in calls}
+    assert "menos de 2 IM vivos" in result.message
+    assert keys == {
+        "post-relevo-CO-IN",
+        "post-relevo-CO-IN-p24",
+    }
+    assert len([call for call in calls if call[0] == "post-relevo-CO-IN-p24"]) == 1
+    assert "CO-OUT-1, CO-OUT-2" in result.message
+
+
+def test_m07_p24_resuelve_solo_co_desaparecido(tmp_path, monkeypatch):
+    """m-07: desaparecer todos los CO resuelve la clave P24 agregada."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].extend(
+        [
+            {
+                "code": "IM-NEW-1",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "IM-NEW-2",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:30+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "CO-OUT-1",
+                "role": "orquestadora",
+                "threadId": "co-out-1",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+            },
+            {
+                "code": "CO-OUT-2",
+                "role": "orquestadora",
+                "threadId": "co-out-2",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+            },
+        ]
+    )
+    _write_json(flight / "session_registry.json", registry)
+    calls = []
+    monkeypatch.setattr(
+        module, "_alert", lambda *args, **kwargs: calls.append(("alert", args)) or 0
+    )
+    module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    registry["sessions"] = [
+        item
+        for item in registry["sessions"]
+        if item["code"] not in {"CO-OUT-1", "CO-OUT-2"}
+    ]
+    _write_json(flight / "session_registry.json", registry)
+    monkeypatch.setattr(
+        module, "_resolve", lambda *args, **kwargs: calls.append(("resolve", args)) or 0
+    )
+    module.evaluate(flight, ops, backlog, now="2026-11-16T17:21:00+00:00")
+
+    resolved = {args[0] for kind, args in calls if kind == "resolve"}
+    assert resolved == {"post-relevo-CO-IN-p24"}
+
+
+def test_m07_p24_detecta_co_asentable_fuera_de_la_terna(tmp_path, monkeypatch):
+    """m-07: el tick posterior a gracia mide una CO asentable fuera de la terna."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].append(
+        {
+            "code": "IM-NEW-1",
+            "role": "implantacion",
+            "started": "2026-11-16T17:08:00+00:00",
+            "status": "ACTIVA",
+            "reporta_a": "CO-IN",
+        }
+    )
+    registry["sessions"].append(
+        {
+            "code": "IM-NEW-2",
+            "role": "implantacion",
+            "started": "2026-11-16T17:08:30+00:00",
+            "status": "ACTIVA",
+            "reporta_a": "CO-IN",
+        }
+    )
+    registry["sessions"].append(
+        {
+            "code": "CO-OUT",
+            "role": "orquestadora",
+            "threadId": "co-out-thread",
+            "started": "2026-11-16T17:08:00+00:00",
+            "status": "ACTIVA",
+        }
+    )
+    _write_json(flight / "session_registry.json", registry)
+    calls = []
+    monkeypatch.setattr(
+        module, "_alert", lambda *args, **kwargs: calls.append(args) or 0
+    )
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    assert "CO asentable fuera de la terna" in result.message
+    assert calls
+
+
+def test_p24_historic_registry_is_sane_without_toast(tmp_path, monkeypatch):
+    """P24 ignores a realistic registry of historical cascade rows.
+
+    Before: the isolated registry contains one active entrant, two live IMs, and
+        approximately one hundred historical CO rows using production status text.
+    During: run the real comms_alert event path with its notify operation disabled
+        through the module API, so no desktop toast can be emitted.
+    After: the sane registry produces no P24 alert and the alert ledger has no rows.
+    """
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    incoming = registry["sessions"][0]
+    incoming["post_relevo_plazo"] = "2026-11-16T17:07:00+00:00"
+    registry["sessions"].extend(
+        [
+            {
+                "code": "IM-NEW-1",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "IM-NEW-2",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:30+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+        ]
+    )
+    historical = ["CASCADA DE CONTEXTO", "SETTLED", "CASCADA ASENTADA EN T3"]
+    registry["sessions"].extend(
+        {
+            "code": f"CO-HIST-{index:03d}",
+            "role": "orquestadora",
+            "threadId": f"co-hist-{index:03d}",
+            "started": "2026-11-16T16:00:00+00:00",
+            "status": historical[index % len(historical)],
+        }
+        for index in range(100)
+    )
+    _write_json(flight / "session_registry.json", registry)
+    alerts = module._load_sibling("comms_alert.py")
+    alerts.configure(str(ops))
+    monkeypatch.setattr(alerts, "notify", lambda *args, **kwargs: 0)
+    load_sibling = module._load_sibling
+    monkeypatch.setattr(
+        module,
+        "_load_sibling",
+        lambda name: alerts if name == "comms_alert.py" else load_sibling(name),
+    )
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    assert result.rc == 0
+    assert "P24" not in result.message
+    assert not (ops / "comms_ledger.jsonl").exists()
+
+
+def test_p24_uses_one_aggregated_alert_for_all_current_cos(tmp_path, monkeypatch):
+    """P24 emits one aggregated alert, retaining every current CO identity."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].extend(
+        [
+            {
+                "code": "IM-NEW-1",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "IM-NEW-2",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:30+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "CO-OUT-1",
+                "role": "orquestadora",
+                "threadId": "co-out-1",
+                "status": "ACTIVA",
+            },
+            {
+                "code": "CO-OUT-2",
+                "role": "orquestadora",
+                "threadId": "co-out-2",
+                "status": "SUPERVISORA",
+            },
+        ]
+    )
+    _write_json(flight / "session_registry.json", registry)
+    calls = []
+    monkeypatch.setattr(
+        module, "_alert", lambda *args, **kwargs: calls.append(args) or 0
+    )
+
+    module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    p24_calls = [call for call in calls if call[0].endswith("-p24")]
+    assert len(p24_calls) == 1
+    assert "CO-OUT-1, CO-OUT-2" in p24_calls[0][1]
