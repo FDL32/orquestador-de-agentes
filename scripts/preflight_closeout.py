@@ -81,8 +81,8 @@ def run_preflight(
     authority = pre_handoff_guard._read_delivery_authority_from_active_plan(
         project_root
     )
-    deliverable_type = pre_handoff_guard._read_deliverable_type_from_active_plan(
-        project_root
+    deliverable_type, deliverable_type_reason = (
+        pre_handoff_guard.resolve_deliverable_type_from_active_plan(project_root)
     )
     delivery_root = pre_handoff_guard.resolve_delivery_root(
         project_root=project_root,
@@ -177,6 +177,7 @@ def run_preflight(
         "delivery_authority": authority,
         "delivery_root": str(delivery_root),
         "deliverable_type": deliverable_type,
+        "deliverable_type_reason": deliverable_type_reason,
         "checks": checks,
         "ci_local_warning": CI_LOCAL_WARNING,
         "all_pass": all_pass,
@@ -191,7 +192,8 @@ def _render_human(report: dict) -> str:
     lines.append(
         f"  delivery_authority={report['delivery_authority']} "
         f"delivery_root={report['delivery_root']} "
-        f"deliverable_type={report['deliverable_type']}"
+        f"deliverable_type={report['deliverable_type']} "
+        f"({report['deliverable_type_reason']})"
     )
     for name, check in report["checks"].items():
         mark = "PASS" if check["pass"] else "FAIL"

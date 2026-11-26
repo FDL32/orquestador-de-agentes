@@ -622,30 +622,44 @@ def resolve_delivery_root(
 
 
 def _read_deliverable_type_from_content(content: str) -> str:
-    """Read deliverable_type from work_plan content; default 'code'."""
-    import re
+    """Read ``deliverable_type`` from work-plan content.
 
-    m = re.search(
-        r"deliverable_type\s*:?\**\s*(code|documentation|research|analysis|mixed)",
-        content,
-        re.IGNORECASE,
-    )
-    return m.group(1).lower() if m else "code"
+    Before: ``content`` is the raw active work plan.
+    During: delegates the content decision to ``work_plan_authority`` so only
+        ``## Metadata`` can provide the value.
+    After: returns a valid deliverable type, defaulting to ``code``.
+    """
+    return _import_work_plan_authority().read_deliverable_type(content)
 
 
-def _read_deliverable_type_from_active_plan(project_root: Path) -> str:
-    """Read deliverable_type from the active work_plan.md; default 'code'.
+def resolve_deliverable_type_from_active_plan(
+    project_root: Path,
+) -> tuple[str, str]:
+    """Read ``(deliverable_type, reason)`` from the active work plan.
 
-    Fail-safe to 'code' (the stricter path) if the plan is missing/unreadable:
-    a code ticket requiring the canonical suite is the conservative default.
+    Before: ``project_root`` is the active workspace root.
+    During: reads ``.agent/collaboration/work_plan.md`` and delegates content
+        parsing to the shared authority module.
+    After: returns the shared value/reason pair, or ``("code",
+        "work_plan_unreadable")`` when the plan cannot be read.
     """
     work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
     try:
-        return _read_deliverable_type_from_content(
+        return _import_work_plan_authority().resolve_deliverable_type_from_content(
             work_plan.read_text(encoding="utf-8")
         )
-    except OSError:
-        return "code"
+    except (OSError, UnicodeDecodeError):
+        return "code", "work_plan_unreadable"
+
+
+def _read_deliverable_type_from_active_plan(project_root: Path) -> str:
+    """Read the active plan's deliverable type while preserving the old API.
+
+    Before: ``project_root`` is the active workspace root.
+    During: delegates to the value/reason resolver for one canonical read.
+    After: returns only the deliverable type for legacy call sites.
+    """
+    return resolve_deliverable_type_from_active_plan(project_root)[0]
 
 
 def resolve_delivery_authority_from_active_plan(

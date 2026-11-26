@@ -80,6 +80,16 @@ def _load_sibling(name: str):
     return module
 
 
+def _plan_deliverable_type(wp_text: str) -> str:
+    """Read the plan's deliverable type through the shared Metadata reader.
+
+    Before: ``wp_text`` is the raw work-plan content.
+    During: loads ``work_plan_authority`` through the existing sibling loader.
+    After: returns the canonical value, defaulting conservatively to ``code``.
+    """
+    return _load_sibling("work_plan_authority").read_deliverable_type(wp_text)
+
+
 def _git_head(repo: Path) -> str:
     """HEAD sha del repo. Propaga CalledProcessError (fail-closed)."""
     proc = subprocess.run(
@@ -335,11 +345,7 @@ def export_packet(
 
     bus = EventBus(project_root / ".agent" / "runtime")
     bridge = ReviewBridge(bus, project_root)
-    dtype = "code"
-    for line in wp_text.splitlines():
-        if line.lower().startswith("deliverable_type:"):
-            dtype = line.split(":", 1)[1].strip() or "code"
-            break
+    dtype = _plan_deliverable_type(wp_text)
     prompt = bridge._build_review_prompt(ticket_id, dtype)
 
     rbc = _load_sibling("review_bundle_contract")

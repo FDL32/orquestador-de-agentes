@@ -38,6 +38,7 @@ After:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -52,6 +53,15 @@ REASON_NO_SECTION = "no_metadata_section"
 _METADATA_HEADING = "Metadata"
 
 _ABSENT = object()
+
+VALID_DELIVERABLE_TYPES = ("code", "documentation", "research", "analysis", "mixed")
+DEFAULT_DELIVERABLE_TYPE = "code"
+
+_DELIVERABLE_TYPE_FIELD = re.compile(
+    r"^\s*(?:[-*]\s+)?\*{0,2}deliverable_type\*{0,2}\s*:(.*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_WORD = re.compile(r"[a-z]+")
 
 
 def _import_scope_gate():
@@ -120,3 +130,41 @@ def resolve_delivery_authority_from_content(content: str) -> tuple[str, str]:
 def read_delivery_authority(content: str) -> str:
     """Version valor-unico para consumidores con firma ``-> str``."""
     return resolve_delivery_authority_from_content(content)[0]
+
+
+def resolve_deliverable_type_from_content(content: str) -> tuple[str, str]:
+    """Devuelve ``(valor, motivo)`` del campo ``deliverable_type``.
+
+    Before: ``content`` es la prosa cruda de un ``work_plan.md`` y puede estar
+        vacia o malformada.
+    During: corta la seccion ``## Metadata`` y busca alli TODAS las lineas de
+        una declaracion del campo; extrae las palabras del vocabulario
+        ignorando puntuacion y decoracion. Una palabra distinta resuelve a
+        ese tipo; dos o mas distintas entre lineas o dentro de una linea se
+        normalizan a ``mixed``.
+    After: devuelve un tipo valido y un motivo nombrado; ninguna palabra
+        encontrada en las lineas del campo devuelve el default ``code`` y
+        conserva el camino estricto.
+    """
+    section = metadata_section(content)
+    if section is None:
+        return DEFAULT_DELIVERABLE_TYPE, REASON_NO_SECTION
+    lines = _DELIVERABLE_TYPE_FIELD.findall(section)
+    if not lines:
+        return DEFAULT_DELIVERABLE_TYPE, REASON_NO_FIELD
+    found = {
+        word
+        for line in lines
+        for word in _WORD.findall(line.lower())
+        if word in VALID_DELIVERABLE_TYPES
+    }
+    if not found:
+        return DEFAULT_DELIVERABLE_TYPE, REASON_NO_FIELD
+    if len(found) > 1:
+        return "mixed", REASON_METADATA_FIELD
+    return found.pop(), REASON_METADATA_FIELD
+
+
+def read_deliverable_type(content: str) -> str:
+    """Version valor-unico para consumidores con firma ``-> str``."""
+    return resolve_deliverable_type_from_content(content)[0]

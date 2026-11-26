@@ -472,10 +472,14 @@ def extract_candidates_from_ticket(ticket_id: str) -> list[dict[str, Any]]:
         )
         if belongs_to_ticket:
             # Extract deliverable_type if present
-            deliverable_match = re.search(r"\*\*deliverable_type:\*\*\s*(\w+)", content)
-            if not deliverable_match:
-                deliverable_match = re.search(r"deliverable_type:\s*(\w+)", content)
-            deliverable = deliverable_match.group(1) if deliverable_match else "unknown"
+            # WOT-2026-074e: solo Metadata decide; sin campo se conserva
+            # ``unknown`` para mantener la compatibilidad del observador.
+            from scripts import work_plan_authority
+
+            resolved_type, reason = (
+                work_plan_authority.resolve_deliverable_type_from_content(content)
+            )
+            deliverable = resolved_type if reason == "metadata_field" else "unknown"
             applies_to = _deliverable_type_to_applies_to(deliverable)
 
             # Extract title
