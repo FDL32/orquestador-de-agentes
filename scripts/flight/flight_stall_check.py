@@ -27,6 +27,7 @@ import glob
 import hashlib
 import importlib.util
 import json
+import locale
 import math
 import os
 import re
@@ -1368,12 +1369,34 @@ def _huerfano_registry():
         raise ValueError("registry-missing") from exc
 
 
-def _enumerate_processes():
+def _decode_process_stream(value):
+    """Decode PowerShell bytes without letting a locale kill its reader thread.
+
+    Before: ``value`` is stdout/stderr captured as bytes from the Windows PowerShell
+        process.
+    During: prefer UTF-8, then the active Windows locale, and finally replacement for
+        an isolated undecodable byte; JSON syntax remains observable to the caller.
+    After: return text suitable for diagnostics or JSON parsing without raising a
+        ``UnicodeDecodeError`` from the subprocess reader.
+    """
+    if isinstance(value, str):
+        return value
+    if not isinstance(value, bytes):
+        return str(value or "")
+    try:
+        return value.decode("utf-8")
+    except UnicodeDecodeError:
+        return value.decode(locale.getpreferredencoding(False), errors="replace")
+
+
+def _enumerate_processes(*, runner=None):
     """Enumerate Windows processes with the production system tools.
 
     Before: Windows exposes ``Get-CimInstance`` and ``Get-Process`` through PowerShell.
     During: collect pid, ppid, executable, command line, creation time, and CPU seconds
-        in one PowerShell invocation, without adding a Python dependency.
+        in one PowerShell invocation, without adding a Python dependency. Capture bytes
+        and decode explicitly so a locale-specific diagnostic cannot break the reader;
+        ``runner`` is injectable for deterministic tests and omitted in production.
     After: return a list of dictionaries, or raise a descriptive error when enumeration fails.
     """
     if os.name != "nt":
@@ -1391,19 +1414,24 @@ def _enumerate_processes():
         "cpu_seconds=if($null -eq $p){0.0}else{[double]$p.CPU}} "
         "} | ConvertTo-Json -Compress"
     )
-    result = subprocess.run(  # noqa: S603 - executable is resolved from system PowerShell PATH
+    run = subprocess.run if runner is None else runner
+    result = run(  # noqa: S603 - executable is resolved from system PowerShell PATH
         [powershell, "-NoProfile", "-NonInteractive", "-Command", script],
         capture_output=True,
-        text=True,
+        text=False,
         timeout=30,
         creationflags=NO_WINDOW,
         check=False,
     )
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip().replace("\n", " ")
+        detail = (
+            _decode_process_stream(result.stderr or result.stdout)
+            .strip()
+            .replace("\n", " ")
+        )
         raise RuntimeError(f"powershell-rc-{result.returncode}: {detail[:120]}")
     try:
-        payload = json.loads(result.stdout or "[]")
+        payload = json.loads(_decode_process_stream(result.stdout or b"[]"))
     except json.JSONDecodeError as exc:
         raise RuntimeError("powershell-json-invalido") from exc
     if isinstance(payload, dict):

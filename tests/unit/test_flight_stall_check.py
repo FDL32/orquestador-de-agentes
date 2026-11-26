@@ -1153,6 +1153,34 @@ def test_busqueda_huerfana_m08_enumeracion_real_incluye_pid_propio():
     assert sum(row["pid"] == os.getpid() for row in rows) == 1
 
 
+def test_enumerate_processes_inyectable_tolera_salida_powershell_cp1252():
+    """La salida PowerShell no rompe el enumerador por un byte local no UTF-8."""
+    module = _load()
+    payload = json.dumps(
+        [
+            {
+                "pid": 123,
+                "ppid": 1,
+                "executable": "python.exe",
+                "command_line": "prueba ¡",
+                "created_at": "2026-11-26T15:00:00.0000000Z",
+                "cpu_seconds": 0.0,
+            }
+        ],
+        ensure_ascii=False,
+    ).encode("cp1252")
+    calls = []
+
+    def runner(command, **kwargs):
+        calls.append((command, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout=payload, stderr=b"")
+
+    rows = module._enumerate_processes(runner=runner)
+
+    assert rows[0]["command_line"] == "prueba ¡"
+    assert calls[0][1]["text"] is False
+
+
 def _write_cell_fixtures(box, count, statuses=None, settled_threads=None):
     import sqlite3
 
