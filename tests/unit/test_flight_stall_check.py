@@ -2421,9 +2421,10 @@ def test_m03_resto_de_detectores_sigue_registrado_igual(box):
     expected = (BASE_DETECTOR_NAMES - {"tarea", "celda"}) | {
         "im-sin-asentar",
         "busqueda-huerfana",
+        "l6",
     }
     assert set(box.m.DETECTOR_NAMES) == expected
-    assert len(box.m.DETECTOR_NAMES) == len(expected) == 13
+    assert len(box.m.DETECTOR_NAMES) == len(expected) == 14
 
 
 def test_m04_estado_con_eventos_abiertos_retirados_se_resuelven_y_otros_siguen_abiertos(

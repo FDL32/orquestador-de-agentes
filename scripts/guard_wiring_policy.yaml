@@ -391,6 +391,12 @@ extra_guards:
   render_asignaciones: scripts/flight/render_asignaciones.py
 
 wired_via:
+  # WOT-2026-175e: el detector de latido carga check_l6 por ruta dinamica;
+  # el AST de frontera no alcanza la resolucion del hermano.
+  check_l6: >-
+    scripts/flight/flight_stall_check.py:648-665 (_load_l6 y check_l6,
+    despacho del detector l6). Probe: rg -n "def _load_l6|def check_l6|\"l6\""
+    scripts/flight/flight_stall_check.py
   # WOT-2026-161l: el detector de latido invoca el comprobador por ruta
   # importlib y el AST de frontera no alcanza este cableado dinamico.
   check_cell_conformance: >-

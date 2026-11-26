@@ -145,6 +145,7 @@ OWNED_PREFIXES = (
     "gasto-",
     "co-sin-asentar",
     "im-sin-asentar",
+    "l6-",
 )
 GIT_MARKERS = ("index.lock", "MERGE_HEAD", "REBASE_HEAD", "CHERRY_PICK_HEAD")
 
@@ -165,6 +166,7 @@ DETECTOR_NAMES = (
 DETECTOR_NAMES += ("presupuesto-nan",)
 DETECTOR_NAMES += ("co-sin-asentar",)
 DETECTOR_NAMES += ("im-sin-asentar",)
+DETECTOR_NAMES += ("l6",)
 RETIRED_EVENT_KEYS = ("tarea-muerta", "celda-no-conforme")
 
 
@@ -643,6 +645,33 @@ def _load_queue_checker():
     return module
 
 
+def _load_l6():
+    """Load the L-6 detector from the concrete sibling source file.
+
+    Before: this module is running from ``scripts/flight`` and the sibling file
+        ``check_l6.py`` is readable.
+    During: resolve and execute that exact path, independent of import search paths.
+    After: return the loaded L-6 module or propagate its load failure to ``_detect``.
+    """
+    path = Path(__file__).resolve().with_name("check_l6.py")
+    spec = importlib.util.spec_from_file_location("_flight_check_l6", path)
+    if spec is None or spec.loader is None:
+        raise ImportError("no se pudo cargar check_l6.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_l6(out):
+    """Run the L-6 sibling detector with optional heartbeat configuration.
+
+    Before: ``CFG`` may omit ``archive_index`` in isolated consumer tests.
+    During: pass the configured index, or ``None`` when no flag was supplied.
+    After: return only the detector list expected by ``_detect``.
+    """
+    return _load_l6().check_l6(out, getattr(CFG, "archive_index", None))
+
+
 def _reset_ocio_con_cola(st):
     """Reset the persisted ocio-con-cola streak and identity.
 
@@ -925,6 +954,7 @@ def _resolve_paths(a, ops):  # noqa: C901
         roster_quota={},
         session_code=None,
         registry=None,
+        archive_index=getattr(a, "archive_index", None),
         store=Path(
             env.get("T3_STATE_DB", Path.home() / ".t3" / "userdata" / "statev2.sqlite")
         ),
@@ -2893,6 +2923,7 @@ def _detect(out, st, only=None):
         "presupuesto-nan": lambda: check_nan_budget(out, st),
         "co-sin-asentar": lambda: check_co_sin_asentar(out, st),
         "im-sin-asentar": lambda: check_im_sin_asentar(out, st),
+        "l6": lambda: check_l6(out),
     }
     selected = [only] if only else list(DETECTOR_NAMES)
     for name in selected:
@@ -3114,6 +3145,11 @@ def main(argv=None):
         nargs="?",
         const="todos",
         help="ejecuta un detector aislado, o todos si no se da nombre",
+    )
+    ap.add_argument(
+        "--archive-index",
+        default=None,
+        help="indice JSONL del archivo para el detector L-6 (opcional)",
     )
     a = ap.parse_args(argv)
     if a.test_detector and a.test_detector not in ("todos", *DETECTOR_NAMES):

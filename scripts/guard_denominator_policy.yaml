@@ -448,6 +448,11 @@ guards:
     clase: external_targets
     skip_explicito: 'no'
     nota: --registry JSON + --store SQLite read-only
+  scripts/flight/check_l6.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: universo = raiz e indice JSONL aportados por archive_index; ausencia o
+      indice ilegible falla cerrado con AVISO, sin enumerar un universo fijo del motor
   scripts/flight/check_latido_alert_wiring.py:
     clase: external_targets
     skip_explicito: 'no'
