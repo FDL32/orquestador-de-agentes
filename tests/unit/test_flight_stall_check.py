@@ -5418,6 +5418,21 @@ def test_im_sin_asentar_mutation_m04_fail_closed_store_y_registry(box):
     assert found[0][:2] == ("im-sin-asentar", "AVISO")
 
 
+def test_im_sin_asentar_m04_registry_activo_sin_thread_id_is_ciego(box):
+    """m-04: an active IM/TR without its T3 key is unreadable evidence."""
+    _im_tr_store(box, [_im_tr_row("thread-401")], [("thread-401", "running", 1)])
+    _im_tr_registry(
+        box, [{"code": "IM-401", "role": "implantacion", "status": "ACTIVA"}]
+    )
+    _im_tr_cfg(box)
+    out = {}
+
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+    assert found[0][:2] == ("im-sin-asentar", "AVISO")
+
+
 def test_im_sin_asentar_mutation_m05_solo_lectura_y_m08_no_muta(box):
     """M-05/M-08: medir IM/TR no modifica store, registry ni recibos."""
     import hashlib

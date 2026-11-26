@@ -2844,15 +2844,18 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
         code = session.get("code")
         role = session.get("role")
         status = session.get("status")
+        if not (
+            role in ("implantacion", "triaje")
+            or (isinstance(code, str) and code.startswith(("IM-", "TR-")))
+        ):
+            continue
         if not isinstance(code, str) or not isinstance(status, str):
-            continue
-        if not (role in ("implantacion", "triaje") or code.startswith(("IM-", "TR-"))):
-            continue
+            return blind("registry no medido")
         if not status.startswith("ACTIVA"):
             continue
         thread_id = session.get("threadId")
-        if not isinstance(thread_id, str):
-            continue
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            return blind("registry no medido")
         slot = code.split("-", 1)[1] if "-" in code else code
         ticket_candidates = {
             value

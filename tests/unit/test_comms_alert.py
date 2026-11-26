@@ -745,6 +745,14 @@ def test_fila37_resolve_clave_inexistente_devuelve_10(ca):
     assert ca.m.resolve("no-existe") == 10
 
 
+def test_m03_resolve_ilegible_preserva_evidencia(ca):
+    """m-03: unreadable alert state cannot be mistaken for a resolution."""
+    ca.m.save_state({"event:k": {"level": "URGENTE", "acked": "false"}})
+
+    assert ca.m.resolve("k") == 2
+    assert "event:k" in ca.m.load_state()
+
+
 def test_fila38_resolve_dry_no_borra(ca):
     """fila 38: resolve con dry=True no borra el registro."""
     ca.m.event("k", "AVISO", None, "x", False, False)

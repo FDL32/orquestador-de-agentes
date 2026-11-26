@@ -266,8 +266,17 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
         roster = _load_json(flight_dir / "flight_roster.json")
         registry_path = flight_dir / "session_registry.json"
         registry = _load_json(registry_path)
+        sessions = registry.get("sessions")
+        if not isinstance(sessions, list) or not all(
+            isinstance(item, dict) for item in sessions
+        ):
+            raise ValueError("registry sessions ilegible")
         incoming_entry = orchestrator_entry(roster["active_roles"])
-        if not isinstance(incoming_entry, dict):
+        if (
+            not isinstance(incoming_entry, dict)
+            or not isinstance(incoming_entry.get("session_code"), str)
+            or not incoming_entry["session_code"].strip()
+        ):
             raise ValueError("coordinadora ausente en active_roles")
         incoming = incoming_entry["session_code"]
         session = _session(registry, incoming)
@@ -287,9 +296,6 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
             return CheckResult(
                 0, f"NO EVALUADO: plazo activo hasta {deadline.isoformat()}"
             )
-        sessions = [
-            item for item in registry.get("sessions", []) if isinstance(item, dict)
-        ]
         checker = _load_sibling("check_cell_conformance.py")
         live_ims = sum(
             item.get("role") == "implantacion" and checker.is_activa(item.get("status"))

@@ -157,6 +157,45 @@ def _check_activa_status(status):
         )
 
 
+def _t3_settled(thread_id):
+    """Read the canonical T3 settlement decision for one thread.
+
+    Before: ``thread_id`` identifies an IM/TR row and the configured state DB is
+        the same store used by the flight detectors.
+    During: open the store through the canonical read-only checker, resolve the
+        row by its primary ``thread_id`` and evaluate its settlement predicate.
+    After: return ``True`` only when T3 proves the thread settled; convert every
+        unreadable store into a fail-closed ``RegistryError``.
+    """
+    checker = _load_cell_checker()
+    store = Path(
+        os.environ.get(
+            "T3_STATE_DB", Path.home() / ".t3" / "userdata" / "statev2.sqlite"
+        )
+    )
+    connection = None
+    try:
+        connection, row, settled = checker._store_lookup(store)
+        if row(thread_id) is None:
+            raise checker.MeasurementError("threadId ausente en T3")
+        if not settled(thread_id):
+            raise checker.MeasurementError("threadId no asentado en T3")
+        return True
+    except (
+        checker.MeasurementError,
+        OSError,
+        RuntimeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise RegistryError(
+            f"T3 ilegible o no asentado para {thread_id}: {exc}", RC_INVALID
+        ) from exc
+    finally:
+        if connection is not None:
+            connection.close()
+
+
 class RegistryError(Exception):
     """Error operativo con un codigo de salida del contrato."""
 
@@ -323,11 +362,19 @@ def _read_registry(path):
     ):
         raise RegistryError("registry invalido: cada sesion requiere code", RC_INVALID)
     seen_codes = set()
+    seen_threads = set()
     for item in data["sessions"]:
         code = item["code"]
         if code in seen_codes:
             raise RegistryError(f"registry invalido: code duplicado={code}", RC_INVALID)
         seen_codes.add(code)
+        thread_id = item.get("threadId")
+        if thread_id not in (None, ""):
+            if thread_id in seen_threads:
+                raise RegistryError(
+                    f"registry invalido: threadId duplicado={thread_id}", RC_INVALID
+                )
+            seen_threads.add(thread_id)
     return data
 
 
@@ -685,6 +732,10 @@ def _validate_cell_requirements(item, *, require_cell=False):
             or any(not _has_veredicto(lens) for lens in lenses)
         ):
             raise RegistryError("ASENTADA exige dos veredictos de lentes", RC_INVALID)
+        thread_id = item.get("threadId")
+        if not isinstance(thread_id, str) or not thread_id.strip():
+            raise RegistryError("ASENTADA exige threadId para verificar T3", RC_INVALID)
+        _t3_settled(thread_id)
 
 
 def _hashed_cell(agents_json, kind, order_id, reason, builder_thread=None):

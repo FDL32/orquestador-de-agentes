@@ -117,6 +117,19 @@ def test_no_marker_is_not_evaluated(tmp_path):
     assert "NO EVALUADO" in result.message
 
 
+def test_m04_registry_with_non_object_session_is_unreadable(tmp_path):
+    """m-04: post-relevo does not silently discard malformed registry rows."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].append("corrupta")
+    _write_json(flight / "session_registry.json", registry)
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    assert result.rc == 2
+    assert result.message.startswith("ERROR: post-relevo no medible:")
+
+
 def test_deadline_window_is_fail_open_until_expired(tmp_path, monkeypatch):
     """The detector does not evaluate or alert before the deadline.
 

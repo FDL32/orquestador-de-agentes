@@ -962,12 +962,23 @@ def ack(key, dry=False):
 
 
 def resolve(key, dry=False):
-    """La causa ya no existe: borra la clave (una recaida vuelve a avisar). Para las claves que NO mide un detector."""
-    if "event:" + key not in load_state():
+    """Resolve a valid alert record, preserving unreadable evidence.
+
+    Before: ``key`` identifies a detector-owned alert record.
+    During: validate the persisted record before removing it; an unreadable
+        record is an operational error, not proof that the condition resolved.
+    After: remove a valid record and its toast, or return a non-zero code without
+        destroying evidence.
+    """
+    state = load_state()
+    if "event:" + key not in state:
         print(f"sin registro de {key}")
         return 10
+    rec = _rec(state.get("event:" + key))
+    if rec is None:
+        print(f"resolve FALLO: registro ilegible para {key}", file=sys.stderr)
+        return 2
     if not dry:
-        rec = _rec(load_state().get("event:" + key))
         update_state(lambda s: s.pop("event:" + key, None))
         if (
             rec is not None
