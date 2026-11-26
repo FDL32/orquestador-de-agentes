@@ -1,0 +1,4 @@
+{"type":"user","promptId":"p-1","timestamp":"2026-11-26T10:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"Eres CO-123, ejecuta el siguiente paso."}]}}
+{"type":"assistant","promptId":"p-1","timestamp":"2026-11-26T10:00:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"Anuncio el paso siguiente y cierro."}]}}
+{"type":"assistant","promptId":"p-1","timestamp":"2026-11-26T10:00:02.000Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"tool-unknown","name":"read_synthetic_fixture","input":{}}]}}
+{"type":"user","promptId":"p-1","timestamp":"2026-11-26T10:00:03.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tool-unknown","is_error":false}]}}

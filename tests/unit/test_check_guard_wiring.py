@@ -418,6 +418,8 @@ EXPECTED_WIRED_REAL = {
     # existen en el fichero real. 157c cableo el guard y no actualizo este
     # snapshot; este mismo test lo detecto como EXTRA.
     "review_level",
+    # WOT-2026-215b: hook Stop declarado en extra_guards y cableado en settings.json.
+    "native_stop_hook",
 }
 
 
