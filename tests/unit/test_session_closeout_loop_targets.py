@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from scripts.session_closeout import BACKLOG_REL
 
 
@@ -2010,7 +2011,119 @@ def test_dry_run_predicts_warn_for_ticket_without_backlog_row(
 
 _058O_TS_EMIT = "2026-10-11T10:00:00+00:00"
 _058O_TS_ROUND = "2026-10-11T10:05:00+00:00"
-_058O_BACKENDS = ("BA04", "BA07")
+
+
+def _058o_eligible_backends(config: dict | None = None) -> tuple[str, str]:
+    """Derive the two accreditation keys from live loop coverage.
+
+    Before: ``config`` is absent for the production-shaped path, or is a
+    synthetic configuration for the focused coverage boundaries.
+    During: load and validate ``MANAGER_REVIEW:repo_motor`` through the same
+    helpers used by the loop-execution guard, then preserve declared order
+    while removing inactive keys.
+    After: return the first two effective keys, or fail with a cause-specific
+    diagnostic before a scorecard can be built with unusable credentials.
+    """
+    from scripts.check_loop_execution import (
+        effective_eligible,
+        load_eligible_coverage,
+    )
+    from scripts.ensemble_dispatch import load_motor_config
+
+    config = load_motor_config() if config is None else config
+    entry, reason, _coverage_key = load_eligible_coverage(
+        config, "MANAGER_REVIEW", "repo_motor"
+    )
+    if entry is None:
+        if reason is not None:
+            raise AssertionError(
+                "cobertura invalida en MANAGER_REVIEW:repo_motor: " + reason
+            )
+        raise AssertionError(
+            "cobertura ausente en eligible_coverage: MANAGER_REVIEW:repo_motor"
+        )
+
+    eligible, _removed = effective_eligible(entry, config)
+    ordered = tuple(key for key in entry["backend_keys"] if key in eligible)
+    if len(ordered) < 2:
+        raise AssertionError(
+            f"cobertura insuficiente: {len(ordered)} < 2 claves elegibles "
+            "en MANAGER_REVIEW:repo_motor"
+        )
+    return ordered[:2]
+
+
+def test_058o_insufficient_coverage_has_explicit_cause() -> None:
+    """m-04: synthetic one-key coverage exercises the boundary diagnostically.
+
+    The synthetic dict is passed only to the helper; it does not touch the
+    live ``agents.json`` or its ``eligible_coverage`` entry.
+    """
+    config = {
+        "ensemble_registry": {
+            "backend_keys": {
+                "BA257": {"status": "active"},
+                "BA258": {"status": "archived"},
+            },
+            "eligible_coverage": {
+                "MANAGER_REVIEW:repo_motor": {
+                    "backend_keys": ["BA257", "BA258"],
+                    "min_distinct": 2,
+                    "policy": "declared",
+                    "excluded_backend_keys": [],
+                }
+            },
+        }
+    }
+
+    with pytest.raises(
+        AssertionError,
+        match=r"cobertura insuficiente: 1 < 2 claves elegibles en "
+        r"MANAGER_REVIEW:repo_motor",
+    ):
+        _058o_eligible_backends(config)
+
+
+def test_058o_missing_coverage_has_explicit_cause() -> None:
+    """C1: absent coverage is distinct from invalid and insufficient coverage."""
+    config = {
+        "ensemble_registry": {
+            "backend_keys": {},
+            "eligible_coverage": {},
+        }
+    }
+
+    with pytest.raises(
+        AssertionError,
+        match=(
+            r"cobertura ausente en eligible_coverage: "
+            r"MANAGER_REVIEW:repo_motor"
+        ),
+    ):
+        _058o_eligible_backends(config)
+
+
+def test_058o_invalid_coverage_has_explicit_cause() -> None:
+    """C1: malformed coverage is distinct from absent and insufficient coverage."""
+    config = {
+        "ensemble_registry": {
+            "backend_keys": {"BA257": {"status": "active"}},
+            "eligible_coverage": {
+                "MANAGER_REVIEW:repo_motor": {
+                    "backend_keys": ["BA257"],
+                    "min_distinct": 1,
+                    "policy": "declared",
+                    "excluded_backend_keys": [],
+                }
+            },
+        }
+    }
+
+    with pytest.raises(
+        AssertionError,
+        match=r"cobertura invalida en MANAGER_REVIEW:repo_motor:",
+    ):
+        _058o_eligible_backends(config)
 
 
 def _058o_emitted_row(commit: str) -> dict:
@@ -2094,8 +2207,9 @@ def test_close_written_targets_pass_the_loop_execution_check(tmp_path: Path) -> 
 
     ensemble = repo / ".agent" / "runtime" / "ensemble"
     ensemble.mkdir(parents=True, exist_ok=True)
+    backends = _058o_eligible_backends()
     (ensemble / "scorecard.jsonl").write_text(
-        "".join(json.dumps(_058o_round_row(bk, sha)) + "\n" for bk in _058O_BACKENDS),
+        "".join(json.dumps(_058o_round_row(bk, sha)) + "\n" for bk in backends),
         encoding="utf-8",
     )
     (ensemble / "emitted_nonces.jsonl").write_text(
@@ -2711,8 +2825,9 @@ def _two_commit_ticket_with_rounds(tmp_path: Path, looped: str) -> tuple[Path, s
     sha = first if looped == "first" else last
     ensemble = repo / ".agent" / "runtime" / "ensemble"
     ensemble.mkdir(parents=True, exist_ok=True)
+    backends = _058o_eligible_backends()
     (ensemble / "scorecard.jsonl").write_text(
-        "".join(json.dumps(_058o_round_row(bk, sha)) + "\n" for bk in _058O_BACKENDS),
+        "".join(json.dumps(_058o_round_row(bk, sha)) + "\n" for bk in backends),
         encoding="utf-8",
     )
     (ensemble / "emitted_nonces.jsonl").write_text(
