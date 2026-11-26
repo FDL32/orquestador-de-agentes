@@ -32,12 +32,71 @@ def _run_with_plan(
     return result.returncode, result.stdout + result.stderr
 
 
+def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    for key in ("AGENT_PROJECT_ROOT", "TEST_PROJECT_ROOT", "TEST_MOTOR_ROOT"):
+        env.pop(key, None)
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), *args],
+        cwd=PROJECT_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
 def test_all_declared_paths_exist(tmp_path):
     existing = tmp_path / "existing.txt"
     existing.write_text("ok", encoding="utf-8")
     plan = "## Deliverables\n- `existing.txt` something\n"
     code, _ = _run_with_plan(plan, tmp_path)
     assert code == 0
+
+
+def test_help_exposes_real_cli_usage_and_overrides():
+    result = _run_cli("--help")
+
+    assert result.returncode == 0
+    assert "usage:" in result.stdout
+    assert "--work-plan" in result.stdout
+    assert "--project-root" in result.stdout
+    assert "Active work_plan.md not found" not in result.stdout
+
+
+def test_project_root_override_selects_its_default_work_plan(tmp_path):
+    target = tmp_path / "target.txt"
+    target.write_text("ok", encoding="utf-8")
+    plan_dir = tmp_path / ".agent" / "collaboration"
+    plan_dir.mkdir(parents=True)
+    (plan_dir / "work_plan.md").write_text(
+        "## Deliverables\n- `target.txt`\n", encoding="utf-8"
+    )
+
+    result = _run_cli("--project-root", str(tmp_path))
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_work_plan_override_selects_explicit_plan(tmp_path):
+    default_root = tmp_path / "default"
+    default_plan_dir = default_root / ".agent" / "collaboration"
+    default_plan_dir.mkdir(parents=True)
+    (default_root / "default.txt").write_text("ok", encoding="utf-8")
+    (default_plan_dir / "work_plan.md").write_text(
+        "## Deliverables\n- `default.txt`\n", encoding="utf-8"
+    )
+    explicit_plan = tmp_path / "explicit.md"
+    explicit_plan.write_text(
+        "## Deliverables\n- `missing-from-explicit-plan.txt`\n",
+        encoding="utf-8",
+    )
+
+    result = _run_cli(
+        "--project-root", str(default_root), "--work-plan", str(explicit_plan)
+    )
+
+    assert result.returncode == 1
+    assert "missing-from-explicit-plan.txt" in result.stdout
 
 
 def test_missing_deliverable_detected(tmp_path):
