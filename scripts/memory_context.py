@@ -1001,10 +1001,10 @@ def _write_recall_log(
         )
 
 
-# ASIGNACIONES:BEGIN sha=c39884659423c70e
+# ASIGNACIONES:BEGIN sha=bc78bcd55a0036cf
 # **Asignaciones del vuelo**:
 # refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
-# - co [alto]: claude:claudeAgent/claude-sonnet-5-5
+# - co [alto]: claude:claudeAgent/claude-opus-5-5
 # - co_subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
 # - supervisora [alto]: claude:claudeAgent/claude-sonnet-5-5 PENDIENTE
 # - im.builder [alto]: codex gpt-5.6-luna

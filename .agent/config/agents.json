@@ -3114,7 +3114,7 @@
           "familia": "claude",
           "nivel": "alto",
           "instanceId": "claudeAgent",
-          "model": "claude-sonnet-5-5",
+          "model": "claude-opus-5-5",
           "effort": "high"
         }
       ],
@@ -3130,7 +3130,7 @@
         }
       ],
       "orden": {
-        "messageId": "e2b94a4c-7129-4bae-a2d2-08e2470eaee6"
+        "messageId": "7de3b6a7-76a2-4269-af97-2135d82e3349"
       }
     },
     "co_subagentes": {

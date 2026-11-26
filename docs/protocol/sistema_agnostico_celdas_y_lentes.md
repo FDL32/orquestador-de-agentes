@@ -40,10 +40,10 @@ siguientes despachos. La convergencia queda diferida a un ticket posterior.
 
 `celdas` es SOLO LEGACY para sesiones IM/TR dadas de alta SIN hash; `CELLS_CUTOFF` es la fecha de esa rama. Un cambio de lente, de modelo o de celda NO se hace en `celdas` sino en `asignaciones.<puesto>` + `render_asignaciones.py --apply`; `asignaciones` rige para las altas con hash.
 
-<!-- ASIGNACIONES:BEGIN sha=c39884659423c70e -->
+<!-- ASIGNACIONES:BEGIN sha=bc78bcd55a0036cf -->
 **Asignaciones del vuelo**:
 refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
-- co [alto]: claude:claudeAgent/claude-sonnet-5-5
+- co [alto]: claude:claudeAgent/claude-opus-5-5
 - co_subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
 - supervisora [alto]: claude:claudeAgent/claude-sonnet-5-5 PENDIENTE
 - im.builder [alto]: codex gpt-5.6-luna
