@@ -5590,6 +5590,89 @@ def test_im_sin_asentar_146f_started_ilegible_no_rompe(box, monkeypatch):
     assert out["im_sin_asentar"] == []
 
 
+def test_im_sin_asentar_146f_omitidas_existe_tambien_en_rutas_ciegas(box):
+    """D3: the omissions list is present even when measurement is blind."""
+    missing_store = box.root / "missing-store.sqlite"
+    box.monkeypatch.setenv("T3_STATE_DB", str(missing_store))
+    _im_tr_registry(box, [_im_tr_session("IM-914", "thread-914")])
+    _im_tr_cfg(box)
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "store no medido"
+    assert found[0][:2] == ("im-sin-asentar", "AVISO")
+
+    missing_store.write_bytes(b"not sqlite")
+    _im_tr_cfg(box)
+    out = {}
+    box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "store no medido"
+
+    _im_tr_store(box, [_im_tr_row("thread-914")], [("thread-914", "running", 1)])
+    registry = _im_tr_registry(box, [_im_tr_session("IM-914", "thread-914")])
+    registry.unlink()
+    _im_tr_cfg(box)
+    out = {}
+    box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+
+    registry.write_text("{invalid", encoding="utf-8")
+    _im_tr_cfg(box)
+    out = {}
+    box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+
+    _im_tr_registry(
+        box, [{"code": "IM-914", "role": "implantacion", "status": "ACTIVA"}]
+    )
+    _im_tr_cfg(box)
+    out = {}
+    box.m.check_im_sin_asentar(out, {})
+    assert out["im_sin_asentar_omitidas"] == []
+    assert out["im_sin_asentar_ciego"] == "registry no medido"
+
+
+def test_im_sin_asentar_146f_frontera_igualdad_exacta(box):
+    """D6: a receipt at the exact frontier fires, one second before does not."""
+    sessions = [
+        _im_tr_session(
+            "IM-915",
+            "frontier-equal-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-26T17:28:44+01:00",
+            slot="implantador-902z",
+        ),
+        _im_tr_session(
+            "IM-916",
+            "frontier-before-thread",
+            ticket=None,
+            status="TERMINADA",
+            started="2026-11-26T17:28:43+01:00",
+            slot="implantador-901z",
+        ),
+    ]
+    assert all("ticket" not in session for session in sessions)
+    _im_tr_store(
+        box,
+        [_im_tr_row(session["threadId"]) for session in sessions],
+        [(session["threadId"], "running", 1) for session in sessions],
+    )
+    _im_tr_registry(box, sessions)
+    _im_tr_receipts(box, ["WOT-2026-901z", "WOT-2026-902z"])
+    _im_tr_cfg(box)
+
+    out = {}
+    found = box.m.check_im_sin_asentar(out, {})
+
+    assert {item["code"] for item in out["im_sin_asentar"]} == {"IM-915"}
+    assert out["im_sin_asentar"][0]["ticket"] == "WOT-2026-902z"
+    assert len(found) == 1
+
+
 def test_im_sin_asentar_mutation_m01_disparo_por_recibo_y_por_run_completed(box):
     """M-01: un recibo y un run completed son dos disparadores independientes."""
     rows = [_im_tr_row("im-thread"), _im_tr_row("tr-thread")]

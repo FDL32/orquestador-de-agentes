@@ -2820,6 +2820,7 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
         observable fail-closed AVISO when the store or registry cannot be measured.
     """
     del st
+    out["im_sin_asentar_omitidas"] = []
 
     def blind(cause):
         """Return the fixed-key finding for an unreadable measurement.
@@ -2914,7 +2915,6 @@ def check_im_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
                 integrated.add(receipt["ticket"])
 
     unsettled = []
-    out["im_sin_asentar_omitidas"] = []
     for session in sessions:
         code = session.get("code")
         role = session.get("role")
