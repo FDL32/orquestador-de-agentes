@@ -347,33 +347,60 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
         if _apta_unclaimed(backlog, registry_path):
             reasons.append("ficha APTA sin brief")
         co_candidates = _co_outside_triad(sessions, roster.get("active_roles"))
-        if not reasons and co_candidates:
+        if co_candidates:
             reasons.append(
                 "CO asentable fuera de la terna: " + ", ".join(co_candidates)
             )
-        if not reasons:
-            if key in active_keys:
-                rc = _resolve(key, ops_dir)
-                if rc not in (0, 10):
-                    return CheckResult(2, "ERROR: no se pudo resolver alerta")
-                active_keys.remove(key)
-                state["active"] = sorted(active_keys)
+        p24_prefix = f"{key}-p24-"
+        alert_items = []
+        base_reasons = [
+            reason
+            for reason in reasons
+            if not reason.startswith("CO asentable fuera de la terna:")
+        ]
+        if base_reasons:
+            alert_items.append((key, "; ".join(base_reasons)))
+        alert_items.extend(
+            (f"{p24_prefix}{candidate}", f"CO asentable fuera de la terna: {candidate}")
+            for candidate in co_candidates
+        )
+        live_keys = {item_key for item_key, _ in alert_items}
+        owned_keys = {
+            item_key
+            for item_key in active_keys
+            if item_key == key or item_key.startswith(p24_prefix)
+        }
+        for stale_key in sorted(owned_keys - live_keys):
+            rc = _resolve(stale_key, ops_dir)
+            if rc not in (0, 10):
+                return CheckResult(2, "ERROR: no se pudo resolver alerta")
+            active_keys.discard(stale_key)
+        if not alert_items:
+            state["active"] = sorted(active_keys)
+            if owned_keys:
                 _write_state(state_path, state)
             return CheckResult(0, "OK: relevo atendido")
-        message = f"{incoming}: " + "; ".join(reasons)
         command = _reproduction_command(flight_dir, ops_dir, backlog, observed)
-        if key not in active_keys:
-            rc = _alert(key, message, ops_dir, incoming)
+        for alert_key, alert_reason in alert_items:
+            message = f"{incoming}: {alert_reason}"
+            rc = _alert(alert_key, message, ops_dir, incoming)
             if rc not in (0, 10):
                 return CheckResult(
                     2,
-                    f"ERROR: {key}; {message}; comando: {command}",
+                    f"ERROR: {alert_key}; {message}; comando: {command}",
                     tuple(reasons),
                 )
-            active_keys.add(key)
-            state["active"] = sorted(active_keys)
-            _write_state(state_path, state)
-        return CheckResult(1, f"{key}; {message}; comando: {command}", tuple(reasons))
+            active_keys.add(alert_key)
+        state["active"] = sorted(active_keys)
+        _write_state(state_path, state)
+        messages = " | ".join(
+            f"{incoming}: {alert_reason}" for _, alert_reason in alert_items
+        )
+        return CheckResult(
+            1,
+            f"{key}; " + "; ".join(reasons) + f"; {messages}; comando: {command}",
+            tuple(reasons),
+        )
     except (
         OSError,
         KeyError,

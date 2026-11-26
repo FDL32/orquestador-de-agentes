@@ -358,12 +358,14 @@ def test_resolution_appends_public_ledger_row(tmp_path, monkeypatch):
     assert resolution["resultado"] == "RESOLVED"
 
 
-def test_alert_key_is_unique_and_resolves(tmp_path, monkeypatch):
-    """A repeated condition alerts once and a later clean tick resolves it.
+def test_alert_key_is_stable_and_public_backoff_handles_repetition(
+    tmp_path, monkeypatch
+):
+    """A repeated condition is delegated each tick to the public alert flow.
 
     Before: the same expired condition is evaluated twice.
     During: the fake alert backend records event and resolution operations.
-    After: the second alert is suppressed and the clean tick resolves the key.
+    After: the public comms flow receives both ticks and the clean tick resolves the key.
     """
     module = _load_module()
     flight, ops, backlog, registry = _fixture(tmp_path)
@@ -376,7 +378,7 @@ def test_alert_key_is_unique_and_resolves(tmp_path, monkeypatch):
     first = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
     second = module.evaluate(flight, ops, backlog, now="2026-11-16T17:21:00+00:00")
     assert first.rc == second.rc == 1
-    assert len(events) == 1
+    assert len(events) == 2
 
     registry["sessions"].append(
         {
@@ -391,6 +393,101 @@ def test_alert_key_is_unique_and_resolves(tmp_path, monkeypatch):
     clean = module.evaluate(flight, ops, backlog, now="2026-11-16T17:22:00+00:00")
     assert clean.rc == 0
     assert json.loads((ops / "post_relevo_state.json").read_text())["active"] == []
+
+
+def test_m07_p24_se_anade_con_otra_razon_y_separa_dos_co(tmp_path, monkeypatch):
+    """m-07: P24 no depende de reasons vacio y cada CO conserva su clave."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].extend(
+        [
+            {
+                "code": "CO-OUT-1",
+                "role": "orquestadora",
+                "threadId": "co-out-1",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+            },
+            {
+                "code": "CO-OUT-2",
+                "role": "orquestadora",
+                "threadId": "co-out-2",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+            },
+        ]
+    )
+    _write_json(flight / "session_registry.json", registry)
+    calls = []
+    monkeypatch.setattr(
+        module, "_alert", lambda *args, **kwargs: calls.append(args) or 0
+    )
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    keys = {call[0] for call in calls}
+    assert "menos de 2 IM vivos" in result.message
+    assert keys == {
+        "post-relevo-CO-IN",
+        "post-relevo-CO-IN-p24-CO-OUT-1",
+        "post-relevo-CO-IN-p24-CO-OUT-2",
+    }
+
+
+def test_m07_p24_resuelve_solo_co_desaparecido(tmp_path, monkeypatch):
+    """m-07: desaparecer un CO resuelve su clave P24 y conserva otra sesión."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].extend(
+        [
+            {
+                "code": "IM-NEW-1",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "IM-NEW-2",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:30+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "CO-OUT-1",
+                "role": "orquestadora",
+                "threadId": "co-out-1",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+            },
+            {
+                "code": "CO-OUT-2",
+                "role": "orquestadora",
+                "threadId": "co-out-2",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+            },
+        ]
+    )
+    _write_json(flight / "session_registry.json", registry)
+    calls = []
+    monkeypatch.setattr(
+        module, "_alert", lambda *args, **kwargs: calls.append(("alert", args)) or 0
+    )
+    module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    registry["sessions"] = [
+        item for item in registry["sessions"] if item["code"] != "CO-OUT-1"
+    ]
+    _write_json(flight / "session_registry.json", registry)
+    monkeypatch.setattr(
+        module, "_resolve", lambda *args, **kwargs: calls.append(("resolve", args)) or 0
+    )
+    module.evaluate(flight, ops, backlog, now="2026-11-16T17:21:00+00:00")
+
+    resolved = {args[0] for kind, args in calls if kind == "resolve"}
+    assert resolved == {"post-relevo-CO-IN-p24-CO-OUT-1"}
 
 
 def test_m07_p24_detecta_co_asentable_fuera_de_la_terna(tmp_path, monkeypatch):

@@ -5543,3 +5543,32 @@ def test_im_sin_asentar_m05_terminada_es_urgente(box):
     assert found == [
         ("im-sin-asentar-IM-905", "URGENTE", "IM/TR sin asentar: IM-905 (thread-done)")
     ]
+
+
+def test_im_sin_asentar_m05_public_alert_repeats_acknowledges_and_resolves(box):
+    """m-05: URGENTE usa comms_alert real por tick, backoff, ack y desaparición."""
+    _im_tr_store(box, [_im_tr_row("thread-done")], [("thread-done", "completed", 1)])
+    _im_tr_registry(box, [_im_tr_session("IM-905", "thread-done", status="TERMINADA")])
+    _im_tr_cfg(box)
+    found = box.m.check_im_sin_asentar({}, {})
+    args = types.SimpleNamespace(baseline=False, dry_run=False)
+
+    assert box.m._notify_all(box.ca, found, args, {}) == 1
+    assert len(box.sent) == 1
+    box.clock.now += 29 * 60
+    assert box.m._notify_all(box.ca, found, args, {}) == 1
+    assert len(box.sent) == 1
+    box.clock.now += 60
+    assert box.m._notify_all(box.ca, found, args, {}) == 1
+    assert len(box.sent) == 2
+
+    key = "im-sin-asentar-IM-905"
+    assert box.ca.ack(key) == 0
+    box.clock.now += 4 * 60 * 60
+    assert box.m._notify_all(box.ca, found, args, {}) == 1
+    assert len(box.sent) == 2
+
+    box.ca.event("other-session", "URGENTE", None, "other", False, False, owner="stall")
+    box.m._reconcile(box.ca, {}, [], args)
+    assert "event:" + key not in box.ca.load_state()
+    assert "event:other-session" in box.ca.load_state()

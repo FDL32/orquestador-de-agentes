@@ -35,6 +35,7 @@ import errno
 import importlib.util
 import json
 import os
+import sqlite3
 import sys
 import time
 from datetime import datetime
@@ -181,15 +182,21 @@ def _t3_settled(thread_id):
         if not settled(thread_id):
             raise checker.MeasurementError("threadId no asentado en T3")
         return True
-    except (
-        checker.MeasurementError,
-        OSError,
-        RuntimeError,
-        TypeError,
-        ValueError,
-    ) as exc:
+    except checker.MeasurementError as exc:
+        message = str(exc)
+        if any(
+            marker in message.casefold()
+            for marker in ("almacen t3 ilegible", "tabla t3", "abridor t3 ilegible")
+        ):
+            raise SettlementMeasurementError(
+                f"T3 ausente/corrupto/ilegible para {thread_id}: {exc}", RC_INVALID
+            ) from exc
         raise RegistryError(
             f"T3 ilegible o no asentado para {thread_id}: {exc}", RC_INVALID
+        ) from exc
+    except (OSError, RuntimeError, TypeError, ValueError, sqlite3.Error) as exc:
+        raise SettlementMeasurementError(
+            f"T3 ausente/corrupto/ilegible para {thread_id}: {exc}", RC_INVALID
         ) from exc
     finally:
         if connection is not None:
@@ -202,6 +209,10 @@ class RegistryError(Exception):
     def __init__(self, message, code):
         super().__init__(message)
         self.code = code
+
+
+class SettlementMeasurementError(RegistryError):
+    """T3 no permite medir el asiento y puede usar el escape explícito."""
 
 
 class LockUnavailableError(RegistryError):
@@ -679,7 +690,9 @@ def _has_veredicto(lens):
     return isinstance(veredicto, str) and bool(veredicto.strip())
 
 
-def _validate_cell_requirements(item, *, require_cell=False):
+def _validate_cell_requirements(  # noqa: C901 - cell, lens and T3 gates are one contract
+    item, *, require_cell=False, settle_no_medido_motivo=None
+):
     """Aplica las obligaciones de celda y lentes de una sesion proyectada.
 
     Before: ``item`` es la sesion actual o resultante, sin mutar el registry.
@@ -735,7 +748,23 @@ def _validate_cell_requirements(item, *, require_cell=False):
         thread_id = item.get("threadId")
         if not isinstance(thread_id, str) or not thread_id.strip():
             raise RegistryError("ASENTADA exige threadId para verificar T3", RC_INVALID)
-        _t3_settled(thread_id)
+        try:
+            _t3_settled(thread_id)
+            if settle_no_medido_motivo is not None:
+                raise RegistryError(
+                    "--settle-no-medido-motivo solo aplica si T3 no es medible",
+                    RC_INVALID,
+                )
+        except SettlementMeasurementError:
+            if (
+                not isinstance(settle_no_medido_motivo, str)
+                or not settle_no_medido_motivo.strip()
+            ):
+                raise RegistryError(
+                    "T3 ilegible/no medido exige --settle-no-medido-motivo no vacio",
+                    RC_INVALID,
+                ) from None
+            return
 
 
 def _hashed_cell(agents_json, kind, order_id, reason, builder_thread=None):
@@ -869,7 +898,9 @@ def _handle_asiento(args):  # noqa: C901 - valida la proyeccion dry-run y apply
             if field == "lentes":
                 value = _parse_json_field(value, field, list)
             projected[field] = value
-        _validate_cell_requirements(projected)
+        _validate_cell_requirements(
+            projected, settle_no_medido_motivo=args.settle_no_medido_motivo
+        )
         plan = {
             "code": args.code,
             "cambios": {
@@ -885,7 +916,9 @@ def _handle_asiento(args):  # noqa: C901 - valida la proyeccion dry-run y apply
         if field == "lentes":
             value = _parse_json_field(value, field, list)
         projected[field] = value
-    _validate_cell_requirements(projected)
+    _validate_cell_requirements(
+        projected, settle_no_medido_motivo=args.settle_no_medido_motivo
+    )
 
     def mutate(data):
         item = _require_session(data, args.code)
@@ -894,12 +927,18 @@ def _handle_asiento(args):  # noqa: C901 - valida la proyeccion dry-run y apply
             if field == "lentes":
                 value = _parse_json_field(value, field, list)
             projected[field] = value
-        _validate_cell_requirements(projected)
+        _validate_cell_requirements(
+            projected, settle_no_medido_motivo=args.settle_no_medido_motivo
+        )
         for field, value in projected.items():
             if field in changes:
                 item[field] = value
 
     detail = f"code={args.code} campos={sorted(changes)}"
+    if args.settle_no_medido_motivo is not None:
+        detail += (
+            f" escape=settle-no-medido-motivo:{args.settle_no_medido_motivo.strip()}"
+        )
     _apply_change(
         path,
         Path(args.ledger),
@@ -1207,6 +1246,7 @@ def _parser():
     asiento.add_argument("--code", required=True)
     for field in MUTABLE_FIELDS:
         asiento.add_argument("--" + field.replace("_", "-"), dest=field, default=None)
+    asiento.add_argument("--settle-no-medido-motivo", default=None)
     nota = _add_common(commands.add_parser("nota"))
     nota.add_argument("--code", required=True)
     nota.add_argument("--nota", default=None)
