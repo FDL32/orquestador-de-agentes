@@ -60,6 +60,13 @@ except Exception as _role_key_exc:
 
 ACK_RE = re.compile(r"ACTIVA\s*\(ACK medido\s+(?P<ts>[^)]+)\)")
 STATE_NAME = "post_relevo_state.json"
+_CO_CURRENT_STATUS_PREFIXES = ("ACTIVA", "SUPERVISORA", "FALLIDA", "ENTREGADO")
+_CO_SETTLED_STATUS_MARKERS = (
+    "ASENTADA",
+    "SETTLED",
+    "CASCADA DE CONTEXTO",
+    "CASCADA ASENTADA",
+)
 
 
 @dataclass(frozen=True)
@@ -245,15 +252,27 @@ def _apta_unclaimed(backlog: Path, registry_path: Path) -> bool:
     return any(item.get("apta") and not item.get("tiene_brief") for item in decisions)
 
 
-def _co_outside_triad(sessions: list[dict], roles: object) -> list[str]:
-    """Return unsettled coordinator rows whose identity is outside the active triad.
+def _co_outside_triad(  # noqa: C901 - triad/status classification mirrors contract clauses
+    sessions: list[dict], roles: object
+) -> list[str]:
+    """Return current coordinator rows whose identity is outside the active triad.
 
     Before: ``sessions`` is the validated registry list and ``roles`` is the roster
         active-role mapping.
     During: collect session-code and thread-id identities from all active roles,
-        then select CO rows that are not settled and do not belong to that set.
+        then select only CO rows with a current status (ACTIVA, SUPERVISORA,
+        FALLIDA or ENTREGADO), excluding ASENTADA/SETTLED and historical
+        CASCADA DE CONTEXTO variants, that do not belong to that set.
     After: return deterministic coordinator codes without mutating either input.
     """
+
+    def is_current_status(value: object) -> bool:
+        """Classify only explicitly current CO status vocabulary."""
+        status = str(value or "").strip().upper()
+        if not status or any(marker in status for marker in _CO_SETTLED_STATUS_MARKERS):
+            return False
+        return status.startswith(_CO_CURRENT_STATUS_PREFIXES)
+
     triad = set()
     if isinstance(roles, dict):
         for role in roles.values():
@@ -267,7 +286,7 @@ def _co_outside_triad(sessions: list[dict], roles: object) -> list[str]:
         code = session.get("code")
         if not isinstance(code, str) or not code.startswith("CO-"):
             continue
-        if str(session.get("status", "")).startswith("ASENTADA"):
+        if not is_current_status(session.get("status")):
             continue
         if code in triad or session.get("threadId") in triad:
             continue
@@ -351,7 +370,7 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
             reasons.append(
                 "CO asentable fuera de la terna: " + ", ".join(co_candidates)
             )
-        p24_prefix = f"{key}-p24-"
+        p24_key = f"{key}-p24"
         alert_items = []
         base_reasons = [
             reason
@@ -361,14 +380,15 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
         if base_reasons:
             alert_items.append((key, "; ".join(base_reasons)))
         alert_items.extend(
-            (f"{p24_prefix}{candidate}", f"CO asentable fuera de la terna: {candidate}")
-            for candidate in co_candidates
+            [(p24_key, "CO asentable fuera de la terna: " + ", ".join(co_candidates))]
+            if co_candidates
+            else []
         )
         live_keys = {item_key for item_key, _ in alert_items}
         owned_keys = {
             item_key
             for item_key in active_keys
-            if item_key == key or item_key.startswith(p24_prefix)
+            if item_key in (key, p24_key) or item_key.startswith(f"{p24_key}-")
         }
         for stale_key in sorted(owned_keys - live_keys):
             rc = _resolve(stale_key, ops_dir)
