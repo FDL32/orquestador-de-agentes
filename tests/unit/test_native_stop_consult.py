@@ -446,6 +446,14 @@ def _make_store(
     connection.close()
 
 
+@pytest.fixture(autouse=True)
+def _synthetic_state_store(tmp_path, monkeypatch):
+    """Before: test has an isolated tmp_path; During: creates the measured T3 schema; After: no test can fall back to the user store."""
+    database = tmp_path / "default-statev2.sqlite"
+    _make_store(database, "agent")
+    monkeypatch.setenv("T3_STATE_DB", str(database))
+
+
 def test_telemetry_fields(tmp_path):
     """Before: ordinary candidate; During: records one row; After: privacy-safe fields are complete."""
     root, flight = _make_flight(tmp_path, "observe")
@@ -503,6 +511,17 @@ def test_stop_hook_active(tmp_path):
     result = native_stop_hook._decide(_payload(root, transcript, stop_hook_active=True))
     assert result == {"continue": True}
     assert _observations(flight)[-1]["motivo"] == "reentrada"
+
+
+def test_escape_segundo_cierre(tmp_path):
+    """Before: same session has a recent block; During: second active Stop enters reentry; After: escape_segundo_cierre is recorded."""
+    root, flight = _make_flight(tmp_path, "block")
+    transcript = _write_turn(flight)
+    first = native_stop_hook._decide(_payload(root, transcript))
+    second = native_stop_hook._decide(_payload(root, transcript, stop_hook_active=True))
+    assert first["decision"] == "block"
+    assert second == {"continue": True}
+    assert _observations(flight)[-1]["motivo"] == "escape_segundo_cierre"
 
 
 def test_reason_literal():
@@ -577,6 +596,183 @@ def test_mode_cli_four_modes_and_invalid(tmp_path):
     )
     assert proc.returncode != 0
     assert (flight / "stop_consult_mode.json").read_text() == before
+
+
+@pytest.mark.parametrize("token", ["", " "])
+def test_canary_token_vacio(tmp_path, token):
+    """Before: canary token is empty or whitespace; During: validates CLI and hook defense; After: rc 2/no write and observe behavior."""
+    label = "empty" if token == "" else "space"
+    root, flight = _make_flight(tmp_path / label, "block")
+    mode_path = flight / "stop_consult_mode.json"
+    before = mode_path.read_text()
+    cli = subprocess.run(
+        [
+            sys.executable,
+            str(MODE_CLI),
+            "on",
+            "--flight-dir",
+            str(flight),
+            "--mode",
+            "canary",
+            "--canary-token",
+            token,
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert cli.returncode == 2
+    assert mode_path.read_text() == before
+    mode_path.write_text(
+        json.dumps(
+            {
+                "mode": "canary",
+                "canary_token": token,
+                "set_at": datetime.now(timezone.utc).isoformat(),
+                "set_by": "test",
+            }
+        ),
+        encoding="utf-8",
+    )
+    transcript = _write_turn(flight)
+    result = native_stop_hook._decide(_payload(root, transcript))
+    assert result == {"continue": True}
+    assert _observations(flight)[-1]["motivo"] == "observe_habria_bloqueado"
+
+
+def test_sin_transcript_integration(tmp_path):
+    """Before: active flight lacks transcript/prompt; During: calls _decide twice; After: both decisions record sin_transcript."""
+    root, flight = _make_flight(tmp_path, "block")
+    first = native_stop_hook._decide(_payload(root, None))
+    second = native_stop_hook._decide(_payload(root, None, prompt_id=""))
+    assert first == {"continue": True}
+    assert second == {"continue": True}
+    assert [row["motivo"] for row in _observations(flight)[-2:]] == [
+        "sin_transcript",
+        "sin_transcript",
+    ]
+
+
+def test_no_orquestadora_integration(tmp_path):
+    """Before: opening user text lacks CO identity; During: calls _decide; After: continue/no_orquestadora is recorded."""
+    root, flight = _make_flight(tmp_path, "block")
+    rows = _turn_rows()
+    rows[0]["message"]["content"][0]["text"] = "Mensaje de usuario normal."
+    transcript = _write_turn(flight, rows)
+    result = native_stop_hook._decide(_payload(root, transcript))
+    assert result == {"continue": True}
+    assert _observations(flight)[-1]["motivo"] == "no_orquestadora"
+
+
+def test_orquestadora_no_activa_integration(tmp_path):
+    """Before: roster CO is inactive; During: calls _decide; After: no_medido/orquestadora_no_activa is recorded."""
+    root, flight = _make_flight(tmp_path, "block")
+    roster = json.loads((flight / "flight_roster.json").read_text())
+    roster["active_roles"]["orquestador"]["estado"] = "INACTIVO"
+    (flight / "flight_roster.json").write_text(json.dumps(roster), encoding="utf-8")
+    transcript = _write_turn(flight)
+    result = native_stop_hook._decide(_payload(root, transcript))
+    assert result == {"continue": True}
+    row = _observations(flight)[-1]
+    assert row["decision"] == "no_medido"
+    assert row["motivo"] == "orquestadora_no_activa"
+
+
+def test_identidad_no_casa_integration(tmp_path):
+    """Before: opening CO differs from roster; During: calls _decide; After: continue/identidad_no_casa is recorded."""
+    root, flight = _make_flight(tmp_path, "block")
+    rows = _turn_rows()
+    rows[0]["message"]["content"][0]["text"] = "Eres CO-999, ejecuta el siguiente paso."
+    transcript = _write_turn(flight, rows)
+    result = native_stop_hook._decide(_payload(root, transcript))
+    assert result == {"continue": True}
+    assert _observations(flight)[-1]["motivo"] == "identidad_no_casa"
+
+
+def test_excepcion_integration(tmp_path, monkeypatch):
+    """Before: responder probe raises inside active branch; During: calls _decide; After: fail-open/no_medido excepcion is recorded."""
+    root, flight = _make_flight(tmp_path, "block")
+    transcript = _write_turn(flight)
+
+    def explode(*_args):
+        """Before: responder arguments; During: raises a real runtime error; After: outer branch must fail open."""
+        raise RuntimeError("synthetic responder failure")
+
+    monkeypatch.setattr(native_stop_hook, "_consult_tool_respondedor", explode)
+    result = native_stop_hook._decide(_payload(root, transcript))
+    assert result == {"continue": True}
+    row = _observations(flight)[-1]
+    assert row["decision"] == "no_medido"
+    assert row["motivo"] == "excepcion"
+
+
+def test_pause_valid_integrated(tmp_path):
+    """Before: valid pause file; During: calls _decide; After: continue and pause telemetry are emitted."""
+    root, flight = _make_flight(tmp_path, "block")
+    now = datetime.now(timezone.utc)
+    (flight / "stop_consult_pause.json").write_text(
+        json.dumps(
+            {
+                "hasta": (now + timedelta(minutes=30)).isoformat(),
+                "epoca": "7",
+                "supervisor_threadId": "mcp:sup-thread",
+                "set_at": now.isoformat(),
+                "minutos": 30,
+                "consulta": "espera",
+                "acting_thread": "mcp:sup-thread",
+            }
+        ),
+        encoding="utf-8",
+    )
+    transcript = _write_turn(flight)
+    result = native_stop_hook._decide(_payload(root, transcript))
+    assert result == {"continue": True}
+    row = _observations(flight)[-1]
+    assert row["motivo"] == "pausa"
+    assert row["pausa"] is True
+
+
+def test_consulta_viva_espera_temporizador(tmp_path, monkeypatch):
+    """Before: first close accredits supervisor consultation; During: second _decide sees the live row; After: waits without a second reason."""
+    root, flight = _make_flight(tmp_path, "block")
+    transcript = _write_turn(flight)
+    monkeypatch.setattr(
+        native_stop_hook,
+        "_consult_tool_respondedor",
+        lambda *_args: "consulta_supervisora",
+    )
+    first = native_stop_hook._decide(_payload(root, transcript))
+    assert first == {"continue": True}
+    assert _observations(flight)[-1]["respondedor"] == "consulta_supervisora"
+    monkeypatch.undo()
+    second = native_stop_hook._decide(_payload(root, transcript))
+    assert second == {"continue": True}
+    assert _observations(flight)[-1]["motivo"] == "espera_temporizador"
+
+
+def test_tope_ignora_bloqueos_fuera_de_ventana(tmp_path):
+    """Before: five same-session blocks are 90 minutes old; During: applies the 60-minute window; After: the new close blocks, not tope."""
+    root, flight = _make_flight(tmp_path, "block")
+    old = (datetime.now(timezone.utc) - timedelta(minutes=90)).isoformat()
+    target = flight / "stop_consult_observations.jsonl"
+    with target.open("w", encoding="utf-8", newline="\n") as handle:
+        for _index in range(5):
+            handle.write(
+                json.dumps(
+                    {
+                        "ts": old,
+                        "session_id": "session-1",
+                        "prompt_id": "old",
+                        "decision": "block",
+                        "respondedor": None,
+                    }
+                )
+                + "\n"
+            )
+    transcript = _write_turn(flight)
+    result = native_stop_hook._decide(_payload(root, transcript))
+    assert result["decision"] == "block"
+    assert _observations(flight)[-1]["motivo"] == "candidato"
 
 
 def test_mode_status_report_keys(tmp_path):

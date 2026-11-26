@@ -84,7 +84,9 @@ def _on(args: argparse.Namespace) -> int:
     if args.mode not in MODES:
         print("modo invalido", file=sys.stderr)
         return 2
-    if args.mode == "canary" and not isinstance(args.canary_token, str):
+    if args.mode == "canary" and not (
+        isinstance(args.canary_token, str) and args.canary_token.strip()
+    ):
         print("canary exige --canary-token", file=sys.stderr)
         return 2
     flight = _flight_dir(args.flight_dir)

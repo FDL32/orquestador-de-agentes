@@ -1436,6 +1436,8 @@ def _consult_branch(root: Path, payload: dict) -> dict:  # noqa: C901
         canary_matches = (
             mode == "canary"
             and isinstance(mode_data.get("canary_token"), str)
+            and mode_data["canary_token"]
+            and mode_data["canary_token"].strip()
             and mode_data["canary_token"] in (_consult_text(opening) or "")
         )
         if mode == "observe" or (mode == "canary" and not canary_matches):
