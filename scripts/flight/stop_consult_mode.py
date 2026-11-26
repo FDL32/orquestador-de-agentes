@@ -134,10 +134,21 @@ def _status(args: argparse.Namespace) -> int:  # noqa: C901
         return 0
     now = _parse_now(args.now)
     counts = {"no_medido": 0, "topes": 0, "escapes": 0}
-    rc = 0
+    corrupt = 0
     try:
         raw = (flight / "stop_consult_observations.jsonl").read_text(encoding="utf-8")
-        for line in raw.splitlines():
+    except FileNotFoundError:
+        raw = ""
+    except (OSError, UnicodeDecodeError):
+        print(
+            json.dumps(
+                {"modo": mode, **counts, "ventana_h": 24, "rc": 1},
+                ensure_ascii=False,
+            )
+        )
+        return 1
+    for _line_number, line in enumerate(raw.splitlines(), start=1):
+        try:
             if not line.strip():
                 continue
             row = json.loads(line)
@@ -154,16 +165,19 @@ def _status(args: argparse.Namespace) -> int:  # noqa: C901
                 counts["topes"] += 1
             if row.get("motivo") == "escape_segundo_cierre":
                 counts["escapes"] += 1
-    except FileNotFoundError:
-        pass
-    except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError):
-        rc = 1
+        except (ValueError, TypeError, KeyError, AttributeError):
+            corrupt += 1
+    if corrupt:
+        print(
+            f"stop_consult_mode: {corrupt} linea(s) corrupta(s) omitida(s)",
+            file=sys.stderr,
+        )
     print(
         json.dumps(
-            {"modo": mode, **counts, "ventana_h": 24, "rc": rc}, ensure_ascii=False
+            {"modo": mode, **counts, "ventana_h": 24, "rc": 0}, ensure_ascii=False
         )
     )
-    return rc
+    return 0
 
 
 def _build_parser() -> argparse.ArgumentParser:

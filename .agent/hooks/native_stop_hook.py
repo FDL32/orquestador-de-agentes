@@ -90,7 +90,7 @@ import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -206,11 +206,15 @@ CONSULT_PAUSE_RELPATH = Path("stop_consult_pause.json")
 CONSULT_OBSERVATIONS_RELPATH = Path("stop_consult_observations.jsonl")
 CONSULT_TRANSCRIPT_MAX_BYTES = 8 * 1024 * 1024
 CONSULT_TRANSCRIPT_HEAD_BYTES = 128 * 1024
+CONSULT_OBSERVATIONS_MAX_BYTES = 8 * 1024 * 1024
+CONSULT_OBSERVATIONS_TAIL_BYTES = 512 * 1024
+CONSULT_OBSERVATIONS_KEEP_BYTES = 4 * 1024 * 1024
 CONSULT_BLOCK_WINDOW_S = 60 * 60
 CONSULT_LIVE_WINDOW_S = 10 * 60
 CONSULT_ESCAPE_WINDOW_S = 15 * 60
 CONSULT_MAX_MINUTES = 60
 _CONSULT_ID_RE = re.compile(r"^Eres (CO-\d+),")
+_CONSULT_CANONICAL_TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 
 def find_repo_root(start: Path) -> Path:
@@ -913,8 +917,59 @@ def _consult_record(
             os.write(descriptor, raw)
         finally:
             os.close(descriptor)
+        _consult_rotate_observations(target)
     except (OSError, TypeError, ValueError):
         return
+
+
+def _consult_tail_lines(path: Path, limit: int) -> list[str]:
+    """Before: JSONL path and byte limit; During: reads only a complete tail; After: returns lines without a partial head."""
+    with path.open("rb") as handle:
+        size = handle.seek(0, os.SEEK_END)
+        handle.seek(max(0, size - limit))
+        raw = handle.read()
+    if size > limit:
+        separator = raw.find(b"\n")
+        raw = raw[separator + 1 :] if separator >= 0 else b""
+    return raw.decode("utf-8").splitlines()
+
+
+def _consult_observation_rows(flight_dir: Path) -> list[dict]:
+    """Before: flight observation JSONL; During: parses its bounded tail; After: valid rows only, fail-open on I/O."""
+    try:
+        lines = _consult_tail_lines(
+            flight_dir / CONSULT_OBSERVATIONS_RELPATH,
+            CONSULT_OBSERVATIONS_TAIL_BYTES,
+        )
+    except (OSError, UnicodeDecodeError, ValueError):
+        return []
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def _consult_rotate_observations(target: Path) -> None:
+    """Before: appended observation file; During: atomically keeps a complete four-MiB tail; After: bounded JSONL or unchanged file."""
+    temporary: Path | None = None
+    try:
+        if target.stat().st_size <= CONSULT_OBSERVATIONS_MAX_BYTES:
+            return
+        lines = _consult_tail_lines(target, CONSULT_OBSERVATIONS_KEEP_BYTES)
+        temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+        with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+            if lines:
+                handle.write("\n".join(lines) + "\n")
+        os.replace(temporary, target)
+    except (OSError, UnicodeDecodeError, ValueError):
+        if temporary is not None:
+            with contextlib.suppress(OSError):
+                temporary.unlink()
 
 
 def _consult_tool_respondedor(  # noqa: C901
@@ -970,19 +1025,23 @@ def _consult_origin_user(  # noqa: C901
     """Before: opening user row and orchestrator roster entry; During: reads T3 store RO and matches normalized text/time; After: (is_user, no_medido).
 
     The text-plus-nearest-timestamp join is inherently fragile: transcript and
-    projection clocks can drift, and duplicate text can be ambiguous. Any such
-    uncertainty is deliberately reported as ``no_medido_origen`` and never
-    becomes a user exemption.
+    projection clocks can drift, and duplicate text can be ambiguous. The store
+    query is limited to the two hours before the opening row and 200 rows; a
+    message queued earlier and consumed later therefore becomes
+    ``no_medido_origen`` and never exempts or blocks by itself. Any uncertainty
+    is deliberately reported as ``no_medido_origen`` and never becomes a user
+    exemption.
     """
     try:
         opening_text = _consult_text(opening)
-        opening_dt = _consult_parse_dt(
-            opening.get("timestamp") or opening.get("created_at")
-        )
+        opening_raw = opening.get("timestamp") or opening.get("created_at")
+        opening_dt = _consult_parse_dt(opening_raw)
         thread_id = roster_entry.get("threadId")
         if (
             not isinstance(opening_text, str)
             or not opening_text
+            or not isinstance(opening_raw, str)
+            or _CONSULT_CANONICAL_TS_RE.fullmatch(opening_raw) is None
             or opening_dt is None
             or not isinstance(thread_id, str)
         ):
@@ -1024,13 +1083,20 @@ def _consult_origin_user(  # noqa: C901
             placeholders = ",".join("?" for _ in thread_ids)
             sql = (
                 f"SELECT message_id, thread_id, created_at, updated_at, streaming, payload_json "  # noqa: S608
-                f"FROM {module.SCHEMA_MESSAGES} WHERE thread_id IN ({placeholders})"
+                f"FROM {module.SCHEMA_MESSAGES} WHERE thread_id IN ({placeholders}) "
+                "AND created_at >= ? AND created_at <= ? "
+                "ORDER BY created_at DESC LIMIT 200"
             )
             expected = module.normalize_text(opening_text)
             if expected is None:
                 raise ValueError("texto_no_normalizable")
             candidates = []
-            for row in connection.execute(sql, thread_ids).fetchall():
+            lower = (opening_dt - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S.%f")[
+                :23
+            ] + "Z"
+            upper = opening_dt.strftime("%Y-%m-%dT%H:%M:%S.%f")[:23] + "Z"
+            parameters = [*thread_ids, lower, upper]
+            for row in connection.execute(sql, parameters):
                 record = module._row_to_record(row)
                 if (
                     record.normalized_text == expected
@@ -1055,7 +1121,7 @@ def _consult_origin_user(  # noqa: C901
 
 
 def _consult_pause_valid(flight_dir: Path, roster: dict) -> bool:
-    """Before: current roster and optional pause JSON; During: checks authority, epoch and expiry; After: validity boolean."""
+    """Before: current roster and optional pause JSON; During: checks authority, epoch, expiry and declared duration; After: validity boolean."""
     try:
         data = json.loads(
             (flight_dir / CONSULT_PAUSE_RELPATH).read_text(encoding="utf-8")
@@ -1063,15 +1129,20 @@ def _consult_pause_valid(flight_dir: Path, roster: dict) -> bool:
         roles = roster["active_roles"]
         supervisor = roles["supervisor"]
         until = _consult_parse_dt(data.get("hasta"))
+        set_at = _consult_parse_dt(data.get("set_at"))
         minutes = data.get("minutos")
+        now = datetime.now(timezone.utc)
         return bool(
             until
-            and datetime.now(timezone.utc) < until
+            and set_at
+            and now < until
             and str(data.get("epoca")) == str(supervisor.get("version"))
             and data.get("supervisor_threadId") == supervisor.get("threadId")
             and isinstance(minutes, int)
             and not isinstance(minutes, bool)
             and minutes <= CONSULT_MAX_MINUTES
+            and (until - set_at).total_seconds() <= minutes * 60 + 5
+            and (until - now).total_seconds() <= CONSULT_MAX_MINUTES * 60 + 5
         )
     except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError):
         return False
@@ -1087,13 +1158,7 @@ def _consult_recent(
 ) -> bool:
     """Before: flight observation log; During: scans one session and time window; After: matching boolean."""
     try:
-        rows = [
-            json.loads(line)
-            for line in (flight_dir / CONSULT_OBSERVATIONS_RELPATH)
-            .read_text(encoding="utf-8")
-            .splitlines()
-            if line.strip()
-        ]
+        rows = _consult_observation_rows(flight_dir)
     except (OSError, UnicodeDecodeError, ValueError, TypeError):
         return False
     now = datetime.now(timezone.utc)
@@ -1120,13 +1185,7 @@ def _consult_count(
 ) -> int:
     """Before: flight observation log; During: counts matching rows in one session/window; After: integer count or zero on read failure."""
     try:
-        rows = [
-            json.loads(line)
-            for line in (flight_dir / CONSULT_OBSERVATIONS_RELPATH)
-            .read_text(encoding="utf-8")
-            .splitlines()
-            if line.strip()
-        ]
+        rows = _consult_observation_rows(flight_dir)
     except (OSError, UnicodeDecodeError, ValueError, TypeError):
         return 0
     now = datetime.now(timezone.utc)
@@ -1155,9 +1214,11 @@ def _consult_branch(root: Path, payload: dict) -> dict:  # noqa: C901
     try:
         flights = _consult_flights(root)
         if len(flights) > 1:
-            sys.stderr.write(
-                "native_stop_hook: vuelo_ambiguo; consulta de parada omitida\n"
-            )
+            modes = [_consult_read_mode(flight)[0] for flight in flights]
+            if any(mode != "off" for mode in modes):
+                sys.stderr.write(
+                    "native_stop_hook: vuelo_ambiguo; consulta de parada omitida\n"
+                )
             return {"block_reason": None}
         if not flights:
             return {"block_reason": None}

@@ -10,6 +10,7 @@ negativos sin leer transcripts reales ni el estado real de T3.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sqlite3
 import subprocess
@@ -39,13 +40,14 @@ CONSULT_REASON = (
 )
 
 
-def _run_hook(payload: str, cwd: Path, hook: Path = HOOK):
+def _run_hook(payload: str, cwd: Path, hook: Path = HOOK, *, env=None):
     """Before: payload JSON o texto; During: ejecuta el hook; After: devuelve rc, JSON y stderr."""
     proc = subprocess.run(
         [sys.executable, "-X", "utf8", str(hook)],
         input=payload.encode("utf-8"),
         cwd=cwd,
         capture_output=True,
+        env=env,
     )
     stdout = proc.stdout.decode("utf-8").strip()
     return (
@@ -340,7 +342,51 @@ def test_created_by_user_ilegible_store_no_medido_origen(tmp_path, monkeypatch):
     assert _observations(flight)[-1]["nota"] == "no_medido_origen"
 
 
-def _make_store(path: Path, created_by: str, *, duplicate: bool = False):
+def test_created_by_user_time_window(tmp_path, monkeypatch):
+    """Before: matching text is old or recent; During: applies the two-hour store window; After: only recent user origin exempts."""
+    root, flight = _make_flight(tmp_path, "block")
+    transcript = _write_turn(flight)
+    db = tmp_path / "statev2.sqlite"
+    _make_store(db, "user", created_at="2026-11-26T07:00:00.000Z")
+    monkeypatch.setenv("T3_STATE_DB", str(db))
+    old = native_stop_hook._decide(_payload(root, transcript))
+    assert old["decision"] == "block"
+    assert _observations(flight)[-1]["nota"] == "no_medido_origen"
+    db.unlink()
+    _make_store(db, "user", created_at="2026-11-26T09:30:00.000Z")
+    recent = native_stop_hook._decide(_payload(root, transcript))
+    assert recent == {"continue": True}
+    assert _observations(flight)[-1]["motivo"] == "turno_de_usuario"
+
+
+def test_pause_hasta_respects_minutos_and_now(tmp_path):
+    """Before: pauses have future expiry; During: checks set_at/minutes and now bounds; After: only a legitimate pause validates."""
+    _root, flight = _make_flight(tmp_path, "block")
+    now = datetime.now(timezone.utc)
+    pause = {
+        "hasta": (now + timedelta(hours=3)).isoformat(),
+        "epoca": "7",
+        "supervisor_threadId": "mcp:sup-thread",
+        "set_at": now.isoformat(),
+        "minutos": 30,
+        "consulta": "espera",
+        "acting_thread": "mcp:sup-thread",
+    }
+    (flight / "stop_consult_pause.json").write_text(json.dumps(pause), encoding="utf-8")
+    roster = json.loads((flight / "flight_roster.json").read_text())
+    assert not native_stop_hook._consult_pause_valid(flight, roster)
+    pause["hasta"] = (now + timedelta(minutes=30)).isoformat()
+    (flight / "stop_consult_pause.json").write_text(json.dumps(pause), encoding="utf-8")
+    assert native_stop_hook._consult_pause_valid(flight, roster)
+
+
+def _make_store(
+    path: Path,
+    created_by: str,
+    *,
+    duplicate: bool = False,
+    created_at: str = "2026-11-26T10:00:00.000Z",
+):
     """Before: path is unused; During: creates the measured SQLite schema and message; After: file is queryable read-only."""
     connection = sqlite3.connect(path)
     connection.executescript(
@@ -370,8 +416,8 @@ def _make_store(path: Path, created_by: str, *, duplicate: bool = False):
                 "run-1",
                 "node-1",
                 "user",
-                f"2026-11-26T10:00:0{index}.000Z",
-                f"2026-11-26T10:00:0{index}.000Z",
+                created_at,
+                created_at,
                 0,
                 json.dumps(message),
             ),
@@ -411,20 +457,27 @@ def test_telemetry_fields(tmp_path):
 
 
 def test_vuelo_ambiguo(tmp_path):
-    """Before: two flights; During: invokes Stop; After: no-op, exact warning and no row."""
-    root, first = _make_flight(tmp_path, "block")
-    second = root / ".agent" / "runtime" / "flight" / "flight-2"
-    second.mkdir()
-    (second / "flight_roster.json").write_text(json.dumps(_roster()), encoding="utf-8")
-    (second / "stop_consult_mode.json").write_text(
-        json.dumps({"mode": "block"}), encoding="utf-8"
-    )
-    transcript = _write_turn(first)
-    rc, result, stderr = _run_hook(json.dumps(_payload(root, transcript)), root)
-    assert rc == 0
-    assert result == {"continue": True}
-    assert "native_stop_hook: vuelo_ambiguo; consulta de parada omitida" in stderr
-    assert not list(root.rglob("stop_consult_observations.jsonl"))
+    """Before: two flights; During: compares off and active modes; After: warning only for active ambiguity."""
+    for label, modes, expected_warning in (
+        ("off", ("off", "off"), False),
+        ("active", ("observe", "off"), True),
+    ):
+        root, first = _make_flight(tmp_path / label, modes[0])
+        second = root / ".agent" / "runtime" / "flight" / "flight-2"
+        second.mkdir()
+        (second / "flight_roster.json").write_text(
+            json.dumps(_roster()), encoding="utf-8"
+        )
+        (second / "stop_consult_mode.json").write_text(
+            json.dumps({"mode": modes[1]}), encoding="utf-8"
+        )
+        transcript = _write_turn(first)
+        rc, result, stderr = _run_hook(json.dumps(_payload(root, transcript)), root)
+        assert rc == 0
+        assert result == {"continue": True}
+        literal = "native_stop_hook: vuelo_ambiguo; consulta de parada omitida"
+        assert (literal in stderr) is expected_warning
+        assert not list(root.rglob("stop_consult_observations.jsonl"))
 
 
 def test_stop_hook_active(tmp_path):
@@ -545,6 +598,93 @@ def test_mode_status_report_keys(tmp_path):
     assert report["rc"] == 0
 
 
+def test_status_report_skips_corrupt_jsonl_line(tmp_path):
+    """Before: JSONL has one corrupt middle line; During: status reports valid rows; After: rc 0 and exact keys remain."""
+    root, flight = _make_flight(tmp_path, "observe")
+    target = flight / "stop_consult_observations.jsonl"
+    rows = [
+        {"ts": datetime.now(timezone.utc).isoformat(), "decision": "no_medido"},
+        "{not-json",
+        {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "decision": "tope",
+            "motivo": "escape_segundo_cierre",
+        },
+    ]
+    target.write_text(
+        "\n".join(item if isinstance(item, str) else json.dumps(item) for item in rows)
+        + "\n",
+        encoding="utf-8",
+    )
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(MODE_CLI),
+            "status",
+            "--report",
+            "--flight-dir",
+            str(flight),
+        ],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode == 0
+    report = json.loads(proc.stdout)
+    assert set(report) == {"modo", "no_medido", "topes", "escapes", "ventana_h", "rc"}
+    assert report["no_medido"] == 1
+    assert report["topes"] == 1
+    assert report["escapes"] == 1
+    assert "corrupta" in proc.stderr
+
+
+def test_observations_use_tail_and_rotate(tmp_path):
+    """Before: large observation JSONL; During: counts tail and rotates on append; After: valid bounded log retains new row."""
+    _root, flight = _make_flight(tmp_path, "block")
+    target = flight / "stop_consult_observations.jsonl"
+    old = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "session_id": "other",
+        "decision": "block",
+        "respondedor": None,
+    }
+    recent = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "session_id": "session-1",
+        "decision": "block",
+        "respondedor": None,
+    }
+    with target.open("w", encoding="utf-8", newline="\n") as handle:
+        for _index in range(80000):
+            handle.write(json.dumps(old) + "\n")
+        handle.write(json.dumps(recent) + "\n")
+    assert target.stat().st_size > native_stop_hook.CONSULT_OBSERVATIONS_MAX_BYTES
+    assert (
+        native_stop_hook._consult_count(
+            flight, "session-1", decision="block", window=3600
+        )
+        == 1
+    )
+    assert native_stop_hook._consult_recent(
+        flight, "session-1", decision="block", window=3600
+    )
+    payload = _payload(_root, None)
+    native_stop_hook._consult_record(
+        flight,
+        payload,
+        "block",
+        es_orquestadora=True,
+        respondedor=None,
+        pausa=False,
+        decision="no_medido",
+        motivo="rotacion",
+        has_transcript_path=False,
+    )
+    assert target.stat().st_size <= native_stop_hook.CONSULT_OBSERVATIONS_KEEP_BYTES
+    parsed = [json.loads(line) for line in target.read_text().splitlines()]
+    assert parsed[-1]["motivo"] == "rotacion"
+
+
 def test_pause_only_supervisor_and_ledger(tmp_path):
     """Before: copied roster/registry; During: sets pause for supervisor and rejects stranger; After: atomic pause plus valid ledger."""
     root, flight = _make_flight(tmp_path, "block")
@@ -636,15 +776,82 @@ def test_pause_old_epoch_does_not_exempt(tmp_path):
     assert result["decision"] == "block"
 
 
-def test_off_is_byte_identical_to_base(tmp_path):
-    """Before: paired roots and base hook from git; During: runs both; After: rc/stdout/stderr match."""
-    current = tmp_path / "current"
-    base = tmp_path / "base"
-    for root in (current, base):
-        (root / ".claude").mkdir(parents=True)
-        (root / ".agent" / "hooks").mkdir(parents=True)
-        (root / "scripts" / "flight").mkdir(parents=True)
+def _make_matrix_root(root: Path, scenario: str) -> Path:
+    """Before: empty path; During: builds a synthetic legacy/flight scenario; After: root is ready for both hooks."""
+    (root / ".claude").mkdir(parents=True)
+    if scenario == "044t":
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "config", "user.email", "t@example.invalid"],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(root), "config", "user.name", "T"], check=True)
         (root / "seed.txt").write_text("seed\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root), "add", "seed.txt"], check=True)
+        subprocess.run(
+            ["git", "-C", str(root), "commit", "-q", "-m", "seed"], check=True
+        )
+        head = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        status = subprocess.run(
+            ["git", "-C", str(root), "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        sentinel = {
+            "baseline_head": head,
+            "baseline_status_hash": native_stop_hook.status_hash(status),
+            "activated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        target = root / native_stop_hook.SENTINEL_RELPATH
+        target.parent.mkdir(parents=True)
+        target.write_text(json.dumps(sentinel), encoding="utf-8")
+        (root / "mutacion.txt").write_text("cambio\n", encoding="utf-8")
+    elif scenario == "160z":
+        target = root / native_stop_hook.ESPERA_SENTINEL_RELPATH
+        target.parent.mkdir(parents=True)
+        target.write_text(
+            json.dumps(
+                {
+                    "mode": "block",
+                    "activated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            ),
+            encoding="utf-8",
+        )
+    if scenario.startswith("flight"):
+        count = 2 if scenario == "flight-two-off" else 1
+        flight_root = root / ".agent" / "runtime" / "flight"
+        for index in range(count):
+            flight = flight_root / f"flight-{index + 1}"
+            flight.mkdir(parents=True)
+            (flight / "flight_roster.json").write_text(
+                json.dumps(_roster()), encoding="utf-8"
+            )
+            if scenario in {"flight-one-off", "flight-two-off"}:
+                (flight / "stop_consult_mode.json").write_text(
+                    json.dumps({"mode": "off"}), encoding="utf-8"
+                )
+    return root
+
+
+def test_off_is_byte_identical_to_base(tmp_path):
+    """Before: off/no-mode roots and legacy payloads; During: runs current and BASE hooks; After: every tuple is byte-identical."""
+    scenarios = ("none", "flight-one-no-mode", "flight-one-off", "flight-two-off")
+    payload_kinds = (
+        "plain",
+        "reentry",
+        "044t",
+        "160z",
+        "observe",
+        "empty",
+        "invalid",
+    )
     source = subprocess.run(
         [
             "git",
@@ -655,34 +862,36 @@ def test_off_is_byte_identical_to_base(tmp_path):
         capture_output=True,
         check=True,
     ).stdout
-    (base / ".agent" / "hooks" / "native_stop_hook.py").write_bytes(source)
-    shutil.copy2(
-        ROOT / "scripts" / "flight" / "roster_role_key.py",
-        base / "scripts" / "flight" / "roster_role_key.py",
-    )
-    payloads = [
-        {
-            "cwd": str(current),
-            "stop_hook_active": False,
-            "last_assistant_message": "plain",
-        },
-        {
-            "cwd": str(current),
-            "stop_hook_active": True,
-            "last_assistant_message": "plain",
-        },
-        {
-            "cwd": str(current),
-            "stop_hook_active": False,
-            "last_assistant_message": "Sigo esperando.",
-        },
-    ]
-    for payload in payloads:
-        current_payload = dict(payload)
-        base_payload = dict(payload)
-        base_payload["cwd"] = str(base)
-        assert _run_hook(json.dumps(current_payload), current) == _run_hook(
-            json.dumps(base_payload),
-            base,
-            base / ".agent" / "hooks" / "native_stop_hook.py",
-        )
+    for scenario in scenarios:
+        for kind in payload_kinds:
+            current = _make_matrix_root(
+                tmp_path / "current" / scenario / kind, scenario
+            )
+            base = _make_matrix_root(tmp_path / "base" / scenario / kind, scenario)
+            base_hook = base / ".agent" / "hooks" / "native_stop_hook.py"
+            base_hook.parent.mkdir(parents=True)
+            (base / "scripts" / "flight").mkdir(parents=True)
+            base_hook.write_bytes(source)
+            shutil.copy2(
+                ROOT / "scripts" / "flight" / "roster_role_key.py",
+                base / "scripts" / "flight" / "roster_role_key.py",
+            )
+            if kind in {"empty", "invalid"}:
+                raw = "" if kind == "empty" else "not-json"
+            else:
+                payload = _payload(current)
+                if kind == "reentry":
+                    payload["stop_hook_active"] = True
+                elif kind == "044t":
+                    payload["last_assistant_message"] = "Cierre sin marcador."
+                elif kind == "160z":
+                    payload["last_assistant_message"] = "Sigo esperando."
+                raw = json.dumps(payload)
+            env = None
+            if kind == "observe":
+                env = {**os.environ, "AGENT_VERIFICATION_MODE": "observe"}
+            current_result = _run_hook(raw, current, env=env)
+            base_result = _run_hook(
+                raw.replace(str(current), str(base)), base, base_hook, env=env
+            )
+            assert current_result == base_result, (scenario, kind)
