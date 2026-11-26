@@ -1024,7 +1024,10 @@ def cmd_add(args: argparse.Namespace) -> int:  # noqa: C901
             return EXIT_WRITE_REQUIRED
         print(json.dumps(degraded_payload))
         return 0
-    print(json.dumps({"written": True, "session_id": sid, "event": event}))
+    result_payload = {"written": True, "session_id": sid, "event": event}
+    if event == "preexisting_gate_unblock":
+        result_payload["commit_trace"] = f"PREEXISTING_GATE_UNBLOCK: {args.ticket_id}"
+    print(json.dumps(result_payload))
     return 0
 
 

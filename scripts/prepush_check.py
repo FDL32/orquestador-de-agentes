@@ -4390,6 +4390,47 @@ def run_inbox_drainage_check(project_root: Path) -> CheckResult:
     )
 
 
+def run_unblock_trace_check(project_root: Path) -> CheckResult:
+    """Run the Git-derived unblock-trace barrier during session closeout.
+
+    Before: ``project_root`` identifies the active destination while the
+    verifier itself belongs to the motor checkout.
+    During: import the verifier statically for guard-wiring discovery and run
+    its standalone CLI against the motor's closeout range.
+    After: return the verifier's real exit code as a blocking CheckResult.
+    """
+    try:
+        from scripts import check_unblock_trace
+    except ImportError:
+        import check_unblock_trace  # type: ignore[no-redef]
+
+    motor_root = _MOTOR_ROOT
+    try:
+        from runtime.motor_link import resolve_motor_root
+
+        resolved = resolve_motor_root(project_root)
+        if (
+            resolved is not None
+            and (resolved / "scripts" / "check_unblock_trace.py").exists()
+        ):
+            motor_root = resolved
+    except ImportError:
+        pass
+
+    return run_subprocess_check(
+        cmd=[
+            sys.executable,
+            str(Path(check_unblock_trace.__file__).resolve()),
+            "--motor-root",
+            str(motor_root),
+            "--range",
+            "origin/main..HEAD",
+        ],
+        name="Unblock Trace (WOT-2026-231d)",
+        project_root=project_root,
+    )
+
+
 def run_backlog_admission_check(project_root: Path) -> CheckResult:
     """WOT-2026-054m: puerta de admision anti-duplicado (PASO 0 cableado).
 
@@ -5225,6 +5266,10 @@ def run_preflight_check(
         # Import ESTATICO en el run_ -> check_guard_wiring lo cuenta WIRED
         # (patron canonico del modulo). SKIP nombrado si el rango no resuelve.
         results.append(run_backlog_admission_check(project_root))
+        # 6p-bis. Unblock Trace (WOT-2026-231d; BLOQUEANTE): commits that
+        # touch guard and gate machinery must carry a Git-derived trace or
+        # explicit non-preexisting classification before session closeout.
+        results.append(run_unblock_trace_check(project_root))
         # 6q. Sibling-Commit Parity (WOT-2026-056d; BLOQUEANTE). Un ticket cuyo
         # delivery_authority abarca DOS repos produce un par atomico de commits;
         # publicar solo una mitad dejaba el landing en ROJO sin que nada lo

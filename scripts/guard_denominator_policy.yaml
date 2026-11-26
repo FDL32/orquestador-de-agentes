@@ -475,3 +475,7 @@ guards:
     clase: fixed_denominator
     skip_explicito: 'no'
     nota: "modo automatico = pre-commit; --latido/--workspace-root verifica el latido vivo"
+  scripts/check_unblock_trace.py:
+    clase: external_targets
+    skip_explicito: 'no'
+    nota: "universo = commits del rango Git aportado por --range sobre el motor; deriva candidatos y trazas del mensaje versionado, nunca del ledger local"

@@ -275,6 +275,7 @@ EXPECTED_WIRED_REAL = {
     # llamada pone en rojo TestWOT2026089eMemoryHealthStep (WARN, no bloqueante).
     "check_memory_health",
     "check_loop_execution",  # WOT-2026-040b: cableado via import estatico en prepush_check.py::run_loop_execution_check (closeout, WARN). Barrera de ejecucion del bucle 1->9->2.
+    "check_unblock_trace",  # WOT-2026-231d: cableado via import estatico en prepush_check.py (closeout, BLOQUEANTE).
     "check_motor_destination_integration",  # WOT-2026-024w: cableado en prepush_check.py (closeout, WARN/STRICT)
     "check_no_history_truncation",
     # WOT-2026-042m: cableado via import estatico en
@@ -567,6 +568,24 @@ def test_loop_execution_barrier_is_wired_from_prepush():
         "check_loop_execution debe estar cableado desde prepush_check.py: es la "
         "barrera de EJECUCION del bucle, no una norma en un prompt (WOT-2026-040b)."
     )
+
+
+def test_231d_unblock_trace_is_wired_from_prepush():
+    edges = cgw.wiring_edges(_ROOT)
+    assert "scripts/prepush_check.py" in edges.get("check_unblock_trace", set())
+
+
+def test_231d_unblock_trace_dewiring_is_detected(tmp_path):
+    src = (_ROOT / "scripts" / "prepush_check.py").read_text(encoding="utf-8")
+    assert "check_unblock_trace" in src
+    muted = src.replace("check_unblock_trace", "other_unblock_guard")
+    (tmp_path / "scripts").mkdir(parents=True)
+    (tmp_path / "scripts" / "prepush_check.py").write_text(muted, encoding="utf-8")
+    (tmp_path / "scripts" / "check_unblock_trace.py").write_text(
+        "# guard\n", encoding="utf-8"
+    )
+    edges = cgw.wiring_edges(tmp_path, _EMPTY_POLICY)
+    assert not edges.get("check_unblock_trace", set())
 
 
 def test_loop_execution_dewiring_is_caught(tmp_path):

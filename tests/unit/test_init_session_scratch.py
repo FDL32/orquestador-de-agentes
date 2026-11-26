@@ -47,6 +47,57 @@ def _norm(text: str) -> str:
     return " ".join(text.split())
 
 
+def test_preexisting_unblock_emits_commit_trace_line(tmp_path: Path) -> None:
+    repo = tmp_path / "destination"
+    (repo / ".agent").mkdir(parents=True)
+    sid = "20261126-0000-nogit-1234"
+    init = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT),
+            "--project-root",
+            str(repo),
+            "init",
+            "--session-id",
+            sid,
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert init.returncode == 0, init.stdout
+    add = subprocess.run(
+        [
+            sys.executable,
+            str(_SCRIPT),
+            "--project-root",
+            str(repo),
+            "add",
+            "--session-id",
+            sid,
+            "--event",
+            "preexisting_gate_unblock",
+            "--ticket-id",
+            "WOT-2026-231d",
+            "--gate-fallante",
+            "pytest focal",
+            "--evidencia",
+            "test rojo reproducible; no es scope creep",
+            "--decision",
+            "hotfix de desbloqueo",
+            "--reference",
+            "sha:abc123",
+            "--require-write",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert add.returncode == 0, add.stdout
+    payload = json.loads(add.stdout)
+    assert payload["commit_trace"] == "PREEXISTING_GATE_UNBLOCK: WOT-2026-231d"
+
+
 # ---------------------------------------------------------------------------
 # (a) LOAD-BEARING: the chat close prompt invokes the session telemetry CLI.
 # ---------------------------------------------------------------------------

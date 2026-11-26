@@ -1858,3 +1858,31 @@ def test_222a_catalog_check_is_wired_into_closeout_not_base(tmp_path, monkeypatc
     monkeypatch.setattr(pc_module, "run_ensemble_profile_catalog_check", _spy_base)
     pc_module.run_preflight_check(tmp_path, closeout_mode=False)
     assert calls["base"] == 0, "el preflight base no debe pagar este WARN"
+
+
+def test_231d_unblock_trace_is_wired_into_closeout_not_base(tmp_path, monkeypatch):
+    """El verificador de desbloqueo corre en cierre y no en preflight base."""
+    _stub_all_checks_except(
+        monkeypatch, {"run_preflight_check", "run_unblock_trace_check"}
+    )
+    calls = {"closeout": 0, "base": 0}
+
+    def _spy(*args, **kwargs):
+        calls["closeout"] += 1
+        return pc_module.CheckResult(
+            name="unblock-trace", passed=True, output="", is_blocking=True
+        )
+
+    monkeypatch.setattr(pc_module, "run_unblock_trace_check", _spy)
+    pc_module.run_preflight_check(tmp_path, closeout_mode=True)
+    assert calls["closeout"] == 1
+
+    def _base_spy(*args, **kwargs):
+        calls["base"] += 1
+        return pc_module.CheckResult(
+            name="unblock-trace", passed=True, output="", is_blocking=True
+        )
+
+    monkeypatch.setattr(pc_module, "run_unblock_trace_check", _base_spy)
+    pc_module.run_preflight_check(tmp_path, closeout_mode=False)
+    assert calls["base"] == 0
