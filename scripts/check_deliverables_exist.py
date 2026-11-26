@@ -8,6 +8,7 @@ WP-2026-122: Uses runtime.project_root for dynamic project root resolution.
 
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import sys
@@ -350,15 +351,51 @@ def extract_paths_from_work_plan(content: str) -> set[Path]:
     return paths
 
 
-def main() -> int:
-    if not WORK_PLAN.exists():
+def main(argv: list[str] | None = None) -> int:
+    """Check deliverables selected by the current project/work-plan context.
+
+    Before: The default project root and work plan are resolved at import time,
+        and callers may invoke ``main()`` without arguments.
+    During: Parses optional explicit work-plan and project-root overrides while
+        retaining the import-time defaults for the no-flag invocation.
+    After: Returns the same content-verdict codes as the legacy invocation;
+        ``--help`` is handled by argparse before any work-plan inspection.
+    """
+    global PROJECT_ROOT
+
+    parser = argparse.ArgumentParser(
+        description="Check that all declared deliverables in work_plan.md exist on disk."
+    )
+    parser.add_argument(
+        "--work-plan",
+        type=Path,
+        help="Path to the work_plan.md file to inspect.",
+    )
+    parser.add_argument(
+        "--project-root",
+        type=Path,
+        help="Project root used when resolving the default work plan and deliverables.",
+    )
+    args = parser.parse_args(argv)
+
+    project_root = PROJECT_ROOT
+    work_plan = WORK_PLAN
+    if args.project_root is not None:
+        project_root = args.project_root.expanduser().resolve()
+        PROJECT_ROOT = project_root
+        work_plan = project_root / ".agent" / "collaboration" / "work_plan.md"
+
+    if args.work_plan is not None:
+        work_plan = args.work_plan.expanduser().resolve()
+
+    if not work_plan.exists():
         print(
-            f"[check-deliverables] Active work_plan.md not found at {WORK_PLAN}",
+            f"[check-deliverables] Active work_plan.md not found at {work_plan}",
             file=sys.stderr,
         )
         return 0  # Fallback if no active plan
 
-    content = WORK_PLAN.read_text(encoding="utf-8")
+    content = work_plan.read_text(encoding="utf-8")
     declared_paths = extract_paths_from_work_plan(content)
 
     if not declared_paths:
@@ -372,7 +409,7 @@ def main() -> int:
     print(f"[check-deliverables] Checking {len(declared_paths)} declared deliverables:")
     for path in sorted(declared_paths):
         try:
-            rel_path = path.relative_to(PROJECT_ROOT)
+            rel_path = path.relative_to(project_root)
         except ValueError:
             rel_path = path
 
