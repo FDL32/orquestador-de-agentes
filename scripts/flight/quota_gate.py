@@ -262,6 +262,49 @@ def _is_numeric_pct(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _dimension_reason(roster, payload):
+    """Return a fail-closed reason for a declared session/subagent dimension.
+
+    Before: ``roster`` and ``payload`` are parsed objects from one quota tick.
+    During: require both new dimensions only when the roster declares session types, then inspect
+        their status, list shape, and entry quality without accepting partial measurements.
+    After: return a dimension-specific reason or ``None`` for a complete compatible payload.
+    """
+    declared = roster.get("sessions")
+    if not declared:
+        return None
+    dimensions = payload.get("dimensions")
+    if not isinstance(dimensions, dict):
+        return "sesiones/subagentes: sin dimensions"
+    for name in ("sesiones", "subagentes"):
+        if name not in dimensions:
+            return f"{name}: dimension ausente"
+    for name in ("sesiones", "subagentes"):
+        detail = dimensions.get(name)
+        if not isinstance(detail, dict):
+            return f"{name}: dimension ausente"
+        if detail.get("estado") != "OK":
+            causes = detail.get("causas")
+            suffix = (
+                ", ".join(str(cause) for cause in causes)
+                if isinstance(causes, list)
+                else "sin causa"
+            )
+            return f"{name}: {detail.get('estado', 'NO_MEDIDO')} ({suffix})"
+        entries = payload.get(name)
+        if not isinstance(entries, list) or not entries:
+            return f"{name}: sin medicion"
+        bad_entries = [
+            entry
+            for entry in entries
+            if not isinstance(entry, dict)
+            or entry.get("calidad_medida") not in ("OK", "RESERVA")
+        ]
+        if bad_entries:
+            return f"{name}: entrada NO_MEDIDO"
+    return None
+
+
 def evaluate(  # noqa: C901
     roster,
     payload,
@@ -277,6 +320,22 @@ def evaluate(  # noqa: C901
         combine strict supervision using severity order 0 < 3 < 4 < 5 < 9.
     After: return a result dictionary containing rc, reason, account, and gate metadata.
     """
+    dimension_reason = _dimension_reason(roster, payload)
+    if dimension_reason:
+        return {
+            "rc": 9,
+            "motivo": dimension_reason,
+            "cuenta": None,
+            "mapa_no_verificado": False,
+            "strict_map": strict_map,
+            "supervision_policy": supervision_policy,
+            "supervision": {
+                "cuenta": None,
+                "block_pct": None,
+                "calidad_medida": None,
+                "rc": 9,
+            },
+        }
     try:
         account, via_map = resolve_target(roster, target_instance)
     except NoMedidoError as exc:

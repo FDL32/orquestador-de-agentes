@@ -16,13 +16,18 @@ After: UNA linea ``QUOTA <ESTADO> (soft S/hard H) | <cuenta> <ventana> <pct>% | 
     (roster o monitor ausentes o ilegibles, cuentas vacias, porcentaje NaN, booleano o cadena)
     es rc 9 con la causa; nunca un traceback con rc 1 ni un OK sin haber medido nada.
     Las cuentas con ``consume_to_exhaustion`` literal ``true`` se excluyen del worst global y
-    reciben la marca textual ``AGOTAR``; el esquema JSON v2 no cambia.
+    reciben la marca textual ``AGOTAR``. Cuando el roster declara ``sessions``, el fichero fijo
+    ``session_registry.json`` del mismo directorio aporta el censo de sesiones y la celda de
+    asignacion de subagentes; cada identidad reutiliza la medida de cuenta que entrega el monitor.
+    Una nota sin ``_CUENTA_<nombre>``, un registro extra o un lanzamiento sin proveedor presente
+    en ``provider_map`` queda como ``NO_MEDIDO`` con causa.
 
 Schema JSON v2 congelado: ``QUOTA_JSON_SCHEMA``; cada cuenta lleva ``cuenta``,
 ``en_censo``, ``estado_operativo``, ``calidad_medida``, ``block_pct``,
 ``ventana_peor`` y ``ventanas``; ``codex`` lleva exactamente
 ``primary_pct``, ``weekly_pct``, ``resets`` y ``medido``. ``rc_info`` copia el
-rc y ``fallbacks`` declara los defaults. Un registro v1 de tick_trace omite los
+rc y ``fallbacks`` declara los defaults. ``sesiones`` y ``subagentes`` anaden el detalle de
+atribucion y ``dimensions`` declara su estado y causas. Un registro v1 de tick_trace omite los
 campos de cola y por tanto ``cola_despachable`` se interpreta como no declarado.
 """
 
@@ -41,6 +46,7 @@ MONITOR_ENV = "CC_USAGE_MONITOR_PS1"
 PROBE_ENV = "CODEX_USAGE_PROBE"
 CODEX_HOME_ENV = "CODEX_HOME"
 ROSTER_NAME = "flight_roster.json"
+SESSION_REGISTRY_NAME = "session_registry.json"
 SOFT_DEFAULT = 92
 HARD_DEFAULT = 97
 WARN_PCT = 90
@@ -48,6 +54,7 @@ RC = {"NO_MEDIDO": 9, "HARD": 5, "FREEZE": 4, "AVISO": 3, "OK": 0}
 QUOTA_JSON_SCHEMA = 2
 OPERATIVE_STATES = ("NORMAL", "VIGILANCIA", "PREPARACION", "CAMBIO")
 MEASUREMENT_QUALITY = ("OK", "STALE", "NO_MEDIDO", "RESERVA")
+ACCOUNT_RE = re.compile(r"_CUENTA_([A-Za-z0-9][A-Za-z0-9_.-]*)\s*$")
 
 
 class NoMedidoError(Exception):
@@ -117,12 +124,7 @@ def _roster_config(flight_dir):
     During: lee ``flight_roster.json`` con utf-8-sig (tolera BOM) y parsea.
     After: dict; NoMedidoError si el fichero falta, no es JSON, no es un objeto o ``quota`` no lo es.
     """
-    try:
-        roster = json.loads((flight_dir / ROSTER_NAME).read_text(encoding="utf-8-sig"))
-    except (OSError, ValueError, RecursionError) as exc:
-        raise NoMedidoError(f"roster: {type(exc).__name__} {str(exc)[:80]}") from exc
-    if not isinstance(roster, dict):
-        raise NoMedidoError("roster: no es un objeto JSON")
+    roster = _roster_document(flight_dir)
     quota = roster.get("quota", {})
     if not isinstance(quota, dict):
         raise NoMedidoError("roster: quota no es un objeto JSON")
@@ -130,6 +132,44 @@ def _roster_config(flight_dir):
     if not isinstance(policy, dict):
         policy = {}
     return quota, policy
+
+
+def _roster_document(flight_dir):
+    """Read the complete roster for the session/subagent census.
+
+    Before: ``flight_dir`` is an existing flight directory.
+    During: read the same UTF-8-sig roster used by ``_roster_config``.
+    After: return the parsed roster object or raise ``NoMedidoError`` with its cause.
+    """
+    try:
+        roster = json.loads((flight_dir / ROSTER_NAME).read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError, RecursionError) as exc:
+        raise NoMedidoError(f"roster: {type(exc).__name__} {str(exc)[:80]}") from exc
+    if not isinstance(roster, dict):
+        raise NoMedidoError("roster: no es un objeto JSON")
+    return roster
+
+
+def _session_registry(flight_dir):
+    """Read the fixed-name session store and classify malformed input.
+
+    Before: the roster declares sessions and ``flight_dir`` is already validated.
+    During: load ``session_registry.json`` as a JSON object and distinguish absence from corruption.
+    After: return ``(registry, None)`` or ``(None, cause)`` for fail-closed reporting.
+    """
+    try:
+        registry = json.loads(
+            (flight_dir / SESSION_REGISTRY_NAME).read_text(encoding="utf-8-sig")
+        )
+    except FileNotFoundError:
+        return None, "session_registry_ausente"
+    except (OSError, ValueError) as exc:
+        return None, f"session_registry_ilegible:{type(exc).__name__}"
+    except RecursionError:
+        return None, "session_registry_ilegible:RecursionError"
+    if not isinstance(registry, dict) or not isinstance(registry.get("sessions"), list):
+        return None, "session_registry_ilegible:formato_sessions"
+    return registry, None
 
 
 def _roster_quota(flight_dir):
@@ -319,6 +359,314 @@ def _census(policy):
     return list(dict.fromkeys(values))
 
 
+def _session_active(entry):
+    """Return whether a registry entry can represent a live session.
+
+    Before: ``entry`` is a candidate from the real ``session_registry.sessions`` list.
+    During: accept only the explicit active markers and ignore historical free-form statuses.
+    After: return ``True`` only for a live ``ACTIVE``/``ACTIVA`` string status.
+    """
+    status = entry.get("status") if isinstance(entry, dict) else None
+    if not isinstance(status, str) or not status.strip():
+        return False
+    folded = status.strip().upper()
+    return (
+        folded == "ACTIVE"
+        or folded.startswith("ACTIVE ")
+        or folded == "ACTIVA"
+        or folded.startswith("ACTIVA ")
+        or folded == "ACTIVO"
+        or folded.startswith("ACTIVO ")
+    )
+
+
+def _session_account(entry):
+    """Resolve the account marker used by the live session registry.
+
+    Before: ``entry`` is a registry session with its free-form ``nota`` field.
+    During: search only the declared ``_CUENTA_<nombre>`` suffix convention.
+    After: return the account string or ``None`` when the relation is not attributable.
+    """
+    nota = entry.get("nota") if isinstance(entry, dict) else None
+    if not isinstance(nota, str):
+        return None
+    match = ACCOUNT_RE.search(nota)
+    return match.group(1) if match else None
+
+
+def _dimension_quality(account, accounts, census):
+    """Reuse an account monitor result for a session or subagent identity.
+
+    Before: ``account`` is a candidate account and ``accounts`` is monitor output.
+    During: require both roster declaration and a valid monitor entry.
+    After: return ``(quality, block_pct, cause)`` without inventing a measurement.
+    """
+    if not isinstance(account, str):
+        return "NO_MEDIDO", None, "cuenta_no_atribuida"
+    if account not in census:
+        return "NO_MEDIDO", None, "cuenta_no_declarada"
+    measured = accounts.get(account)
+    if not isinstance(measured, dict):
+        return "NO_MEDIDO", None, "cuenta_no_medida"
+    pct = measured.get("block_pct")
+    if measured.get("stale"):
+        return "STALE", pct, "cuenta_stale"
+    if not _is_real(pct) or pct == -math.inf:
+        return "NO_MEDIDO", None, "cuenta_dato_ilegible"
+    return "OK", pct, None
+
+
+def _dimension_entry(identity, session, puesto, account, accounts, census, cause=None):
+    """Build one schema-v2 detail entry for a session or subagent.
+
+    Before: identity metadata and the account monitor map are available.
+    During: resolve quality through ``_dimension_quality`` unless a relation is already broken.
+    After: return a compact entry with an explicit ``causa`` only for non-measurements.
+    """
+    if cause:
+        quality, pct = "NO_MEDIDO", None
+    else:
+        quality, pct, cause = _dimension_quality(account, accounts, census)
+    entry = {
+        "sesion": session,
+        "cuenta": account,
+        "calidad_medida": quality,
+        "block_pct": pct,
+    }
+    if identity is not None:
+        entry["subagente"] = identity
+    if puesto is not None:
+        entry["puesto"] = puesto
+    if cause:
+        entry["causa"] = cause
+    return entry
+
+
+def _dimension_status(entries):
+    """Summarize detail entries without allowing an empty or bad dimension to be green.
+
+    Before: ``entries`` contains the complete declared dimension census.
+    During: collect visible causes and accept only ``OK``/``RESERVA`` entries.
+    After: return ``(estado, causas)`` where any missing-quality entry is ``NO_MEDIDO``.
+    """
+    causes = [entry["causa"] for entry in entries if entry.get("causa")]
+    if not entries:
+        return "NO_MEDIDO", ["censo_vacio"]
+    if any(entry.get("calidad_medida") not in ("OK", "RESERVA") for entry in entries):
+        return "NO_MEDIDO", list(dict.fromkeys(causes or ["dato_no_medido"]))
+    return "OK", []
+
+
+def _dimensions(accounts, flight_dir, policy):  # noqa: C901
+    """Measure session and subagent identities using the account monitor result.
+
+    Before: ``accounts`` came from the existing monitor; ``policy`` came from the roster.
+    During: use roster session types, the fixed session registry, and provider-map attribution.
+    After: return ``(sessions, subagents, dimensions, text_parts, bad)``; malformed relations are
+        visible as ``NO_MEDIDO`` and never become an aggregate green measurement.
+    """
+    roster = _roster_document(flight_dir)
+    declared = roster.get("sessions")
+    if not declared:
+        dimensions = {
+            "sesiones": {"estado": "NO_APLICA", "causas": []},
+            "subagentes": {"estado": "NO_APLICA", "causas": []},
+        }
+        return [], [], dimensions, [], False
+    if not isinstance(declared, dict):
+        reason = "sesiones_censo_ilegible"
+        dimensions = {
+            "sesiones": {"estado": "NO_MEDIDO", "causas": [reason]},
+            "subagentes": {"estado": "NO_MEDIDO", "causas": [reason]},
+        }
+        return [], [], dimensions, ["sesiones NO_MEDIDO", "subagentes NO_MEDIDO"], True
+
+    registry, registry_error = _session_registry(flight_dir)
+    census = set(_census(policy))
+    sessions, subagents = [], []
+    if registry_error:
+        sessions.extend(
+            _dimension_entry(
+                None,
+                slot,
+                None,
+                None,
+                accounts,
+                census,
+                registry_error,
+            )
+            for slot in declared
+        )
+        session_status = ("NO_MEDIDO", [registry_error])
+        subagent_status = ("NO_MEDIDO", [registry_error])
+        dimensions = {
+            "sesiones": {"estado": session_status[0], "causas": session_status[1]},
+            "subagentes": {"estado": subagent_status[0], "causas": subagent_status[1]},
+        }
+        return (
+            sessions,
+            subagents,
+            dimensions,
+            ["sesiones NO_MEDIDO", "subagentes NO_MEDIDO"],
+            True,
+        )
+
+    declared_types = {
+        value.get("type")
+        for value in declared.values()
+        if isinstance(value, dict) and isinstance(value.get("type"), str)
+    }
+    if not declared_types:
+        reason = "sesiones_censo_sin_tipo"
+        dimensions = {
+            "sesiones": {"estado": "NO_MEDIDO", "causas": [reason]},
+            "subagentes": {"estado": "NO_MEDIDO", "causas": [reason]},
+        }
+        return [], [], dimensions, ["sesiones NO_MEDIDO", "subagentes NO_MEDIDO"], True
+
+    entries = [entry for entry in registry["sessions"] if isinstance(entry, dict)]
+    active = [entry for entry in entries if _session_active(entry)]
+    declared_entries = [
+        entry
+        for entry in active
+        if entry.get("role") in declared_types or entry.get("slot") in declared
+    ]
+    present_types = {
+        entry.get("role")
+        for entry in declared_entries
+        if isinstance(entry.get("role"), str)
+    }
+    sessions.extend(
+        _dimension_entry(
+            None,
+            missing_type,
+            None,
+            None,
+            accounts,
+            census,
+            "sesion_no_medida",
+        )
+        for missing_type in sorted(declared_types - present_types)
+    )
+    for entry in declared_entries:
+        code = entry.get("code")
+        session_id = code if isinstance(code, str) and code else entry.get("slot")
+        if not isinstance(session_id, str) or not session_id:
+            session_id = entry.get("role", "sesion_desconocida")
+        account = _session_account(entry)
+        session_entry = _dimension_entry(
+            None,
+            session_id,
+            None,
+            account,
+            accounts,
+            census,
+            "sesion_sin_cuenta" if account is None else None,
+        )
+        sessions.append(session_entry)
+
+        cell = entry.get("celda_asignacion")
+        resolution = cell.get("resolucion") if isinstance(cell, dict) else None
+        puestos = resolution.get("puestos") if isinstance(resolution, dict) else None
+        if not isinstance(puestos, dict) or not puestos:
+            subagents.append(
+                _dimension_entry(
+                    f"{session_id}:NO_MEDIDO",
+                    session_id,
+                    None,
+                    account,
+                    accounts,
+                    census,
+                    "subagente_relacion_ilegible",
+                )
+            )
+            continue
+        for puesto, assignment in puestos.items():
+            launch = (
+                assignment.get("lanzamiento") if isinstance(assignment, dict) else None
+            )
+            provider_key = None
+            if isinstance(launch, dict):
+                if isinstance(launch.get("instanceId"), str):
+                    provider_key = launch["instanceId"]
+                elif isinstance(launch.get("backend_key"), str):
+                    provider_key = launch["backend_key"]
+            subagent_account = (
+                policy.get("provider_map", {}).get(provider_key)
+                if isinstance(policy.get("provider_map"), dict) and provider_key
+                else None
+            )
+            cause = None
+            if (
+                not isinstance(puesto, str)
+                or not isinstance(launch, dict)
+                or not provider_key
+            ):
+                cause = "subagente_relacion_ilegible"
+            elif not isinstance(subagent_account, str):
+                cause = "subagente_cuenta_no_resoluble"
+            elif session_entry.get("calidad_medida") not in ("OK", "RESERVA"):
+                cause = "sesion_no_medida"
+            subagents.append(
+                _dimension_entry(
+                    f"{session_id}:{puesto}",
+                    session_id,
+                    puesto,
+                    subagent_account,
+                    accounts,
+                    census,
+                    cause,
+                )
+            )
+
+    declared_slots = set(declared)
+    for entry in active:
+        if entry in declared_entries:
+            continue
+        role = entry.get("role")
+        slot = entry.get("slot")
+        if role not in declared_types and slot not in declared_slots:
+            code = entry.get("code")
+            session_id = code if isinstance(code, str) and code else slot
+            if not isinstance(session_id, str) or not session_id:
+                session_id = role if isinstance(role, str) else "sesion_desconocida"
+            sessions.append(
+                _dimension_entry(
+                    None,
+                    session_id,
+                    None,
+                    _session_account(entry),
+                    accounts,
+                    census,
+                    "sesion_no_declarada",
+                )
+            )
+            subagents.append(
+                _dimension_entry(
+                    f"{session_id}:NO_MEDIDO",
+                    session_id,
+                    None,
+                    None,
+                    accounts,
+                    census,
+                    "sesion_no_declarada",
+                )
+            )
+
+    session_state, session_causes = _dimension_status(sessions)
+    subagent_state, subagent_causes = _dimension_status(subagents)
+    dimensions = {
+        "sesiones": {"estado": session_state, "causas": session_causes},
+        "subagentes": {"estado": subagent_state, "causas": subagent_causes},
+    }
+    bad = session_state != "OK" or subagent_state != "OK"
+    text_parts = [
+        f"sesiones {len(sessions)} {session_state}",
+        f"subagentes {len(subagents)} {subagent_state}",
+    ]
+    return sessions, subagents, dimensions, text_parts, bad
+
+
 def _account_cuts(name, quota, policy):
     """Resolve per-account soft and hard cuts and report visible fallback reasons.
 
@@ -401,7 +749,17 @@ def _account_json(name, measured, census, quota, policy):
     }
 
 
-def _json_payload(accounts, census, quota, policy, codex_item, rc):
+def _json_payload(
+    accounts,
+    census,
+    quota,
+    policy,
+    codex_item,
+    rc,
+    sessions=None,
+    subagents=None,
+    dimensions=None,
+):
     """Build the single stdout JSON object for an opt-in quota tick."""
     entries = []
     fallbacks = []
@@ -414,6 +772,13 @@ def _json_payload(accounts, census, quota, policy, codex_item, rc):
     return {
         "QUOTA_JSON_SCHEMA": QUOTA_JSON_SCHEMA,
         "accounts": entries,
+        "sesiones": sessions or [],
+        "subagentes": subagents or [],
+        "dimensions": dimensions
+        or {
+            "sesiones": {"estado": "NO_APLICA", "causas": []},
+            "subagentes": {"estado": "NO_APLICA", "causas": []},
+        },
         "codex": [codex_item],
         "rc_info": rc,
         "fallbacks": list(dict.fromkeys(fallbacks)),
@@ -429,11 +794,19 @@ def _tick(a):
     After: devuelve el rc del estado; ``NoMedidoError`` sube al ``main`` y no se modifica ningun fichero.
     """
     env = os.environ
-    quota, policy = _roster_config(_flight_dir(a.flight_dir or env.get(FLIGHT_DIR_ENV)))
+    flight_dir = _flight_dir(a.flight_dir or env.get(FLIGHT_DIR_ENV))
+    quota, policy = _roster_config(flight_dir)
     soft, hard, invalid = _thresholds(quota)
     accounts = _accounts(a.monitor or env.get(MONITOR_ENV))
     census = _census(policy)
     worst, parts, bad = _measure(accounts, census)
+    sessions, subagents, dimensions, dimension_parts, dimensions_bad = _dimensions(
+        accounts,
+        flight_dir,
+        policy,
+    )
+    parts.extend(dimension_parts)
+    bad = bad or dimensions_bad
     agotar = {
         nombre
         for nombre, valor in policy.items()
@@ -460,7 +833,17 @@ def _tick(a):
     if a.json:
         print(
             json.dumps(
-                _json_payload(accounts, census, quota, policy, codex_item, process_rc),
+                _json_payload(
+                    accounts,
+                    census,
+                    quota,
+                    policy,
+                    codex_item,
+                    process_rc,
+                    sessions,
+                    subagents,
+                    dimensions,
+                ),
                 ensure_ascii=False,
                 separators=(",", ":"),
             )

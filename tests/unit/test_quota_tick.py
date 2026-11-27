@@ -672,6 +672,184 @@ def test_quota_json_schema_v2(rig):
     assert set(payload["codex"][0]) == {"primary_pct", "weekly_pct", "resets", "medido"}
 
 
+def _real_dimension_fixture(rig):
+    """Write the roster and session store shapes used by the flight runtime.
+
+    Before: ``rig`` provides a temporary flight directory and a monitor stub.
+    During: copy the real roster/session fields used for account and subagent attribution.
+    After: return the registry dictionary so each mutation can restore its input.
+    """
+    rig.roster(
+        raw=json.dumps(
+            {
+                "sessions": {"implantacion-1": {"type": "implantacion"}},
+                "quota": {
+                    "account_policy": {
+                        "provider_map": {"claudeAgent": "brabander"},
+                        "preferred_account": "brabander",
+                    }
+                },
+            }
+        )
+    )
+    registry = {
+        "sessions": [
+            {
+                "code": "IM-153C",
+                "threadId": "thread-im-153c",
+                "role": "implantacion",
+                "status": "ACTIVA",
+                "slot": "implantacion-1",
+                "nota": "WOT-2026-153c_CUENTA_brabander",
+                "celda_asignacion": {
+                    "resolucion": {
+                        "puestos": {
+                            "im.builder": {"lanzamiento": {"instanceId": "claudeAgent"}}
+                        }
+                    }
+                },
+            }
+        ]
+    }
+    (rig.dir / "session_registry.json").write_text(
+        json.dumps(registry), encoding="utf-8"
+    )
+    rig.monitor_out = json.dumps(accounts(brabander=acct(10), extra=acct(99)))
+    return registry
+
+
+def test_quota_tick_m01_mide_cuenta_sesion_y_subagente_con_forma_real(rig):
+    """Measure the three identities from the real roster and registry shapes."""
+    _real_dimension_fixture(rig)
+    rc, encoded = rig.tick("--json")
+    payload = json.loads(encoded)
+
+    assert rc == 0
+    assert payload["QUOTA_JSON_SCHEMA"] == 2
+    assert payload["accounts"][0]["cuenta"] == "brabander"
+    assert payload["sesiones"] == [
+        {
+            "sesion": "IM-153C",
+            "cuenta": "brabander",
+            "calidad_medida": "OK",
+            "block_pct": 10,
+        }
+    ]
+    assert payload["subagentes"] == [
+        {
+            "subagente": "IM-153C:im.builder",
+            "sesion": "IM-153C",
+            "puesto": "im.builder",
+            "cuenta": "brabander",
+            "calidad_medida": "OK",
+            "block_pct": 10,
+        }
+    ]
+    assert payload["dimensions"] == {
+        "sesiones": {"estado": "OK", "causas": []},
+        "subagentes": {"estado": "OK", "causas": []},
+    }
+
+
+@pytest.mark.parametrize(
+    ("mutation", "cause"),
+    (
+        ("missing_account", "sesion_sin_cuenta"),
+        ("extra_session", "sesion_no_declarada"),
+        ("broken_subagent", "subagente_relacion_ilegible"),
+        ("unmapped_subagent", "subagente_cuenta_no_resoluble"),
+    ),
+)
+def test_quota_tick_m02_no_medido_con_causa_para_ausencia_extra_o_relacion_ilegible(
+    rig, mutation, cause
+):
+    """Keep every malformed identity visible and fail-closed."""
+    registry = _real_dimension_fixture(rig)
+    if mutation == "missing_account":
+        registry["sessions"][0]["nota"] = "WOT-2026-153c"
+    elif mutation == "extra_session":
+        registry["sessions"].append(
+            {
+                "code": "IM-EXTRA",
+                "threadId": "thread-extra",
+                "role": "otro",
+                "status": "ACTIVA",
+                "slot": "slot-no-declarado",
+                "nota": "WOT-2026-153c_CUENTA_brabander",
+                "celda_asignacion": {"resolucion": {"puestos": {}}},
+            }
+        )
+    elif mutation == "broken_subagent":
+        registry["sessions"][0]["celda_asignacion"] = {
+            "resolucion": {"puestos": {"im.builder": {"lanzamiento": {}}}}
+        }
+    else:
+        registry["sessions"][0]["celda_asignacion"]["resolucion"]["puestos"][
+            "im.builder"
+        ]["lanzamiento"] = {"backend": "codex", "backend_key": "BA05"}
+    (rig.dir / "session_registry.json").write_text(
+        json.dumps(registry), encoding="utf-8"
+    )
+
+    rc, encoded = rig.tick("--json")
+    payload = json.loads(encoded)
+    all_entries = payload["sesiones"] + payload["subagentes"]
+
+    assert rc == 9
+    assert payload["rc_info"] == 9
+    assert any(entry.get("causa") == cause for entry in all_entries)
+    expected_session_state = (
+        "OK" if mutation in ("broken_subagent", "unmapped_subagent") else "NO_MEDIDO"
+    )
+    assert payload["dimensions"]["sesiones"]["estado"] == expected_session_state
+    assert payload["dimensions"]["subagentes"]["estado"] == "NO_MEDIDO"
+
+
+def test_quota_tick_m05_mutantes_de_censo_son_detectables_y_restore_vuelve_a_verde(rig):
+    """Exercise account, session, and subagent copy-restore mutations."""
+    registry = _real_dimension_fixture(rig)
+    original_monitor = rig.monitor_out
+    original_registry = json.loads(json.dumps(registry))
+
+    def run_and_assert_green():
+        rc, encoded = rig.tick("--json")
+        payload = json.loads(encoded)
+        assert rc == 0
+        assert payload["dimensions"]["sesiones"]["estado"] == "OK"
+        assert payload["dimensions"]["subagentes"]["estado"] == "OK"
+        return payload
+
+    run_and_assert_green()
+
+    rig.monitor_out = json.dumps(accounts(extra=acct(99)))
+    rc, encoded = rig.tick("--json")
+    assert rc == 9 and "NO_MEDIDO" in encoded
+    rig.monitor_out = original_monitor
+    run_and_assert_green()
+
+    (rig.dir / "session_registry.json").write_text(
+        json.dumps({"sessions": []}), encoding="utf-8"
+    )
+    rc, encoded = rig.tick("--json")
+    assert rc == 9 and "NO_MEDIDO" in encoded
+    (rig.dir / "session_registry.json").write_text(
+        json.dumps(original_registry), encoding="utf-8"
+    )
+    run_and_assert_green()
+
+    mutated = json.loads(json.dumps(original_registry))
+    mutated["sessions"][0]["celda_asignacion"]["resolucion"]["puestos"] = {}
+    (rig.dir / "session_registry.json").write_text(
+        json.dumps(mutated), encoding="utf-8"
+    )
+    rc, encoded = rig.tick("--json")
+    assert rc == 9 and "NO_MEDIDO" in encoded
+    (rig.dir / "session_registry.json").write_text(
+        json.dumps(original_registry), encoding="utf-8"
+    )
+    run_and_assert_green()
+
+
 def test_census_cuentas_faltantes_rc9(rig):
     """Before: the roster census names two accounts but the monitor omits one.
 

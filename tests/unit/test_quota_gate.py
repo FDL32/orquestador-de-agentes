@@ -450,6 +450,40 @@ def test_quota_gate_mapa_reserva_strict():
     assert outside["rc"] == 9
 
 
+def test_quota_gate_m03_bloquea_dimension_sesiones_o_subagentes_ausente():
+    """Reject a concurrency evaluation when a declared dimension is absent."""
+    roster = roster_for()
+    roster["sessions"] = {"implantacion-1": {"type": "implantacion"}}
+    payload = payload_for(
+        {"cuenta": "target", "block_pct": 10},
+        {"cuenta": "supervisor", "block_pct": 10},
+    )
+    payload["dimensions"] = {
+        "sesiones": {"estado": "OK", "causas": []},
+        "subagentes": {"estado": "OK", "causas": []},
+    }
+
+    for dimension in ("sesiones", "subagentes"):
+        candidate = json.loads(json.dumps(payload))
+        del candidate["dimensions"][dimension]
+        result = quota_gate.evaluate(roster, candidate, "target-instance")
+        assert result["rc"] == 9
+        assert dimension in result["motivo"]
+
+
+def test_quota_gate_m04_payload_legacy_sin_censo_nuevo_sigue_siendocompatible():
+    """Keep old account-only rosters compatible while no new dimension is declared."""
+    result = quota_gate.evaluate(
+        roster_for(),
+        payload_for(
+            {"cuenta": "target", "block_pct": 10},
+            {"cuenta": "supervisor", "block_pct": 10},
+        ),
+        "target-instance",
+    )
+    assert result["rc"] == 0
+
+
 def _alta_args(rc, *, role="implantacion", code="IM-1"):
     """Build complete parser-shaped alta arguments for receipt tests.
 
