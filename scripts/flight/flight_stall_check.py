@@ -76,6 +76,8 @@ except Exception as _role_key_exc:
 
 OPS_DIR_ENV = "FLIGHT_OPS_DIR"
 FLIGHT_DIR_ENV = "FLIGHT_DIR"
+ENCARGOS_TR_ENV = "ENCARGOS_TR_FILE"
+T3_NEW_ROWS_ENV = "T3_NEW_ROWS"
 NO_WINDOW = 0x08000000
 FREE_GB_DEFAULT = 5.0
 QUOTA_STALE_MIN = 40
@@ -130,6 +132,7 @@ QUEUE_MOTIVES = {
     "OTRO",
 }
 FLIGHT_ROSTER_NAME = "flight_roster.json"
+ENCARGOS_TR_NAME = "ENCARGOS_TR.json"
 STATE_NAME = "stall_state.json"
 TASK_STATE_NAME = "task_state.json"
 OWNED_PREFIXES = (
@@ -167,6 +170,7 @@ DETECTOR_NAMES += ("presupuesto-nan",)
 DETECTOR_NAMES += ("co-sin-asentar",)
 DETECTOR_NAMES += ("im-sin-asentar",)
 DETECTOR_NAMES += ("l6",)
+P8_DETECTOR_NAME = "p8-sin-tr"
 RETIRED_EVENT_KEYS = ("tarea-muerta", "celda-no-conforme")
 
 
@@ -182,6 +186,27 @@ def _search_threshold(raw):
     except (TypeError, ValueError):
         return None
     return value if math.isfinite(value) and value >= 0 else None
+
+
+def _parse_t3_n(raw):
+    """Parse the configured T3 backlog threshold without inventing a default.
+
+    Before: ``raw`` is the CLI or environment value for the T3 new-row threshold.
+    During: accept only a decimal integer whose value is non-negative.
+    After: return the configured integer or raise ``ValueError`` for absent,
+        fractional, non-numeric, negative, or otherwise invalid input.
+    """
+    if raw is None or not re.fullmatch(r"[0-9]+", str(raw).strip()):
+        raise ValueError(f"{T3_NEW_ROWS_ENV} invalido (entero finito no negativo)")
+    try:
+        value = int(str(raw).strip(), 10)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            f"{T3_NEW_ROWS_ENV} invalido (entero finito no negativo)"
+        ) from exc
+    if value < 0:
+        raise ValueError(f"{T3_NEW_ROWS_ENV} invalido (entero finito no negativo)")
+    return value
 
 
 NAN_POOL_CREDITS = 7000.0
@@ -282,6 +307,467 @@ def _is_finite(value):
         return math.isfinite(value)
     except OverflowError:
         return False
+
+
+_ENCARGOS_REQUIRED = ("id", "bloque", "prioridad", "zona", "estado", "dueno")
+_ENCARGOS_CLOSED = frozenset(
+    {
+        "cerrado",
+        "cerrada",
+        "completed",
+        "completado",
+        "resuelto",
+        "resuelta",
+        "cancelado",
+        "cancelada",
+    }
+)
+_RUN_CONFIRMED = frozenset(
+    {"queued", "starting", "started", "running", "completed", "success", "succeeded"}
+)
+
+
+def _valid_encargo(row):
+    """Validate the six-field ENCARGOS_TR row contract.
+
+    Before: ``row`` is one decoded JSON value from the flight-owned queue.
+    During: require the six named fields, textual identities, and a finite
+        non-negative numeric priority.
+    After: return ``True`` only for a complete row; never coerce bad input.
+    """
+    if not isinstance(row, dict) or any(key not in row for key in _ENCARGOS_REQUIRED):
+        return False
+    if any(
+        not isinstance(row[key], str) or not row[key].strip()
+        for key in ("id", "bloque", "zona", "estado", "dueno")
+    ):
+        return False
+    priority = row["prioridad"]
+    return (
+        isinstance(priority, (int, float))
+        and not isinstance(priority, bool)
+        and _is_finite(priority)
+        and priority >= 0
+    )
+
+
+def _read_encargos_tr(path, n):  # noqa: C901 - six-field queue and T1/T2/T3 gates
+    """Read and measure the flight-owned ``ENCARGOS_TR`` JSON file.
+
+    Before: ``path`` is the externally supplied flight file and ``n`` is the
+        validated T3 threshold; the motor never writes this source.
+    During: read ``{"encargos": [...]}``, validate every row's ``id``,
+        ``bloque``, ``prioridad``, ``zona``, ``estado`` and ``dueno`` fields,
+        then expose T1 (current block), T2 (next block), and T3 (backlog
+        freshness only when no flight pass occurred or ``filas_nuevas >= n``).
+    After: return a measurement dictionary. Missing/unreadable/invalid input
+        is ``NO_MEDIDO``; readable input with no open rows is ``COLA_VACIA``;
+        readable open work is ``PENDIENTE``. No file or state is mutated.
+    """
+    base = {
+        "estado": "NO_MEDIDO",
+        "motivo": "fuente ausente",
+        "rows": [],
+        "abiertos": [],
+        "t1_count": 0,
+        "t2_count": 0,
+        "t3_count": 0,
+        "t3_estado": "NO_MEDIDO",
+        "t3_n": n,
+        "t1_zonas_disjuntas": False,
+        "lanzamientos": [],
+    }
+    if path is None or not Path(path).is_file():
+        return base
+    try:
+        payload = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    except (
+        OSError,
+        TypeError,
+        ValueError,
+        json.JSONDecodeError,
+        RecursionError,
+    ) as exc:
+        base["motivo"] = f"fuente ilegible: {type(exc).__name__}"
+        return base
+    if not isinstance(payload, dict) or not isinstance(payload.get("encargos"), list):
+        base["motivo"] = "formato ilegible: se esperaba encargos[]"
+        return base
+    rows = payload["encargos"]
+    if not all(_valid_encargo(row) for row in rows):
+        base["motivo"] = "fila ilegible: faltan campos ENCARGOS_TR"
+        return base
+    open_rows = [
+        row for row in rows if row["estado"].strip().casefold() not in _ENCARGOS_CLOSED
+    ]
+    base.update(
+        {
+            "rows": rows,
+            "abiertos": open_rows,
+            "lanzamientos": payload.get("lanzamientos", []),
+        }
+    )
+    if not open_rows:
+        base.update({"estado": "COLA_VACIA", "motivo": "sin encargos abiertos"})
+        return base
+
+    blocks = sorted({row["bloque"] for row in open_rows})
+    current = payload.get("bloque_vigente") or blocks[0]
+    following = payload.get("bloque_siguiente")
+    if following is None:
+        following = next((block for block in blocks if block != current), None)
+    t1_rows = [row for row in open_rows if row["bloque"] == current]
+    t2_rows = [row for row in open_rows if row["bloque"] == following]
+    t1_zones = [row["zona"] for row in t1_rows]
+    zone_owners = {}
+    disjoint = True
+    for row in t1_rows:
+        owner = zone_owners.setdefault(row["zona"], row["dueno"])
+        if owner != row["dueno"]:
+            disjoint = False
+    base.update(
+        {
+            "estado": "PENDIENTE",
+            "motivo": "encargos abiertos",
+            "bloque_vigente": current,
+            "bloque_siguiente": following,
+            "t1_count": len(t1_rows),
+            "t2_count": len(t2_rows),
+            "t1_zonas_disjuntas": len(t1_zones) == len(set(t1_zones)) and disjoint,
+        }
+    )
+    passed = payload.get("pasada_vuelo")
+    new_rows = payload.get("filas_nuevas")
+    if not isinstance(passed, bool) or (
+        new_rows is not None
+        and (
+            isinstance(new_rows, bool) or not isinstance(new_rows, int) or new_rows < 0
+        )
+    ):
+        base["t3_estado"] = "NO_MEDIDO"
+    elif not passed or new_rows >= n:
+        base["t3_estado"] = "VIGENTE"
+        base["t3_count"] = len(open_rows)
+    else:
+        base["t3_estado"] = "OMITIDO"
+    base["pasada_vuelo"] = passed
+    base["filas_nuevas"] = new_rows
+    return base
+
+
+def _is_role_vivo(session, role, settled_lookup, checker):
+    """Apply the canonical active/settled liveness rule to one role.
+
+    Before: ``session`` is a registry row and ``settled_lookup`` is the
+        read-only T3 settlement callable.
+    During: use ``checker.is_im_vivo`` for IM and its exact role-substituted
+        equivalent for TR, preserving the same active and unsettled gates.
+    After: return a boolean without mutating the session or T3 store.
+    """
+    if role == "implantacion":
+        return checker.is_im_vivo(session, settled_lookup)
+    return (
+        session.get("role") == role
+        and checker.is_activa(session.get("status"))
+        and not settled_lookup(session.get("threadId"))
+    )
+
+
+def _live_im_tr(sessions, settled_lookup, checker):
+    """Return live IM and TR rows using the shared liveness semantics.
+
+    Before: ``sessions`` and the settlement lookup come from the canonical
+        registry/T3 readers.
+    During: call the canonical IM filter and the role-substituted TR predicate.
+    After: return ``(live_ims, live_trs)`` as new lists.
+    """
+    live_ims = checker.live_ims(sessions, settled_lookup)
+    live_trs = [
+        session
+        for session in sessions
+        if _is_role_vivo(session, "triaje", settled_lookup, checker)
+    ]
+    return live_ims, live_trs
+
+
+def p8_sin_tr(im_live, tr_live, dispatchable_im=0, dispatchable_tr=0):
+    """Evaluate the one-tick P8-SIN-TR predicate.
+
+    Before: counts are measured from the flight registry/T3 and current queue
+        observation, not from a two- or four-tick streak.
+    During: require fewer than two live IM, zero live TR, and zero dispatchable
+        IM or TR work.
+    After: return the pure boolean predicate result.
+    """
+    return (
+        im_live < IM_TOPE
+        and tr_live == 0
+        and dispatchable_im == 0
+        and dispatchable_tr == 0
+    )
+
+
+def _confirmed_run_ids(connection):
+    """Return thread ids with a latest confirmed run in the T3 projection.
+
+    Before: ``connection`` is the read-only connection returned by
+        ``check_cell_conformance._store_lookup``.
+    During: select the highest ordinal run per thread and retain confirmed,
+        non-terminal launch statuses.
+    After: return a set of thread ids; malformed or unavailable run data yields
+        an empty set so a launch cannot be falsely declared.
+    """
+    latest = {}
+    try:
+        rows = connection.execute(
+            "SELECT thread_id, status, ordinal FROM orchestration_v2_projection_runs"
+        ).fetchall()
+        for row in rows:
+            thread_id, status, ordinal = row
+            if not isinstance(thread_id, str) or not isinstance(status, str):
+                return set()
+            if isinstance(ordinal, bool) or not isinstance(ordinal, (int, float)):
+                return set()
+            ordinal_value = int(ordinal)
+            previous = latest.get(thread_id)
+            if previous is None or ordinal_value > previous[0]:
+                latest[thread_id] = (ordinal_value, status.casefold())
+    except (sqlite3.Error, TypeError, ValueError):
+        return set()
+    return {
+        thread_id
+        for thread_id, (_, status) in latest.items()
+        if status in _RUN_CONFIRMED
+    }
+
+
+def is_declared_launch(kind, launch_id, sessions, settled_lookup, connection, used_ids):
+    """Purely validate one IM_LANZADO/TR_LANZADO declaration.
+
+    Before: ``sessions`` is the flight registry, ``connection`` is the T3
+        projection, and ``used_ids`` records ids already claimed in this tick.
+    During: require a unique id, a live session under the canonical role
+        predicate, and a confirmed latest T3 run for that session's thread.
+    After: return ``True`` only when all gates pass; never mutate inputs or
+        launch a session.
+    """
+    if kind not in {"IM", "TR"} or not isinstance(launch_id, str) or not launch_id:
+        return False
+    try:
+        reused = launch_id in used_ids
+    except (TypeError, AttributeError):
+        return False
+    if reused:
+        return False
+    checker = _load_cell_checker()
+    role = "implantacion" if kind == "IM" else "triaje"
+    session = next(
+        (
+            item
+            for item in sessions
+            if isinstance(item, dict)
+            and launch_id in {item.get("code"), item.get("threadId")}
+            and item.get("role") == role
+        ),
+        None,
+    )
+    if session is None or not _is_role_vivo(session, role, settled_lookup, checker):
+        return False
+    return session.get("threadId") in _confirmed_run_ids(connection)
+
+
+def _trace_dispatchables():
+    """Read the latest optional dispatchable-count observation from tick trace.
+
+    Before: ``CFG.tick_trace`` is the flight-owned JSONL trace, if configured.
+    During: read only the last valid JSON object and accept either the explicit
+        ``despachables`` mapping or the legacy aggregate ``cola_despachable``.
+    After: return non-negative ``(im, tr)`` counts; absent/invalid trace means
+        zero currently dispatchable items for the P8 one-tick predicate.
+    """
+    if getattr(CFG, "tick_trace", None) is None:
+        return 0, 0
+    try:
+        records = CFG.tick_trace.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return 0, 0
+    for raw in reversed(records):
+        try:
+            record = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if not isinstance(record, dict):
+            continue
+        values = record.get("despachables")
+        if isinstance(values, dict):
+            result = []
+            for key in ("im", "tr"):
+                value = values.get(key, 0)
+                result.append(value if isinstance(value, int) and value >= 0 else 0)
+            return tuple(result)
+        value = record.get("cola_despachable", 0)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return 0, value
+        return 0, 0
+    return 0, 0
+
+
+def _p8_live_snapshot():
+    """Measure live IM/TR sessions through the canonical registry and T3 store.
+
+    Before: ``CFG.registry`` and ``CFG.store`` identify the flight registry and
+        read-only T3 projection.
+    During: load both with the existing checker and close the connection after
+        applying the shared IM/TR liveness predicates.
+    After: return ``(sessions, live_ims, live_trs)`` or raise the checker error;
+        no external state is modified.
+    """
+    checker = _load_cell_checker()
+    sessions = checker._registry(CFG.registry)
+    connection, _, settled = checker._store_lookup(CFG.store)
+    try:
+        live_ims, live_trs = _live_im_tr(sessions, settled, checker)
+    finally:
+        connection.close()
+    return sessions, live_ims, live_trs
+
+
+def _p8_gap_report():
+    """Build the single-command P8 gaps report and its one-tick finding.
+
+    Before: ``CFG`` contains resolved flight paths and a validated ``t3_n``.
+    During: measure liveness, dispatchables, ENCARGOS_TR T1/T2/T3 and optional
+        launch declarations; select only matrix values supported by evidence.
+    After: return ``(report, found)`` without launching, notifying, or mutating
+        any source; ``found`` is either empty or one ``p8-sin-tr`` AVISO.
+    """
+    n = CFG.t3_n
+    report = {"t3_n": n, "estado_medicion": "NO_MEDIDO", "cola_motivo": "NO_MEDIDO"}
+    if (
+        CFG.registry is None
+        or not CFG.registry.is_file()
+        or CFG.store is None
+        or not CFG.store.is_file()
+    ):
+        return report, []
+    try:
+        checker = _load_cell_checker()
+        sessions = checker._registry(CFG.registry)
+        connection, _, settled = checker._store_lookup(CFG.store)
+    except Exception:
+        return report, []
+    try:
+        live_ims, live_trs = _live_im_tr(sessions, settled, checker)
+        dispatchable_im, dispatchable_tr = _trace_dispatchables()
+        queue = _read_encargos_tr(CFG.encargos_tr, n)
+        claimed = set()
+        actions = []
+        for launch in queue.get("lanzamientos", []):
+            if not isinstance(launch, dict):
+                continue
+            kind = launch.get("tipo") or launch.get("kind")
+            launch_id = launch.get("id")
+            if is_declared_launch(
+                kind, launch_id, sessions, settled, connection, claimed
+            ):
+                claimed.add(launch_id)
+                actions.append(f"{kind}_LANZADO")
+        action = actions[0] if actions else queue["estado"]
+        if action not in {
+            "IM_LANZADO",
+            "TR_LANZADO",
+            "SATURADO",
+            "PREPARACION_DELEGADA",
+            "BLOQUEO_USUARIO",
+            "CONGELACION",
+            "COLA_VACIA",
+            "NO_MEDIDO",
+        }:
+            action = "NO_MEDIDO"
+        tr_target = TR_TOPE if CFG.c1_approved else 1
+        p8 = p8_sin_tr(
+            len(live_ims),
+            len(live_trs),
+            dispatchable_im,
+            dispatchable_tr,
+        )
+        report.update(
+            {
+                "estado_medicion": "MEDIDO",
+                "im_vivos": len(live_ims),
+                "tr_vivos": len(live_trs),
+                "hueco_im": max(IM_TOPE - len(live_ims), 0),
+                "hueco_tr": max(tr_target - len(live_trs), 0),
+                "despachables_im": dispatchable_im,
+                "despachables_tr": dispatchable_tr,
+                "cola_motivo": queue["estado"],
+                "t1_count": queue["t1_count"],
+                "t1_zonas_disjuntas": queue["t1_zonas_disjuntas"],
+                "t2_count": queue["t2_count"],
+                "t3_count": queue["t3_count"],
+                "t3_estado": queue["t3_estado"],
+                "accion": action,
+                "p8_sin_tr": p8,
+            }
+        )
+        found = []
+        if p8:
+            found.append(
+                (
+                    "p8-sin-tr",
+                    "AVISO",
+                    "P8-SIN-TR: menos de dos IM vivos, cero TR vivos y cero despachables",
+                )
+            )
+        return report, found
+    finally:
+        connection.close()
+
+
+def check_p8_sin_tr(out, st):
+    """Emit the explicit one-tick P8-SIN-TR detector finding.
+
+    Before: normal detector configuration contains a readable registry and T3
+        store; ``st`` is the current heartbeat state.
+    During: reuse the canonical live-session measurement and current trace
+        dispatchable counts, with no streak or persistent counter.
+    After: return one ``AVISO`` when P8 holds, otherwise an empty list; no
+        session is launched and no state is written.
+    """
+    del st
+    if (
+        CFG.registry is None
+        or not CFG.registry.is_file()
+        or CFG.store is None
+        or not CFG.store.is_file()
+    ):
+        out["p8_sin_tr_ciego"] = "registry/store no medido"
+        return []
+    checker = _load_cell_checker()
+    sessions = checker._registry(CFG.registry)
+    connection, _, settled = checker._store_lookup(CFG.store)
+    try:
+        live_ims, live_trs = _live_im_tr(sessions, settled, checker)
+    finally:
+        connection.close()
+    dispatchable_im, dispatchable_tr = _trace_dispatchables()
+    out.update(
+        {
+            "p8_im_vivos": len(live_ims),
+            "p8_tr_vivos": len(live_trs),
+            "p8_despachables_im": dispatchable_im,
+            "p8_despachables_tr": dispatchable_tr,
+        }
+    )
+    if p8_sin_tr(len(live_ims), len(live_trs), dispatchable_im, dispatchable_tr):
+        return [
+            (
+                "p8-sin-tr",
+                "AVISO",
+                "P8-SIN-TR: menos de dos IM vivos, cero TR vivos y cero despachables",
+            )
+        ]
+    return []
 
 
 def _git(path, *args):
@@ -955,6 +1441,9 @@ def _resolve_paths(a, ops):  # noqa: C901
         session_code=None,
         registry=None,
         archive_index=getattr(a, "archive_index", None),
+        encargos_tr=None,
+        t3_n=None,
+        c1_approved=False,
         store=Path(
             env.get("T3_STATE_DB", Path.home() / ".t3" / "userdata" / "statev2.sqlite")
         ),
@@ -998,6 +1487,9 @@ def _resolve_paths(a, ops):  # noqa: C901
                     if hard_valid:
                         cfg.quota_hard = quota["hard_stop_block_pct"]
                     cfg.quota_fallback = not (soft_valid and hard_valid)
+                cfg.c1_approved = bool(
+                    value.get("c1_approved") is True or value.get("c1_aprobado") is True
+                )
                 candidate_entry = orchestrator_entry(value.get("active_roles", {}))
                 candidate = (
                     candidate_entry.get("session_code")
@@ -1009,6 +1501,17 @@ def _resolve_paths(a, ops):  # noqa: C901
             except (OSError, ValueError, AttributeError):
                 pass
         cfg.tick_trace = Path(raw) / "ops" / "tick_trace.jsonl"
+        raw_encargos = getattr(a, "encargos_tr_file", None) or env.get(ENCARGOS_TR_ENV)
+        if raw_encargos:
+            candidate_encargos = Path(raw_encargos)
+            if _is_unc(candidate_encargos):
+                causes.append("encargos-tr-file en ruta de red (UNC) no admitida")
+            elif not candidate_encargos.is_absolute():
+                causes.append("encargos-tr-file debe ser una ruta absoluta")
+            else:
+                cfg.encargos_tr = candidate_encargos
+        else:
+            cfg.encargos_tr = Path(raw) / ENCARGOS_TR_NAME
     except ValueError as exc:
         causes.append(str(exc))
     raw = a.motor_wt or env.get("STALL_MOTOR_WT")
@@ -1037,7 +1540,18 @@ def _resolve_paths(a, ops):  # noqa: C901
         cfg.quota = ops / QUOTA_NAME
     if ops is not None:
         cfg.tick_trace = ops / "tick_trace.jsonl"
+    t3_raw = getattr(a, "t3_new_rows", None)
+    if t3_raw is None:
+        t3_raw = env.get(T3_NEW_ROWS_ENV)
+    t3_error = None
+    if t3_raw is not None:
+        try:
+            cfg.t3_n = _parse_t3_n(t3_raw)
+        except ValueError as exc:
+            t3_error = str(exc)
     fatal = _free_gb_min(cfg, env.get("STALL_FREE_GB_MIN"))
+    if t3_error:
+        fatal = f"{fatal}; {t3_error}" if fatal else t3_error
     return cfg, causes, fatal
 
 
@@ -3075,6 +3589,7 @@ def _detect(out, st, only=None):
         "co-sin-asentar": lambda: check_co_sin_asentar(out, st),
         "im-sin-asentar": lambda: check_im_sin_asentar(out, st),
         "l6": lambda: check_l6(out),
+        "p8-sin-tr": lambda: check_p8_sin_tr(out, st),
     }
     selected = [only] if only else list(DETECTOR_NAMES)
     for name in selected:
@@ -3251,6 +3766,34 @@ def run(a):  # noqa: C901 - detector legacy mas el modo heartbeat aislado
     return rc
 
 
+def run_p8_gaps(a):
+    """Run the single read-only command that reports P8 IM/TR gaps.
+
+    Before: ``a`` contains the flight path, optional ENCARGOS_TR path, and
+        configured T3 threshold; no operational directory is required.
+    During: resolve external paths, reject absent/invalid N, and print one JSON
+        measurement plus at most one one-tick P8 warning.
+    After: return 0 for measured silence/NO_MEDIDO, 1 for the P8 AVISO, or 2
+        for invalid configuration; never calls the alert ledger or launches work.
+    """
+    global CFG
+    CFG, causes, fatal = _resolve_paths(a, None)
+    if fatal:
+        print(f"P8_GAPS_BROKEN: {fatal}")
+        return 2
+    if causes:
+        print(f"P8_GAPS_NO_MEDIDO: {'; '.join(causes[:3])}")
+        return 0
+    if CFG.t3_n is None:
+        print(f"P8_GAPS_BROKEN: {T3_NEW_ROWS_ENV} ausente")
+        return 2
+    report, found = _p8_gap_report()
+    print("p8-gaps:", json.dumps(report, ensure_ascii=False, sort_keys=True))
+    for key, level, message in found:
+        print(level, key, message)
+    return 1 if found else 0
+
+
 def main(argv=None):
     """CLI del detector de paradas.
 
@@ -3302,9 +3845,29 @@ def main(argv=None):
         default=None,
         help="indice JSONL del archivo para el detector L-6 (opcional)",
     )
+    ap.add_argument(
+        "--p8-gaps",
+        action="store_true",
+        help="informa los huecos IM/TR, cola ENCARGOS_TR y accion P8 en un tick",
+    )
+    ap.add_argument(
+        "--encargos-tr-file",
+        help=f"fichero ENCARGOS_TR; por defecto <flight-dir>/{ENCARGOS_TR_NAME}",
+    )
+    ap.add_argument(
+        "--t3-new-rows",
+        help=f"N de T3; por defecto ${T3_NEW_ROWS_ENV} (entero no negativo)",
+    )
     a = ap.parse_args(argv)
-    if a.test_detector and a.test_detector not in ("todos", *DETECTOR_NAMES):
-        ap.error("--test-detector exige 'todos' o uno de: " + ", ".join(DETECTOR_NAMES))
+    if a.test_detector and a.test_detector not in (
+        "todos",
+        *DETECTOR_NAMES,
+        P8_DETECTOR_NAME,
+    ):
+        ap.error(
+            "--test-detector exige 'todos' o uno de: "
+            + ", ".join((*DETECTOR_NAMES, P8_DETECTOR_NAME))
+        )
     if a.heartbeat_check and (a.baseline or a.self_check or a.test_detector):
         ap.error(
             "--heartbeat-check no se combina con --baseline, --self-check ni "
@@ -3312,8 +3875,14 @@ def main(argv=None):
         )
     if a.heartbeat_check and (not a.ops_dir or not a.flight_dir):
         ap.error("--heartbeat-check exige --ops-dir y --flight-dir")
+    if a.p8_gaps and (
+        a.baseline or a.self_check or a.heartbeat_check or a.test_detector
+    ):
+        ap.error("--p8-gaps no se combina con modos de tick")
     try:
-        return self_check(a) if a.self_check else run(a)
+        if a.self_check:
+            return self_check(a)
+        return run_p8_gaps(a) if a.p8_gaps else run(a)
     except Exception as exc:
         print(f"STALL_CHECK_BROKEN: {type(exc).__name__}: {str(exc)[:160]}")
         return 2

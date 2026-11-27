@@ -31,6 +31,7 @@ FSC_PATH = Path(
     / "flight"
     / "flight_stall_check.py"
 )
+REPO_ROOT = FSC_PATH.parents[2]
 WINDOWS = os.name == "nt"
 GIT_ID = ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"]
 OK_QUOTA = "QUOTA | alvarovans weekly 40% | brabander weekly 30%"
@@ -5456,6 +5457,349 @@ def _im_tr_row(thread_id, title=None, **kwargs):
         "payload": {"settled": False},
         **kwargs,
     }
+
+
+def _encargo_tr(path, **overrides):
+    """Build one complete ENCARGOS_TR row for the P8 tests."""
+    row = {
+        "id": "TR-ENC-1",
+        "bloque": "B1",
+        "prioridad": 1,
+        "zona": "z1",
+        "estado": "abierto",
+        "dueno": "TR-1",
+    }
+    row.update(overrides)
+    path.write_text(json.dumps({"encargos": [row]}), encoding="utf-8")
+    return row
+
+
+def _p8_registry_and_store(box, sessions, runs=()):
+    """Prepare the real registry/store path consumed by the P8 measurement."""
+    for session in sessions:
+        session.setdefault(
+            "role",
+            "triaje" if session.get("code", "").startswith("TR-") else "implantacion",
+        )
+    rows = [_im_tr_row(session["threadId"]) for session in sessions]
+    _im_tr_store(box, rows, runs)
+    _im_tr_registry(box, sessions)
+
+
+def test_wot184h_m01_p8_sin_tr_avisa_en_un_tick_y_tr_vivo_silencia(box):
+    """m-01/m-06: P8 uses live IM/TR counts and emits one-tick AVISO."""
+    _p8_registry_and_store(
+        box,
+        [
+            _im_tr_session("IM-184", "im-184"),
+        ],
+    )
+    encargos = box.flight / "ENCARGOS_TR.json"
+    _encargo_tr(encargos)
+    first = box.tick(
+        "--p8-gaps",
+        "--t3-new-rows",
+        "1",
+        "--encargos-tr-file",
+        str(encargos),
+        "--dry-run",
+    )
+    assert first.rc == 1
+    assert "AVISO p8-sin-tr" in first.out
+    assert first.out.count("p8-sin-tr") == 1
+
+    _p8_registry_and_store(
+        box,
+        [
+            _im_tr_session("IM-184", "im-184"),
+            _im_tr_session("TR-184", "tr-184"),
+        ],
+    )
+    control = box.tick(
+        "--p8-gaps",
+        "--t3-new-rows",
+        "1",
+        "--encargos-tr-file",
+        str(encargos),
+        "--dry-run",
+    )
+    assert control.rc == 0
+    assert "AVISO p8-sin-tr" not in control.out
+
+
+def test_wot184h_m02_gaps_reports_both_roles_with_shared_liveness(box, monkeypatch):
+    """m-02: the single command exposes separate IM and TR gaps."""
+    sessions = [
+        _im_tr_session("IM-184", "im-184"),
+        _im_tr_session("TR-184", "tr-184"),
+    ]
+    _p8_registry_and_store(box, sessions)
+    _im_tr_cfg(box)
+    checker = box.m._load_cell_checker()
+    connection, _, settled = checker._store_lookup(box.m.CFG.store)
+    try:
+        monkeypatch.setattr(checker, "is_activa", lambda _status: False)
+        live_ims, live_trs = box.m._live_im_tr(sessions, settled, checker)
+        assert live_ims == [] and live_trs == []
+    finally:
+        connection.close()
+    monkeypatch.undo()
+    sessions = [_im_tr_session("IM-184", "im-184")]
+    _p8_registry_and_store(box, sessions)
+    encargos = box.flight / "ENCARGOS_TR.json"
+    _encargo_tr(encargos)
+
+    result = box.tick(
+        "--p8-gaps",
+        "--t3-new-rows",
+        "4",
+        "--encargos-tr-file",
+        str(encargos),
+        "--dry-run",
+    )
+
+    assert result.rc == 1
+    assert '"hueco_im": 1' in result.out
+    assert '"hueco_tr": 1' in result.out
+    assert '"t3_n": 4' in result.out
+    assert '"cola_motivo": "COLA_VACIA"' not in result.out
+
+
+@pytest.mark.parametrize(
+    ("setup", "expected"),
+    [
+        ("missing", "NO_MEDIDO"),
+        ("unreadable", "NO_MEDIDO"),
+        ("empty", "COLA_VACIA"),
+        ("complete", "PENDIENTE"),
+    ],
+)
+def test_wot184h_m03_reader_distinguishes_encargos_tr_states(tmp_path, setup, expected):
+    """m-03: ENCARGOS_TR separates missing/unreadable, empty and complete rows."""
+    mod = _load()
+    path = tmp_path / "ENCARGOS_TR.json"
+    if setup == "unreadable":
+        path.write_text("{", encoding="utf-8")
+    elif setup == "empty":
+        path.write_text(json.dumps({"encargos": []}), encoding="utf-8")
+    elif setup == "complete":
+        _encargo_tr(path)
+
+    result = mod._read_encargos_tr(path, 2)
+    assert result["estado"] == expected
+    if setup == "missing":
+        assert result["motivo"] == "fuente ausente"
+    if setup == "complete":
+        assert result["t1_count"] == 1
+        assert result["t2_count"] == 0
+
+
+def test_wot184h_m04_t3_n_is_configured_and_rejects_absent_or_non_integer():
+    """m-04: T3 N is finite non-negative integer configuration, never editorial."""
+    mod = _load()
+    assert mod._parse_t3_n("0") == 0
+    assert mod._parse_t3_n("17") == 17
+    with pytest.raises(ValueError):
+        mod._parse_t3_n(None)
+    with pytest.raises(ValueError):
+        mod._parse_t3_n("1.0")
+    with pytest.raises(ValueError):
+        mod._parse_t3_n("-1")
+
+
+def test_wot184h_m05_declared_launch_requires_unique_live_and_confirmed_run(box):
+    """m-05: identity, liveness and T3 run confirmation are independent gates."""
+    sessions = [_im_tr_session("IM-184", "im-184")]
+    _p8_registry_and_store(box, sessions, [("im-184", "running", 1)])
+    _im_tr_cfg(box)
+    checker = box.m._load_cell_checker()
+    connection, _, settled = checker._store_lookup(box.m.CFG.store)
+    try:
+        assert box.m.is_declared_launch(
+            "IM", "IM-184", sessions, settled, connection, set()
+        )
+        assert not box.m.is_declared_launch(
+            "TR", "IM-184", sessions, settled, connection, {"IM-184"}
+        )
+        dead = [dict(sessions[0], status="COMPLETED")]
+        assert not box.m.is_declared_launch(
+            "IM", "IM-184", dead, settled, connection, set()
+        )
+        connection.close()
+        no_run = _im_tr_store(box, [_im_tr_row("im-184")], [])
+        connection, _, settled = checker._store_lookup(no_run)
+        assert not box.m.is_declared_launch(
+            "IM", "IM-184", sessions, settled, connection, set()
+        )
+    finally:
+        connection.close()
+
+
+def test_wot184h_m07_mutation_controls_cover_p8_predicate_reader_t3_and_launch(box):
+    """m-07: four source mutations are red and restoration is green."""
+    source = FSC_PATH.read_text(encoding="utf-8")
+    cases = (
+        (
+            "return (\n        im_live < IM_TOPE",
+            "return (\n        im_live <= IM_TOPE",
+            "assert not module.p8_sin_tr(2, 0)",
+        ),
+        (
+            "if not open_rows:",
+            "if open_rows:",
+            'assert module._read_encargos_tr(path, 1)["estado"] == "COLA_VACIA"',
+        ),
+        (
+            "new_rows >= n",
+            "new_rows > n",
+            'assert module._read_encargos_tr(path, 1)["t3_estado"] == "VIGENTE"',
+        ),
+        (
+            'return session.get("threadId") in _confirmed_run_ids(connection)',
+            "return False",
+            'assert module.is_declared_launch("IM", "IM-1", sessions, lambda _: False, Conn(), set())',
+        ),
+    )
+    loader = """
+import importlib.util
+import json
+import sys
+from pathlib import Path
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("flight_stall_check", path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+%s
+"""
+    red = 0
+    for index, (original, mutant, assertion) in enumerate(cases):
+        assert original in source
+        mutated = source.replace(original, mutant, 1)
+        copy_path = box.root / f"mutant_{index}" / "flight_stall_check.py"
+        copy_path.parent.mkdir()
+        copy_path.write_text(mutated, encoding="utf-8")
+        if index == 1:
+            (copy_path.parent / "ENCARGOS_TR.json").write_text(
+                json.dumps({"encargos": []}), encoding="utf-8"
+            )
+            assertion = assertion.replace(
+                "path", "Path(sys.argv[1]).parent / 'ENCARGOS_TR.json'"
+            )
+        elif index == 2:
+            (copy_path.parent / "ENCARGOS_TR.json").write_text(
+                json.dumps(
+                    {
+                        "encargos": [
+                            {
+                                "id": "x",
+                                "bloque": "B1",
+                                "prioridad": 1,
+                                "zona": "z",
+                                "estado": "abierto",
+                                "dueno": "TR-1",
+                            }
+                        ],
+                        "pasada_vuelo": True,
+                        "filas_nuevas": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            assertion = assertion.replace(
+                "path", "Path(sys.argv[1]).parent / 'ENCARGOS_TR.json'"
+            )
+        elif index == 3:
+            assertion = (
+                "class Conn:\n"
+                "    def execute(self, _query):\n"
+                '        return type("Result", (), {"fetchall": lambda self: [("thread-1", "running", 1)]})()\n'
+                "class Checker:\n"
+                "    def is_im_vivo(self, session, settled):\n"
+                '        return session["role"] == "implantacion" and not settled(session["threadId"])\n'
+                "    def is_activa(self, status):\n"
+                '        return str(status).startswith("ACTIVA")\n'
+                "module._load_cell_checker = lambda: Checker()\n"
+                'sessions = [{"code": "IM-1", "threadId": "thread-1", "role": "implantacion", "status": "ACTIVA"}]\n'
+                + assertion
+            )
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                loader % assertion,
+                str(copy_path),
+            ],
+            cwd=box.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode != 0
+        red += 1
+        restored = box.root / f"restored_{index}" / "flight_stall_check.py"
+        restored.parent.mkdir()
+        restored.write_text(source, encoding="utf-8")
+        if index in (1, 2):
+            shutil.copy(
+                copy_path.parent / "ENCARGOS_TR.json",
+                restored.parent / "ENCARGOS_TR.json",
+            )
+        green = subprocess.run(
+            [sys.executable, "-c", loader % assertion, str(restored)],
+            cwd=box.root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert green.returncode == 0, f"mutant {index}: {green.stderr}"
+    assert red >= 4
+
+
+def test_wot184h_m08_p8_diff_scope_is_exactly_flt():
+    """m-08: only the two declared FLT paths are changed by this ticket."""
+    changed = {
+        line.strip()
+        for line in subprocess.check_output(
+            ["git", "diff", "--name-only", "HEAD"], text=True
+        ).splitlines()
+        if line.strip()
+    }
+    assert changed <= {
+        "scripts/flight/flight_stall_check.py",
+        "tests/unit/test_flight_stall_check.py",
+    }
+
+
+def test_wot184h_co194_module_loads_by_path_without_repo_on_sys_path(tmp_path):
+    """CO-194(B): isolated path loader exercises the CLI without repository imports."""
+    source = """
+import importlib.util
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+worktree_root = path.parents[2]
+assert str(worktree_root) not in sys.path
+spec = importlib.util.spec_from_file_location("flight_stall_check", path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+with tempfile.TemporaryDirectory() as raw:
+    flight = Path(raw)
+    (flight / "diseno").mkdir()
+    (flight / "diseno" / "COLA_PARA_USUARIO.md").write_text("# cola\\n", encoding="utf-8")
+    assert module.main(["--self-check", "--flight-dir", str(flight), "--motor-wt", str(Path.cwd())]) == 0
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", source, str(FSC_PATH)],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_im_sin_asentar_146f_m01_thread_id_legado(box):
