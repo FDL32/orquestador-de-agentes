@@ -2666,6 +2666,8 @@ def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
     roster_path = CFG.registry.parent / FLIGHT_ROSTER_NAME
     try:
         roster = json.loads(roster_path.read_text(encoding="utf-8"))
+        if not isinstance(roster, dict):
+            raise ValueError("roster no es objeto")
         roles = roster.get("active_roles") if isinstance(roster, dict) else None
         orchestrator = orchestrator_entry(roles) if isinstance(roles, dict) else None
         if (
@@ -2683,6 +2685,8 @@ def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
             or not supervisor["session_code"].strip()
         ):
             raise ValueError("supervisor ilegible")
+        effective_ancestro = None
+        ancestro_source = None
         if "ancestro_directo" in roles:
             ancestro = roles["ancestro_directo"]
             if (
@@ -2693,6 +2697,24 @@ def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
                 or not ancestro["session_code"].strip()
             ):
                 raise ValueError("ancestro_directo ilegible")
+            effective_ancestro = ancestro
+            ancestro_source = "ancestro_directo"
+        else:
+            cadena_contexto = roster.get("cadena_contexto")
+            if cadena_contexto not in (None, []):
+                if not isinstance(cadena_contexto, list) or not cadena_contexto:
+                    raise ValueError("cadena_contexto ilegible")
+                candidate = cadena_contexto[0]
+                if (
+                    not isinstance(candidate, dict)
+                    or not isinstance(candidate.get("threadId"), str)
+                    or not candidate["threadId"].strip()
+                    or not isinstance(candidate.get("session_code"), str)
+                    or not candidate["session_code"].strip()
+                ):
+                    raise ValueError("cadena_contexto[0] ilegible")
+                effective_ancestro = candidate
+                ancestro_source = "cadena_contexto[0]"
         since_raw = orchestrator.get("since")
         since = (
             dt.datetime.fromisoformat(since_raw.strip().replace("Z", "+00:00"))
@@ -2702,7 +2724,7 @@ def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
         if since is None or since.tzinfo is None:
             raise ValueError("since ilegible")
         triad = []
-        triad_roles = (orchestrator, supervisor, roles.get("ancestro_directo"))
+        triad_roles = (orchestrator, supervisor, effective_ancestro)
         triad.extend(
             [
                 (str(role.get("threadId") or ""), str(role.get("session_code") or ""))
@@ -2745,8 +2767,13 @@ def check_co_sin_asentar(out, st):  # noqa: C901 - ramas fail-closed del contrat
     if overdue and candidates:
         text += f"; pasados {CO_GRACIA_MIN} min del ACTIVO {orchestrator.get('session_code', 'desconocido')}"
     text += f"): {detail}"
-    if not isinstance(roles.get("ancestro_directo"), dict):
-        text += "; terna parcial: conserva el primero como ancestro directo hasta 194b"
+    if effective_ancestro is None:
+        text += "; terna sin ancestro directo en el roster"
+    else:
+        text += (
+            f"; ancestro directo excluido {effective_ancestro['session_code']}"
+            f" (fuente {ancestro_source})"
+        )
     return [("co-sin-asentar", "AVISO", text)]
 
 

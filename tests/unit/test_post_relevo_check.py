@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sqlite3
 import sys
 from pathlib import Path
+
+import pytest
 
 
 MODULE_PATH = (
@@ -40,6 +43,54 @@ def _write_json(path: Path, value: object) -> None:
     After: the detector can read the resulting file without normalization.
     """
     path.write_bytes((json.dumps(value, indent=2) + "\n").encode("utf-8"))
+
+
+def _make_store(path: Path) -> Path:
+    """Create the minimal read-only T3 projection schema for one test."""
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_threads ("
+        "thread_id TEXT, project_id TEXT, title TEXT, runtime_mode TEXT, "
+        "created_at TEXT, deleted_at TEXT, payload_json TEXT, provider_instance_id TEXT)"
+    )
+    connection.execute(
+        "CREATE TABLE orchestration_v2_projection_runs ("
+        "thread_id TEXT, status TEXT, ordinal INTEGER)"
+    )
+    connection.commit()
+    connection.close()
+    return path
+
+
+def _store_thread(path: Path, thread_id: str, *, settled: bool) -> None:
+    """Add one hermetic CO row, optionally marked settled in its payload."""
+    payload = {"status": "settled"} if settled else {}
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "INSERT INTO orchestration_v2_projection_threads "
+        "(thread_id, project_id, title, runtime_mode, created_at, deleted_at, "
+        "payload_json, provider_instance_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            thread_id,
+            "test",
+            "CO fixture",
+            "auto",
+            "2026-11-16T17:00:00+00:00",
+            None,
+            json.dumps(payload),
+            None,
+        ),
+    )
+    connection.commit()
+    connection.close()
+
+
+@pytest.fixture(autouse=True)
+def _t3_store(tmp_path, monkeypatch):
+    """Use a temporary T3 store for every post-relevo test."""
+    store = _make_store(tmp_path / "statev2.sqlite")
+    monkeypatch.setenv("T3_STATE_DB", str(store))
+    return store
 
 
 def _write_ficha(path: Path, route: str) -> None:
@@ -536,7 +587,174 @@ def test_m07_p24_detecta_co_asentable_fuera_de_la_terna(tmp_path, monkeypatch):
     assert calls
 
 
-def test_p24_historic_registry_is_sane_without_toast(tmp_path, monkeypatch):
+def test_p24_uses_t3_settlement_not_registry_status(tmp_path, monkeypatch, _t3_store):
+    """CASCADA is current unless the T3 row itself says settled."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].extend(
+        [
+            {
+                "code": "IM-NEW-1",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "IM-NEW-2",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:30+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "CO-OUT",
+                "role": "orquestadora",
+                "threadId": "co-out-thread",
+                "status": "CASCADA DE CONTEXTO (consultable)",
+            },
+            {
+                "code": "CO-SET",
+                "role": "orquestadora",
+                "threadId": "co-set-thread",
+                "status": "ACTIVA",
+            },
+        ]
+    )
+    _write_json(flight / "session_registry.json", registry)
+    _store_thread(_t3_store, "co-out-thread", settled=False)
+    _store_thread(_t3_store, "co-set-thread", settled=True)
+    monkeypatch.setattr(module, "_alert", lambda *args, **kwargs: 0)
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    assert result.rc == 1
+    assert "CO-OUT" in result.message
+    assert "CO-SET" not in result.message
+
+
+def test_p24_terna_contexto_head_is_inside_triad(tmp_path, monkeypatch, _t3_store):
+    """A readable context head is excluded from P24 like an active role."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    roster = {
+        "active_roles": {"orquestador": {"session_code": "CO-IN"}},
+        "cadena_contexto": [
+            {"threadId": "co-ancestor-thread", "session_code": "CO-ANC"}
+        ],
+    }
+    _write_json(flight / "flight_roster.json", roster)
+    registry["sessions"].extend(
+        [
+            {
+                "code": "IM-NEW-1",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "IM-NEW-2",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:30+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "CO-ANC",
+                "role": "orquestadora",
+                "threadId": "co-ancestor-thread",
+                "status": "ACTIVA",
+            },
+        ]
+    )
+    _write_json(flight / "session_registry.json", registry)
+    _store_thread(_t3_store, "co-ancestor-thread", settled=False)
+    monkeypatch.setattr(module, "_alert", lambda *args, **kwargs: 0)
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    assert "CO-ANC" not in result.message
+
+
+@pytest.mark.parametrize("kind", ["missing", "corrupt"], ids=["missing", "corrupt"])
+def test_p24_store_t3_no_medido_is_fail_closed(tmp_path, monkeypatch, kind):
+    """An expired tick cannot return clean when T3 is unavailable."""
+    module = _load_module()
+    flight, ops, backlog, _ = _fixture(tmp_path)
+    path = tmp_path / ("missing.sqlite" if kind == "missing" else "broken.sqlite")
+    if kind == "corrupt":
+        path.write_bytes(b"not sqlite")
+    monkeypatch.setenv("T3_STATE_DB", str(path))
+
+    result = module.evaluate(flight, ops, backlog, now="2026-11-16T17:20:00+00:00")
+
+    assert result.rc != 0
+    assert "store T3 no medido" in result.message
+
+
+def test_main_uses_explicit_store_before_environment(tmp_path, monkeypatch, capsys):
+    """The optional CLI store is selected and remains read-only."""
+    module = _load_module()
+    flight, ops, backlog, registry = _fixture(tmp_path)
+    registry["sessions"].extend(
+        [
+            {
+                "code": "IM-NEW-1",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:00+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "IM-NEW-2",
+                "role": "implantacion",
+                "started": "2026-11-16T17:08:30+00:00",
+                "status": "ACTIVA",
+                "reporta_a": "CO-IN",
+            },
+            {
+                "code": "CO-OUT",
+                "role": "orquestadora",
+                "threadId": "co-out-thread",
+                "status": "ACTIVA",
+            },
+        ]
+    )
+    _write_json(flight / "session_registry.json", registry)
+    explicit = _make_store(tmp_path / "explicit.sqlite")
+    env_store = _make_store(tmp_path / "env.sqlite")
+    _store_thread(explicit, "co-out-thread", settled=True)
+    _store_thread(env_store, "co-out-thread", settled=False)
+    monkeypatch.setenv("T3_STATE_DB", str(env_store))
+    monkeypatch.setattr(module, "_alert", lambda *args, **kwargs: 0)
+    explicit_before = explicit.read_bytes()
+    env_before = env_store.read_bytes()
+    common = [
+        "--flight-dir",
+        str(flight),
+        "--ops-dir",
+        str(ops),
+        "--backlog",
+        str(backlog),
+        "--now",
+        "2026-11-16T17:20:00+00:00",
+    ]
+
+    explicit_rc = module.main([*common, "--store", str(explicit)])
+    explicit_output = capsys.readouterr().out
+    env_rc = module.main(common)
+    env_output = capsys.readouterr().out
+
+    assert explicit_rc == 0
+    assert "CO-OUT" not in explicit_output
+    assert env_rc == 1
+    assert "CO-OUT" in env_output
+    assert explicit.read_bytes() == explicit_before
+    assert env_store.read_bytes() == env_before
+
+
+def test_p24_historic_registry_is_sane_without_toast(tmp_path, monkeypatch, _t3_store):
     """P24 ignores a realistic registry of historical cascade rows.
 
     Before: the isolated registry contains one active entrant, two live IMs, and
@@ -579,6 +797,8 @@ def test_p24_historic_registry_is_sane_without_toast(tmp_path, monkeypatch):
         for index in range(100)
     )
     _write_json(flight / "session_registry.json", registry)
+    for index in range(100):
+        _store_thread(_t3_store, f"co-hist-{index:03d}", settled=True)
     alerts = module._load_sibling("comms_alert.py")
     alerts.configure(str(ops))
     monkeypatch.setattr(alerts, "notify", lambda *args, **kwargs: 0)
