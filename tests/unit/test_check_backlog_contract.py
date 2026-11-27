@@ -140,6 +140,21 @@ def test_el_centinela_de_sesion_cerrada_no_es_un_ticket_fantasma(
     assert status is None
 
 
+def test_sentinel_unification_047z_recognizes_unknown_and_keeps_mixed_case(
+    tmp_path: Path,
+) -> None:
+    """All supported no-ticket spellings share the state-validation sentinel set."""
+    root = _write_backlog(tmp_path, "", "")
+    state = root / ".agent" / "collaboration" / "STATE.md"
+
+    for value in ("unknown", "None", "NONE", "N/A", "n/a"):
+        state.write_text(
+            f"ACTIVE_TICKET: {value}\nSTATUS: READY_TO_START\n",
+            encoding="utf-8",
+        )
+        assert cbc._read_active_ticket(root) == (None, None), value
+
+
 def test_un_ticket_real_ausente_del_backlog_sigue_siendo_fantasma(
     tmp_path: Path,
 ) -> None:

@@ -121,14 +121,14 @@ def is_seed_neutral_state(plan_content: str, log_content: str) -> bool:
     """Return True when the motor collaboration seed has no active ticket.
 
     The portable motor ships a neutral seed under ``repo_motor/.agent/collaboration/``.
-    That seed is documented as ``ID=none`` with ``READY_TO_START`` projections and
-    must validate cleanly even though no ticket/bus lifecycle exists yet.
+    That seed uses an invalid plan-ID sentinel with ``READY_TO_START`` projections
+    and must validate cleanly even though no ticket/bus lifecycle exists yet.
     """
     plan_id = get_plan_id(plan_content).strip().lower()
     plan_status, _ = extract_status_emoji(get_status(plan_content, "**Estado:**"))
     log_status, _ = extract_status_emoji(get_status(log_content, "**Estado:**"))
     return (
-        plan_id == "none"
+        is_invalid_plan_id(plan_id)
         and plan_status == "READY_TO_START"
         and log_status == "READY_TO_START"
     )

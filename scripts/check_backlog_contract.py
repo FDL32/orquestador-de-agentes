@@ -46,6 +46,7 @@ from pathlib import Path
 # hardcode a list so this gate never drifts from the machine it audits.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import state_validation
 from bus.state_machine import NON_TERMINAL_STATES, TicketState
 
 # WOT-2026-048g: import the deliverable_type regex from the landing guard to
@@ -776,7 +777,7 @@ def _check_ficha_bodies(content: str) -> list[str]:
 # Valores que STATE.md usa para decir "no hay ticket activo". El motor escribe
 # `-` al cerrar sesion; los demas son formas equivalentes que puede dejar una
 # proyeccion o una plantilla. Ninguno es un identificador de ticket.
-_NO_ACTIVE_TICKET_SENTINELS = frozenset({"-", "--", "none", "None", "NONE", "N/A"})
+_NO_ACTIVE_TICKET_SENTINELS = state_validation.INVALID_PLAN_IDS
 
 _ACTIVE_TICKET_RE = re.compile(r"^ACTIVE_TICKET:\s*(\S+)", re.MULTILINE)
 _STATUS_RE = re.compile(r"^STATUS:\s*(\S+)", re.MULTILINE)
@@ -804,7 +805,7 @@ def _read_active_ticket(root: Path) -> tuple[str | None, str | None]:
     # cierre correcto producia rc=1 por su propia escritura (medido en el
     # destino LEA, 2026-08-02). Tratarlo como ausencia devuelve el par
     # (None, None), que es justo el contrato de "el check no aplica".
-    if ticket in _NO_ACTIVE_TICKET_SENTINELS:
+    if ticket.strip().lower() in _NO_ACTIVE_TICKET_SENTINELS:
         return None, None
     status_m = _STATUS_RE.search(content)
     status = status_m.group(1).strip() if status_m else None
