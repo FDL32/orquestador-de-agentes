@@ -165,6 +165,16 @@ VER_COHERENTE = "RECIBO_COHERENTE"
 VER_OTRA_RAMA = "ID_EN_OTRA_RAMA"
 VER_PRIMARY_SOURCE_CONFORME = "PRIMARY_SOURCE_CHECK_CONFORME"
 VER_PRIMARY_SOURCE_NO_CONFORME = "PRIMARY_SOURCE_CHECK_NO_CONFORME"
+PRIMARY_SOURCE_RETROACTIVE_EXEMPT = frozenset(
+    {
+        "WOT-2026-231e",
+        "WOT-2026-237b",
+        "WOT-2026-146b",
+        "WOT-2026-174b",
+        "WOT-2026-215c",
+    }
+)  # DEC 2026-11-27, messageId ee81f56e-9921-46df-af71-e2e01b6030fd (usuario, '1', opcion 1): exencion retroactiva nombrada, nunca por fecha/corte. WOT-2026-231f.
+VER_PRIMARY_SOURCE_WARN_RETROACTIVE = "PRIMARY_SOURCE_CHECK_WARN_RETROACTIVE"
 FAIL_VERDICTS = (
     VER_SIN_RECIBO,
     VER_INCOHERENTE,
@@ -474,8 +484,15 @@ def _primary_source_finding(repo: Path, alta: dict, lines: list[str]) -> dict | 
         verdict = VER_PRIMARY_SOURCE_CONFORME
         reason = f"trigger={trigger}; recibo valido"
     else:
-        verdict = VER_PRIMARY_SOURCE_NO_CONFORME
-        reason = f"trigger={trigger}; {defect}"
+        if alta["id"] in PRIMARY_SOURCE_RETROACTIVE_EXEMPT:
+            verdict = VER_PRIMARY_SOURCE_WARN_RETROACTIVE
+            reason = (
+                f"trigger={trigger}; {defect}; exencion retroactiva DEC ee81f56e "
+                "(WOT-2026-231f)"
+            )
+        else:
+            verdict = VER_PRIMARY_SOURCE_NO_CONFORME
+            reason = f"trigger={trigger}; {defect}"
     lines.append(
         f"ALTA {alta['id']} en {commit[:12]} -> VEREDICTO: {verdict}: {reason}"
     )
@@ -1917,6 +1934,28 @@ def _audit_closeout(
         cutoff_sha=cutoff_sha,
         altas_out=altas,
     )
+    code, lines, findings = _apply_lens_and_primary_checks(
+        repo, head, altas, lines, findings, code
+    )
+    return code, lines, False, findings
+
+
+def _apply_lens_and_primary_checks(
+    repo: Path,
+    head: str,
+    altas: list[dict],
+    lines: list[str],
+    findings: list[dict],
+    code: int,
+) -> tuple[int, list[str], list[dict]]:
+    """Aplica c-14 y PRIMARY_SOURCE_CHECK a las altas de cualquier rango.
+
+    Before: ``altas`` procede de ``audit_range`` y ``head`` es el extremo
+        resuelto del rango que se está auditando.
+    During: ejecuta los dos controles y agrega sus hallazgos, mutando el
+        veredicto global solo para fallos bloqueantes.
+    After: devuelve la misma terna de auditoría con ambos controles aplicados.
+    """
     lens_findings: list[dict] = []
     if not _is_ancestor(repo, LENSES_CUTOFF_SHA, head):
         lines.append("SKIP: corte no resoluble o no ancestro; c-14 no aplicado")
@@ -1967,7 +2006,7 @@ def _audit_closeout(
         elif not any("VEREDICTO GLOBAL: FALLO" in line for line in lines):
             lines.append(failure_line)
         code = 1
-    return code, lines, False, findings
+    return code, lines, findings
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: C901
@@ -2059,6 +2098,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 repo, "", "", surfaces, revalidate=recibo
             )
         elif args.base and args.head:
+            altas: list[dict] = []
             code, lines, findings = audit_range(
                 repo,
                 args.base,
@@ -2066,6 +2106,28 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 surfaces,
                 extra_recibos=extra,
                 cutoff_sha=args.grandfather_cutoff_sha,
+                altas_out=altas,
+            )
+            code, lines, findings = _apply_lens_and_primary_checks(
+                repo, args.head, altas, lines, findings, code
+            )
+        elif args.base or args.head:
+            altas = []
+            resolved_base = (
+                args.base or git(repo, "merge-base", "origin/main", "HEAD").strip()
+            )
+            resolved_head = args.head or git(repo, "rev-parse", "HEAD").strip()
+            code, lines, findings = audit_range(
+                repo,
+                resolved_base,
+                resolved_head,
+                surfaces,
+                extra_recibos=extra,
+                cutoff_sha=args.grandfather_cutoff_sha,
+                altas_out=altas,
+            )
+            code, lines, findings = _apply_lens_and_primary_checks(
+                repo, resolved_head, altas, lines, findings, code
             )
         else:
             # WOT-2026-090s: los recibos de --recibo-file valen tambien sin
