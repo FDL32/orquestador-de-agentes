@@ -175,6 +175,32 @@ PRIMARY_SOURCE_RETROACTIVE_EXEMPT = frozenset(
     }
 )  # DEC 2026-11-27, messageId ee81f56e-9921-46df-af71-e2e01b6030fd (usuario, '1', opcion 1): exencion retroactiva nombrada, nunca por fecha/corte. WOT-2026-231f.
 VER_PRIMARY_SOURCE_WARN_RETROACTIVE = "PRIMARY_SOURCE_CHECK_WARN_RETROACTIVE"
+# DEC 2026-11-27, messageId 5ed73b6a-0792-4ec3-82db-614355d13ac5 (usuario): exencion
+# retroactiva del gate 6p (admision) para los 11 hallazgos medidos. Arreglo de fondo:
+# WOT-2026-161c. Lista cerrada: nunca por fecha ni corte. Cada tupla es
+# (candidato_id, commit_sha12, veredicto_original); casa EXACTAMENTE o no degrada.
+ADMISSION_6P_RETROACTIVE_EXEMPT = frozenset(
+    {
+        ("WOT-2026-232b", "e27d130640ee", "SIN_RECIBO"),
+        ("WOT-2026-175d", "b0bd43aa083a", "SIN_RECIBO"),
+        ("WOT-2026-175e", "b0bd43aa083a", "SIN_RECIBO"),
+        ("WOT-2026-205a", "b0bd43aa083a", "SIN_RECIBO"),
+        ("WOT-2026-231d", "b0bd43aa083a", "SIN_RECIBO"),
+        ("WOT-2026-233b", "0488f86049ee", "ALTA_CONCURRENTE"),
+        ("WOT-2026-237a", "11416c96d4f7", "ALTA_CONCURRENTE"),
+        ("WOT-2026-237b", "11416c96d4f7", "ALTA_CONCURRENTE"),
+        ("WOT-2026-232b", "e27d130640ee", "LENTES_TR_NO_CONFORME"),
+        ("WOT-2026-231f", "397be8a9e923", "LENTES_TR_NO_CONFORME"),
+        ("WOT-2026-175d", "b0bd43aa083a", "LENTES_TR_NO_CONFORME"),
+        # Ampliacion DEC 2026-11-27, messageId bc710729-b42c-470a-94ab-7baf8ef2f2db
+        # (usuario): los 2 hallazgos del commit de alta de 231e. El RECIBO_INCOHERENTE
+        # no lleva candidato_id porque su recibo no parsea como JSON: su clave real
+        # es (None, sha12, veredicto) y solo casa en ese commit.
+        ("WOT-2026-231e", "2ef767a50dcb", "SIN_RECIBO"),
+        (None, "2ef767a50dcb", "RECIBO_INCOHERENTE"),
+    }
+)
+VER_ADMISSION_WARN_RETROACTIVE = "ADMISSION_6P_WARN_RETROACTIVE"
 FAIL_VERDICTS = (
     VER_SIN_RECIBO,
     VER_INCOHERENTE,
@@ -1774,6 +1800,45 @@ def _audit_commit(
     return len(added), len(added_ids), n_recibos_msg
 
 
+def _apply_admission_6p_exemption(findings: list[dict], lines: list[str]) -> int:
+    """Degrada a WARN los hallazgos de la lista cerrada de exencion retroactiva.
+
+    Before: ``findings`` trae hallazgos con ``candidato_id``, ``commit`` (sha12)
+        y ``veredicto``; ``lines`` es el informe acumulado.
+    During: un hallazgo se degrada SOLO si ``(candidato_id, commit[:12],
+        veredicto)`` casa EXACTAMENTE con una tupla de
+        ``ADMISSION_6P_RETROACTIVE_EXEMPT``; muta el hallazgo y anade una linea
+        visible. Otro commit u otro veredicto del mismo id no se degrada.
+    After: devuelve cuantos hallazgos se degradaron; el veredicto nuevo no esta
+        en ``FAIL_VERDICTS`` y deja de contar para el fallo global.
+    """
+    degraded = 0
+    for finding in findings:
+        original = finding.get("veredicto")
+        key = (
+            finding.get("candidato_id"),
+            str(finding.get("commit", ""))[:12],
+            original,
+        )
+        if key not in ADMISSION_6P_RETROACTIVE_EXEMPT:
+            continue
+        reason = (
+            f"{VER_ADMISSION_WARN_RETROACTIVE}: {original}; exencion retroactiva "
+            "DEC 5ed73b6a (WOT-2026-161c)"
+        )
+        finding["veredicto_original"] = original
+        finding["veredicto"] = VER_ADMISSION_WARN_RETROACTIVE
+        if "clave" in finding:
+            finding["clave"] = VER_ADMISSION_WARN_RETROACTIVE
+        finding["motivos"] = [*finding.get("motivos", []), reason]
+        lines.append(
+            f"ALTA {key[0] or '(sin id: recibo ilegible)'} en {key[1]} -> "
+            f"VEREDICTO: {reason}"
+        )
+        degraded += 1
+    return degraded
+
+
 def audit_range(
     repo: Path,
     base: str,
@@ -1849,6 +1914,7 @@ def audit_range(
         lines.insert(4 + offset, summary)
     if altas_out is not None:
         altas_out.extend(altas_procesadas)
+    _apply_admission_6p_exemption(findings, lines)
     fails = [f for f in findings if f.get("veredicto") in FAIL_VERDICTS]
     grandfathered = [
         f for f in findings if f.get("veredicto") == VER_WARN_GRANDFATHERED
@@ -1975,6 +2041,7 @@ def _apply_lens_and_primary_checks(
         ]
         primary_findings = [finding for finding in primary_findings if finding]
     findings.extend(primary_findings)
+    _apply_admission_6p_exemption(lens_findings, lines)
     lens_failures = [
         finding
         for finding in lens_findings

@@ -3090,3 +3090,155 @@ def test_127b_fila_identica_en_backlog_no_exime_otra_distinta_en_el_archive(
     assert "VEREDICTO: ID_EN_OTRA_RAMA" in out
     assert "refs/heads/hermana" in out
     assert "(filas distintas leidas 2)" in out  # la identica y la distinta
+
+
+# Seccion exencion retroactiva 6p (DEC 5ed73b6a, WOT-2026-161c): lista cerrada.
+
+_TR_FICHA_SIN_LENTES = "redactada_por: TR\ntriador_modelo: kilo|nan/gemma4\n"
+
+
+def _exempt(monkeypatch, *tuples: tuple[str, str, str]) -> None:
+    monkeypatch.setattr(cba, "ADMISSION_6P_RETROACTIVE_EXEMPT", frozenset(tuples))
+
+
+def _alta_tr_sin_recibo(tmp_path: Path, monkeypatch, ticket: str) -> tuple[Path, str]:
+    """Alta TR sin recibo post-corte: produce SIN_RECIBO y LENTES_TR_NO_CONFORME."""
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    sha = commit_alta_with_ficha(
+        repo, row(ticket), "alta TR sin recibo", ticket, _TR_FICHA_SIN_LENTES
+    )
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    return repo, sha[:12]
+
+
+def _verdicts(findings: list[dict], ticket: str) -> set[str]:
+    return {f["veredicto"] for f in findings if f.get("candidato_id") == ticket}
+
+
+def test_6p_exempt_tuple_exact_match_degrades_and_global_passes(tmp_path, monkeypatch):
+    """(a) SIN_RECIBO + LENTES_TR_NO_CONFORME exactos -> WARN; global y rc verdes."""
+    ticket = "WOT-2026-161v"
+    repo, sha12 = _alta_tr_sin_recibo(tmp_path, monkeypatch, ticket)
+    code_before, _lines, _skipped, findings_before = cba._audit_closeout(
+        repo, cutoff_sha=""
+    )
+    assert code_before == 1
+    assert _verdicts(findings_before, ticket) >= {
+        cba.VER_SIN_RECIBO,
+        cba.LENTES_TR_NO_CONFORME,
+    }
+    _exempt(
+        monkeypatch,
+        (ticket, sha12, cba.VER_SIN_RECIBO),
+        (ticket, sha12, cba.LENTES_TR_NO_CONFORME),
+    )
+    code, lines, skipped, findings = cba._audit_closeout(repo, cutoff_sha="")
+    assert code == 0 and not skipped
+    assert _verdicts(findings, ticket) == {cba.VER_ADMISSION_WARN_RETROACTIVE}
+    assert all(f["veredicto"] not in cba.FAIL_VERDICTS for f in findings)
+    degraded = [f for f in findings if f.get("veredicto_original")]
+    assert {f["veredicto_original"] for f in degraded} == {
+        cba.VER_SIN_RECIBO,
+        cba.LENTES_TR_NO_CONFORME,
+    }
+    expected = (
+        f"ALTA {ticket} en {sha12} -> VEREDICTO: ADMISSION_6P_WARN_RETROACTIVE: "
+        "SIN_RECIBO; exencion retroactiva DEC 5ed73b6a (WOT-2026-161c)"
+    )
+    assert expected in lines
+    globals_ = [line for line in lines if line.startswith("VEREDICTO GLOBAL")]
+    assert globals_ == ["VEREDICTO GLOBAL: RECIBO_COHERENTE"]
+
+
+def test_6p_exempt_alta_concurrente_exact_match_degrades(tmp_path, monkeypatch):
+    """(a) ALTA_CONCURRENTE exacta (reintroduccion con recibo) -> WARN, rc 0."""
+    repo = init_repo(tmp_path)
+    ticket = "WOT-2026-923a"
+    surface = backlog_surface(repo)
+    recibo1 = build_recibo(repo, ticket, row(ticket), [dict(surface)])
+    commit_alta(repo, row(ticket), msg_with_recibo("alta", recibo1))
+    (repo / BACKLOG_REL).write_text(HEADER, encoding="utf-8")
+    git(repo, "add", BACKLOG_REL)
+    git(repo, "commit", "-m", "retira")
+    recibo2 = build_recibo(repo, ticket, row(ticket), [surface])
+    sha12 = commit_alta(repo, row(ticket), msg_with_recibo("re-alta", recibo2))[:12]
+    code_before, _l, _s, findings_before = cba._audit_closeout(repo, cutoff_sha="")
+    assert code_before == 1
+    assert cba.VER_CONCURRENTE in _verdicts(findings_before, ticket)
+    _exempt(monkeypatch, (ticket, sha12, cba.VER_CONCURRENTE))
+    code, lines, _skipped, findings = cba._audit_closeout(repo, cutoff_sha="")
+    assert code == 0, lines
+    assert cba.VER_ADMISSION_WARN_RETROACTIVE in _verdicts(findings, ticket)
+    assert cba.VER_CONCURRENTE not in _verdicts(findings, ticket)
+
+
+def test_6p_exempt_same_id_other_commit_still_fails(tmp_path, monkeypatch):
+    """(b) mismo id y veredicto pero OTRO commit: no se degrada, sigue rc 1."""
+    ticket = "WOT-2026-161v"
+    repo, sha12 = _alta_tr_sin_recibo(tmp_path, monkeypatch, ticket)
+    other = "0" * 12
+    assert other != sha12
+    _exempt(
+        monkeypatch,
+        (ticket, other, cba.VER_SIN_RECIBO),
+        (ticket, other, cba.LENTES_TR_NO_CONFORME),
+    )
+    code, lines, _skipped, findings = cba._audit_closeout(repo, cutoff_sha="")
+    assert code == 1
+    assert _verdicts(findings, ticket) >= {
+        cba.VER_SIN_RECIBO,
+        cba.LENTES_TR_NO_CONFORME,
+    }
+    assert not any(f.get("veredicto_original") for f in findings)
+    assert not any("ADMISSION_6P_WARN_RETROACTIVE" in line for line in lines)
+
+
+def test_6p_exempt_other_verdict_same_id_and_commit_not_degraded(tmp_path, monkeypatch):
+    """(c) exentar SOLO SIN_RECIBO deja LENTES_TR_NO_CONFORME del mismo id/commit
+    fallando; y una tupla con veredicto que no es el medido no degrada nada."""
+    ticket = "WOT-2026-161v"
+    repo, sha12 = _alta_tr_sin_recibo(tmp_path, monkeypatch, ticket)
+    _exempt(monkeypatch, (ticket, sha12, cba.VER_SIN_RECIBO))
+    code, _lines, _skipped, findings = cba._audit_closeout(repo, cutoff_sha="")
+    assert code == 1
+    assert _verdicts(findings, ticket) == {
+        cba.VER_ADMISSION_WARN_RETROACTIVE,
+        cba.LENTES_TR_NO_CONFORME,
+    }
+    _exempt(monkeypatch, (ticket, sha12, cba.VER_INCOHERENTE))
+    code2, _lines2, _skipped2, findings2 = cba._audit_closeout(repo, cutoff_sha="")
+    assert code2 == 1
+    assert cba.VER_ADMISSION_WARN_RETROACTIVE not in _verdicts(findings2, ticket)
+    assert cba.VER_SIN_RECIBO in _verdicts(findings2, ticket)
+
+
+def test_6p_exempt_list_contract_is_the_closed_13():
+    """(d) la lista es cerrada: exactamente 13 tuplas bien formadas (11 de
+    DEC 5ed73b6a + 2 de 231e por DEC bc710729); solo el RECIBO_INCOHERENTE de
+    231e va sin id (su recibo no parsea)."""
+    exempt = cba.ADMISSION_6P_RETROACTIVE_EXEMPT
+    assert len(exempt) == 13
+    for candidate_id, sha12, verdict in exempt:
+        if candidate_id is None:
+            assert (sha12, verdict) == ("2ef767a50dcb", cba.VER_INCOHERENTE)
+        else:
+            assert cba.ID_RE.fullmatch(candidate_id)
+        assert re.fullmatch(r"[0-9a-f]{12}", sha12)
+        assert verdict in cba.FAIL_VERDICTS
+    assert cba.VER_ADMISSION_WARN_RETROACTIVE not in cba.FAIL_VERDICTS
+    assert sum(1 for entry in exempt if entry[0] is None) == 1
+    assert ("WOT-2026-231e", "2ef767a50dcb", "SIN_RECIBO") in exempt
+
+
+def test_6p_new_alta_without_receipt_not_in_list_still_fails(tmp_path):
+    """(e) un alta nueva sin recibo que no esta en la lista: SIN_RECIBO y rc 1,
+    con la lista real (sin monkeypatch)."""
+    ticket = "WOT-2026-961z"
+    assert all(entry[0] != ticket for entry in cba.ADMISSION_6P_RETROACTIVE_EXEMPT)
+    repo = init_repo(tmp_path)
+    commit_alta(repo, row(ticket), "alta nueva sin recibo")
+    code, out = run_guard(repo)
+    assert code == 1, out
+    assert f"{ticket}" in out and "VEREDICTO: SIN_RECIBO" in out
+    assert "ADMISSION_6P_WARN_RETROACTIVE" not in out
