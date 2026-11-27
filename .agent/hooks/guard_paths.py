@@ -28,7 +28,7 @@ PROTECTED_PATH_PATTERNS = (
     r"api[_-]key",
     r"password",
     r"bearer",
-    r"(^|/)(?:auth|oauth)(?:[._-][^/]*|)(/|$)",
+    r"(^|/)\.?(?:auth|oauth)(?:[0-9._-][^/]*|)(/|$)",
 )
 
 PROTECTED_FILENAMES = {
@@ -37,6 +37,7 @@ PROTECTED_FILENAMES = {
     ".env.production",
     "secrets.json",
     "credentials.json",
+    ".authinfo",
 }
 
 PROTECTED_COMMAND_REFS = (

@@ -221,6 +221,9 @@ class TestIsProtectedPath:
             "config/auth.json",
             "config/auth/client.yaml",
             "config/oauth_client.json",
+            ".authinfo",
+            ".auth.json",
+            "config/oauth2.json",
             ".git/config",
         ],
     )
@@ -1420,7 +1423,7 @@ class TestWot2026052c:
             r"api[_-]key",
             r"password",
             r"bearer",
-            r"(^|/)(?:auth|oauth)(?:[._-][^/]*|)(/|$)",
+            r"(^|/)\.?(?:auth|oauth)(?:[0-9._-][^/]*|)(/|$)",
         )
         assert {
             ".env",
@@ -1428,6 +1431,7 @@ class TestWot2026052c:
             ".env.production",
             "secrets.json",
             "credentials.json",
+            ".authinfo",
         } == PROTECTED_FILENAMES
         assert PROTECTED_COMMAND_REFS == (
             r"\.env",
@@ -1485,8 +1489,10 @@ class TestWot2026052c:
 
         safe = run_write("scripts/flight/verify_user_authorization.py")
         protected = run_write("auth.json")
+        protected_authinfo = run_write(".authinfo")
         assert safe.returncode == 0, safe.stderr
         assert protected.returncode == 2, protected.stderr
+        assert protected_authinfo.returncode == 2, protected_authinfo.stderr
 
     def test_052c_prose_no_longer_claims_unanchored_auth(self):
         """WOT-2026-052c m-06: the stale prose warning is removed."""
