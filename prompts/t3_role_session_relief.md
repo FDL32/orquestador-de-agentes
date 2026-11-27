@@ -404,7 +404,7 @@ El hogar normativo y el procedimiento ejecutable se remiten a
 `docs/protocol/flight_supervision.md` y
 `scripts/flight/rotate_coordinator.py`. Este prompt no duplica sus limites ni
 sus condiciones de parada (X-09).
-El utillaje exclusivo del vuelo activo (`rotate_coordinator_v2.py`, `ctx_acumulado.py`, `next_go_relevo.py`) vive en el repo_destino del vuelo, bajo `.agent/runtime/flight/<vuelo-id>/diseno/` (no en el motor; publicarlo es P5b, aplazado).
+El utillaje exclusivo del vuelo activo (`rotate_coordinator_v2.py`, `ctx_acumulado.py`, `next_go_relevo.py`) vive en el motor, bajo `scripts/flight/` (WOT-2026-161b).
 
 ### Cuando aplica
 
