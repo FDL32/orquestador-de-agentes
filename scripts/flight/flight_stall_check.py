@@ -438,11 +438,13 @@ def _read_encargos_tr(path, n):  # noqa: C901 - six-field queue and T1/T2/T3 gat
     )
     passed = payload.get("pasada_vuelo")
     new_rows = payload.get("filas_nuevas")
-    if not isinstance(passed, bool) or (
-        new_rows is not None
-        and (
-            isinstance(new_rows, bool) or not isinstance(new_rows, int) or new_rows < 0
-        )
+    invalid_new_rows = new_rows is not None and (
+        isinstance(new_rows, bool) or not isinstance(new_rows, int) or new_rows < 0
+    )
+    if (
+        not isinstance(passed, bool)
+        or (passed is True and new_rows is None)
+        or invalid_new_rows
     ):
         base["t3_estado"] = "NO_MEDIDO"
     elif not passed or new_rows >= n:
@@ -612,26 +614,6 @@ def _trace_dispatchables():
     return 0, 0
 
 
-def _p8_live_snapshot():
-    """Measure live IM/TR sessions through the canonical registry and T3 store.
-
-    Before: ``CFG.registry`` and ``CFG.store`` identify the flight registry and
-        read-only T3 projection.
-    During: load both with the existing checker and close the connection after
-        applying the shared IM/TR liveness predicates.
-    After: return ``(sessions, live_ims, live_trs)`` or raise the checker error;
-        no external state is modified.
-    """
-    checker = _load_cell_checker()
-    sessions = checker._registry(CFG.registry)
-    connection, _, settled = checker._store_lookup(CFG.store)
-    try:
-        live_ims, live_trs = _live_im_tr(sessions, settled, checker)
-    finally:
-        connection.close()
-    return sessions, live_ims, live_trs
-
-
 def _p8_gap_report():
     """Build the single-command P8 gaps report and its one-tick finding.
 
@@ -672,8 +654,16 @@ def _p8_gap_report():
             ):
                 claimed.add(launch_id)
                 actions.append(f"{kind}_LANZADO")
-        action = actions[0] if actions else queue["estado"]
-        if action not in {
+        action = (
+            actions[0]
+            if actions
+            else (
+                queue["estado"]
+                if queue["estado"] in {"NO_MEDIDO", "COLA_VACIA"}
+                else None
+            )
+        )
+        if action is not None and action not in {
             "IM_LANZADO",
             "TR_LANZADO",
             "SATURADO",
@@ -683,7 +673,7 @@ def _p8_gap_report():
             "COLA_VACIA",
             "NO_MEDIDO",
         }:
-            action = "NO_MEDIDO"
+            action = None
         tr_target = TR_TOPE if CFG.c1_approved else 1
         p8 = p8_sin_tr(
             len(live_ims),

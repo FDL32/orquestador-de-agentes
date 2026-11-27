@@ -5594,6 +5594,57 @@ def test_wot184h_m03_reader_distinguishes_encargos_tr_states(tmp_path, setup, ex
         assert result["t2_count"] == 0
 
 
+def test_wot184h_fix1_t3_missing_new_rows_is_no_medido(tmp_path):
+    """Fix 1: a completed flight pass without ``filas_nuevas`` cannot crash T3."""
+    mod = _load()
+    path = tmp_path / "ENCARGOS_TR.json"
+    path.write_text(
+        json.dumps(
+            {
+                "encargos": [
+                    {
+                        "id": "TR-ENC-1",
+                        "bloque": "B1",
+                        "prioridad": 1,
+                        "zona": "z1",
+                        "estado": "abierto",
+                        "dueno": "TR-1",
+                    }
+                ],
+                "pasada_vuelo": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = mod._read_encargos_tr(path, 2)
+
+    assert result["estado"] == "PENDIENTE"
+    assert result["t3_estado"] == "NO_MEDIDO"
+    assert result["filas_nuevas"] is None
+
+
+def test_wot184h_fix3_pending_queue_has_no_action_without_declared_launch(box):
+    """Fix 3: pending work is measured separately from an absent action."""
+    sessions = [_im_tr_session("IM-184", "im-184")]
+    _p8_registry_and_store(box, sessions)
+    encargos = box.flight / "ENCARGOS_TR.json"
+    _encargo_tr(encargos)
+
+    result = box.tick(
+        "--p8-gaps",
+        "--t3-new-rows",
+        "1",
+        "--encargos-tr-file",
+        str(encargos),
+        "--dry-run",
+    )
+
+    assert result.rc == 1
+    assert '"cola_motivo": "PENDIENTE"' in result.out
+    assert '"accion": null' in result.out
+
+
 def test_wot184h_m04_t3_n_is_configured_and_rejects_absent_or_non_integer():
     """m-04: T3 N is finite non-negative integer configuration, never editorial."""
     mod = _load()
@@ -5758,13 +5809,18 @@ spec.loader.exec_module(module)
 
 def test_wot184h_m08_p8_diff_scope_is_exactly_flt():
     """m-08: only the two declared FLT paths are changed by this ticket."""
-    changed = {
-        line.strip()
-        for line in subprocess.check_output(
-            ["git", "diff", "--name-only", "HEAD"], text=True
-        ).splitlines()
-        if line.strip()
-    }
+    base_sha = os.environ.get("WOT_184H_BASE_SHA", "e5506e24")
+    if not (REPO_ROOT / ".git").exists():
+        pytest.skip("Git no disponible en el arbol de prueba")
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip("base Git no disponible en el arbol de prueba")
+    changed = {line.strip() for line in result.stdout.splitlines() if line.strip()}
     assert changed <= {
         "scripts/flight/flight_stall_check.py",
         "tests/unit/test_flight_stall_check.py",
