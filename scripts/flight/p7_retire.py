@@ -299,7 +299,7 @@ def _apply_retire(
                 raise p7_common.ArchiveError(f"hash del zip discrepante: {row['rel']}")
     p7_common.verify_manifest_entries(origin, manifest)
     p7_common.verify_list_entries(entries, origin)
-    tracked = p7_common.git_tracked_files(origin)
+    tracked = p7_common.git_tracked_files_or_empty_if_no_repo(origin)
     tracked_keys = {os.path.normcase(name) for name in tracked}
     removed = []
     for path, _entry in zip(_paths(entries, origin), entries, strict=True):
@@ -334,14 +334,12 @@ def _apply_retire_sin_archivo(
         preconditions pass; append one audit row without copying content.
     After: return 0 with the complete transition represented in the root index.
     """
-    p7_common.verify_retire_sin_archivo_entries(entries, origin)
-    tracked = p7_common.git_tracked_files(origin)
-    tracked_keys = {os.path.normcase(name) for name in tracked}
+    statuses = p7_common.classify_retire_sin_archivo(entries, origin)
     removed = []
-    for path, entry in zip(_paths(entries, origin), entries, strict=True):
-        key = os.path.normcase(path.relative_to(origin).as_posix())
+    for path, entry, status in zip(
+        _paths(entries, origin), entries, statuses, strict=True
+    ):
         ticket = entry.get("ticket", entry.get("ronda"))
-        status = "SALTADA_VERSIONADA" if key in tracked_keys else "RETIRADA"
         if status == "RETIRADA":
             path.unlink()
         removed.append(
@@ -434,6 +432,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         p7_common.acquire_lock(lock, pid=os.getpid(), cwd=str(Path.cwd()))
         try:
             _check_shared_index(args.archive_root, args.family, index)
+            candidates = entries
             if args.apply_archive:
                 rc = _apply_archive(args, entries, args.origin, index, md)
             elif args.apply_retire:
@@ -441,7 +440,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
             elif args.apply_retire_sin_archivo:
                 rc = _apply_retire_sin_archivo(args, entries, args.origin, index, md)
             elif args.clase == "copia_derivada_base_viva":
-                p7_common.verify_retire_sin_archivo_entries(entries, args.origin)
+                statuses = p7_common.classify_retire_sin_archivo(entries, args.origin)
+                candidates = [
+                    dict(entry, estado_previsto=status)
+                    for entry, status in zip(entries, statuses, strict=True)
+                ]
                 rc = 0
             else:
                 rc = 0
@@ -461,7 +464,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                             )
                             else "OK",
                             "candidates": (
-                                entries
+                                candidates
                                 if args.clase == "copia_derivada_base_viva"
                                 else p7_common.classify_candidates(
                                     entries,

@@ -127,10 +127,18 @@ def append_rows_atomic(
         raise ArchiveError(f"no se pudo actualizar {path}: {exc}") from exc
 
 
-def _git(project_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _git(
+    project_root: Path,
+    *args: str,
+    extra_env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
     git = shutil.which("git")
     if not git:
         raise ArchiveError("git no esta en PATH")
+    env = None
+    if extra_env is not None:
+        env = dict(os.environ)
+        env.update(extra_env)
     try:
         return subprocess.run(  # noqa: S603
             [git, "-C", str(project_root), *args],
@@ -140,6 +148,7 @@ def _git(project_root: Path, *args: str) -> subprocess.CompletedProcess[str]:
             errors="replace",
             check=False,
             timeout=120,
+            env=env,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         raise ArchiveError(f"git no se pudo ejecutar: {exc}") from exc
@@ -152,6 +161,26 @@ def git_tracked_files(project_root: Path) -> set[str]:
     """
     proc = _git(Path(project_root), "ls-files", "-z")
     if proc.returncode:
+        raise ArchiveError(f"git ls-files fallo (rc={proc.returncode})")
+    return {item.replace("\\", "/") for item in (proc.stdout or "").split("\0") if item}
+
+
+def git_tracked_files_or_empty_if_no_repo(project_root: Path) -> set[str]:
+    """Before: ``project_root`` may be a git repository or a derived copy outside git.
+    During: query tracked paths with a stable locale and tolerate only Git's
+        explicit non-repository diagnostic.
+    After: return normalized tracked names, an empty set for a non-repository,
+        or raise :class:`ArchiveError` for every other failure.
+    """
+    proc = _git(
+        Path(project_root),
+        "ls-files",
+        "-z",
+        extra_env={"LC_ALL": "C", "LANGUAGE": "C"},
+    )
+    if proc.returncode:
+        if "not a git repository" in (proc.stderr or "").lower():
+            return set()
         raise ArchiveError(f"git ls-files fallo (rc={proc.returncode})")
     return {item.replace("\\", "/") for item in (proc.stdout or "").split("\0") if item}
 
@@ -501,6 +530,32 @@ def assert_file_not_open(path: Path) -> None:
         os.replace(path, path)
     except Exception as exc:
         raise ArchiveError(f"fichero abierto o no comprobable: {path}") from exc
+
+
+def classify_retire_sin_archivo(
+    entries: Iterable[dict[str, Any]], origin: Path
+) -> list[str]:
+    """Before: ``entries`` is the approved list for a live-derived copy.
+    During: validate all entries and classify each path against git tracking.
+    After: return statuses in input order without mutating entries or disk.
+    """
+    entries = list(entries)
+    verify_retire_sin_archivo_entries(entries, origin)
+    tracked = git_tracked_files_or_empty_if_no_repo(origin)
+    tracked_keys = {os.path.normcase(name) for name in tracked}
+    return [
+        (
+            "SALTADA_VERSIONADA"
+            if os.path.normcase(
+                str(entry.get("rel", entry.get("path", entry.get("name", "")))).replace(
+                    "\\", "/"
+                )
+            )
+            in tracked_keys
+            else "RETIRADA"
+        )
+        for entry in entries
+    ]
 
 
 def assert_no_link_ancestors(base: Path, rel: str) -> None:

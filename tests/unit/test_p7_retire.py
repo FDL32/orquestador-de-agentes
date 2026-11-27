@@ -86,6 +86,8 @@ def _write_list(path: Path, entries: list[dict[str, object]]) -> str:
 
 def _sin_archivo_fixture(
     tmp_path: Path,
+    *,
+    git_repo: bool = True,
 ) -> tuple[Path, Path, list[dict[str, object]], str, Path, list[Path]]:
     origin = tmp_path / "origin"
     origin.mkdir(parents=True)
@@ -94,7 +96,8 @@ def _sin_archivo_fixture(
     paths = [origin / "derived-a.txt", origin / "derived-b.txt"]
     paths[0].write_text("derived a", encoding="utf-8")
     paths[1].write_text("derived b", encoding="utf-8")
-    _git(origin, "init", "-q")
+    if git_repo:
+        _git(origin, "init", "-q")
     entries = [
         {
             "rel": path.name,
@@ -109,6 +112,14 @@ def _sin_archivo_fixture(
     approved = tmp_path / "approved-sin-archivo.jsonl"
     digest = _write_list(approved, entries)
     return origin, tmp_path / "archive", entries, digest, approved, paths
+
+
+def _capture_main(
+    capsys: pytest.CaptureFixture[str], args: list[str]
+) -> tuple[int, str, str]:
+    rc = p7_retire.main(args)
+    captured = capsys.readouterr()
+    return rc, captured.out, captured.err
 
 
 def _sin_archivo_args(
@@ -199,6 +210,178 @@ def test_retire_sin_archivo_borra_sin_zip_y_registra_una_fila(
         }
         for path, entry in zip(paths, entries, strict=True)
     ]
+
+
+def test_retire_sin_archivo_no_git_borra_y_registra_ambas_entradas(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(
+        tmp_path, git_repo=False
+    )
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    archive.mkdir()
+
+    assert (
+        p7_retire.main(
+            _sin_archivo_args(
+                origin,
+                archive,
+                digest,
+                approved,
+                "--apply-retire-sin-archivo",
+            )
+        )
+        == 0
+    )
+    assert all(not path.exists() for path in paths)
+    rows = p7_common.load_jsonl_index(archive / "index.jsonl")
+    assert len(rows) == 1
+    assert [entry["status"] for entry in rows[0]["entries"]] == [
+        "RETIRADA",
+        "RETIRADA",
+    ]
+
+
+@pytest.mark.parametrize("apply_flag", ["--apply-retire-sin-archivo", "--apply-retire"])
+@pytest.mark.parametrize("git_failure", ["dubious", "missing"])
+def test_retire_git_failures_abort_without_side_effects(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    apply_flag: str,
+    git_failure: str,
+) -> None:
+    origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    archive.mkdir()
+    rows_before: list[dict[str, object]] = []
+    if apply_flag == "--apply-retire":
+        assert (
+            p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive"))
+            == 0
+        )
+        rows_before = p7_common.load_jsonl_index(archive / "index.jsonl")
+    if git_failure == "dubious":
+        monkeypatch.setattr(
+            p7_common,
+            "_git",
+            lambda *_args, **_kwargs: subprocess.CompletedProcess(
+                [], 1, stdout="", stderr="fatal: detected dubious ownership"
+            ),
+        )
+    else:
+        monkeypatch.setattr(p7_common.shutil, "which", lambda _name: None)
+
+    args = (
+        _sin_archivo_args(origin, archive, digest, approved, apply_flag)
+        if apply_flag == "--apply-retire-sin-archivo"
+        else _args(origin, archive, digest, approved, apply_flag)
+    )
+    rc, out, err = _capture_main(capsys, args)
+    assert rc == 1
+    assert out == ""
+    assert err.startswith("ERROR: ")
+    assert all(path.exists() for path in paths)
+    rows_path = archive / "index.jsonl"
+    rows = p7_common.load_jsonl_index(rows_path)
+    assert rows == rows_before
+
+
+@pytest.mark.parametrize("failure", ["git", "sha256", "procedencia"])
+def test_retire_sin_archivo_dry_run_and_apply_share_preconditions(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+) -> None:
+    origin, archive, entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    archive.mkdir()
+    if failure == "git":
+        monkeypatch.setattr(
+            p7_common,
+            "_git",
+            lambda *_args, **_kwargs: subprocess.CompletedProcess(
+                [], 1, stdout="", stderr="fatal: detected dubious ownership"
+            ),
+        )
+    elif failure == "sha256":
+        entries[0]["sha256"] = "0" * 64
+        digest = _write_list(approved, entries)
+    else:
+        entries[0]["procedencia"] = str(tmp_path / "missing-provenance")
+        digest = _write_list(approved, entries)
+
+    dry_args = _sin_archivo_args(origin, archive, digest, approved, "--json")
+    dry_rc, _dry_out, dry_err = _capture_main(capsys, dry_args)
+    apply_args = _sin_archivo_args(
+        origin, archive, digest, approved, "--apply-retire-sin-archivo"
+    )
+    apply_rc, _apply_out, apply_err = _capture_main(capsys, apply_args)
+    assert dry_rc == apply_rc == 1
+    assert dry_err == apply_err
+    assert all(path.exists() for path in paths)
+    assert not (archive / "index.jsonl").exists()
+
+
+def test_retire_sin_archivo_dry_run_reports_predicted_statuses(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    _git(origin, "config", "user.email", "test@example.com")
+    _git(origin, "config", "user.name", "test")
+    _git(origin, "add", paths[0].name)
+    _git(origin, "commit", "-q", "-m", "fixture")
+    archive.mkdir()
+
+    dry_rc, dry_out, dry_err = _capture_main(
+        capsys, _sin_archivo_args(origin, archive, digest, approved, "--json")
+    )
+    assert dry_rc == 0, dry_err
+    predicted = json.loads(dry_out)["candidates"]
+    assert [entry["estado_previsto"] for entry in predicted] == [
+        "SALTADA_VERSIONADA",
+        "RETIRADA",
+    ]
+    assert all("estado_previsto" not in entry for entry in _entries)
+
+    assert (
+        p7_retire.main(
+            _sin_archivo_args(
+                origin,
+                archive,
+                digest,
+                approved,
+                "--apply-retire-sin-archivo",
+            )
+        )
+        == 0
+    )
+    rows = p7_common.load_jsonl_index(archive / "index.jsonl")
+    assert [entry["status"] for entry in rows[0]["entries"]] == [
+        "SALTADA_VERSIONADA",
+        "RETIRADA",
+    ]
+
+
+def test_apply_archive_and_retire_allow_non_git_origin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin, archive, _entry, digest, approved = _fixture(tmp_path)
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    # The archive fixture is a git repository; remove its metadata so both
+    # archive and retire exercise the tolerated non-repository case.
+    import shutil
+
+    shutil.rmtree(origin / ".git")
+    archive.mkdir()
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-archive")) == 0
+    )
+    assert (
+        p7_retire.main(_args(origin, archive, digest, approved, "--apply-retire")) == 0
+    )
+    assert not (origin / "old.md").exists()
+    rows = p7_common.load_jsonl_index(archive / "index.jsonl")
+    assert rows[-1]["removed"][0]["status"] == "RETIRADA"
 
 
 def test_retire_sin_archivo_salta_versionados_con_el_mismo_criterio(

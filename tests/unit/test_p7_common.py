@@ -180,6 +180,46 @@ def test_manifest_discrepancy_aborts_on_first_change(tmp_path: Path) -> None:
         p7_common.verify_manifest_entries(tmp_path, manifest)
 
 
+def test_git_tracked_files_strictly_rejects_non_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin = tmp_path / "not-a-repo"
+    origin.mkdir()
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    with pytest.raises(p7_common.ArchiveError, match=r"git ls-files fallo \(rc=128\)"):
+        p7_common.git_tracked_files(origin)
+
+
+def test_git_tracked_files_or_empty_accepts_only_non_repo_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    origin = tmp_path / "not-a-repo"
+    origin.mkdir()
+    monkeypatch.setenv("GIT_CEILING_DIRECTORIES", str(tmp_path))
+    assert p7_common.git_tracked_files_or_empty_if_no_repo(origin) == set()
+
+
+def test_git_tracked_files_or_empty_forces_locale_and_inherits_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(args, 0, stdout="tracked\\path\0", stderr="")
+
+    monkeypatch.setattr(p7_common.shutil, "which", lambda _name: "git")
+    monkeypatch.setattr(p7_common.subprocess, "run", fake_run)
+    monkeypatch.setenv("P7_TEST_INHERITED", "yes")
+
+    assert p7_common.git_tracked_files_or_empty_if_no_repo(tmp_path) == {"tracked/path"}
+    env = captured["env"]
+    assert isinstance(env, dict)
+    assert env["LC_ALL"] == "C"
+    assert env["LANGUAGE"] == "C"
+    assert env["P7_TEST_INHERITED"] == "yes"
+
+
 def test_ttl_only_generates_candidates(tmp_path: Path) -> None:
     path = tmp_path / "candidate.txt"
     path.write_text("keep", encoding="utf-8")

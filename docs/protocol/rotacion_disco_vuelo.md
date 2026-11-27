@@ -247,6 +247,10 @@ por defecto y valida y lista toda la lista sin borrar ni escribir una fila.
 Antes del primer borrado se revalidan hash de lista, tamaño, mtime, hash,
 procedencia, ticket o ronda y ausencia de manejadores abiertos para todas las
 entradas. Los ficheros versionados se registran como `SALTADA_VERSIONADA`.
+Un origen fuera de git cuenta como cero ficheros versionados únicamente ante el
+diagnóstico `not a git repository`; cualquier otro fallo de git aborta la
+operación (fail-closed). El dry-run ejecuta las mismas precondiciones que el
+apply.
 La aplicación escribe una única fila `RETIRADO_SIN_ARCHIVO` en el índice de la
 raíz montada, con los datos de cada entrada, sin copiar contenido a un zip ni
 a un manifiesto.
