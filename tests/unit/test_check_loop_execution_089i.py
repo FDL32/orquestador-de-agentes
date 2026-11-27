@@ -174,7 +174,15 @@ def test_lab_warning_evaluates_each_nonce_separately():
 
     warnings = _audit_commit(rows, emitted, labs)["lab_warnings"]
 
-    assert [warning["nonce"] for warning in warnings] == ["N1"]
+    assert warnings == [
+        {
+            "nonce": "N1",
+            "backends": ["BA10", "BA11"],
+            "labs": ["Lab A"],
+            "distinct_backends": 2,
+            "distinct_labs": 1,
+        }
+    ]
 
 
 def test_lab_warning_reuses_issuer_and_silent_round_exclusions():
