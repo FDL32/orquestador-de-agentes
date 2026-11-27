@@ -2580,7 +2580,8 @@
           "BA258",
           "BA259",
           "BA150",
-          "BA151"
+          "BA151",
+          "BA261"
         ],
         "min_distinct": 2,
         "policy": "declared",
@@ -3236,6 +3237,12 @@
         },
         {
           "backend_key": "BA259"
+        },
+        {
+          "backend_key": "BA261",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
         }
       ],
       "nivel": "medio",
@@ -3307,6 +3314,24 @@
       "candidatos": [
         {
           "backend_key": "BA05"
+        },
+        {
+          "backend_key": "BA258",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
+        },
+        {
+          "backend_key": "BA259",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
+        },
+        {
+          "backend_key": "BA261",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
         }
       ],
       "nivel": "medio",
@@ -3375,6 +3400,12 @@
         },
         {
           "backend_key": "BA151"
+        },
+        {
+          "backend_key": "BA261",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
         }
       ],
       "nivel": "medio",
@@ -3396,6 +3427,24 @@
       "candidatos": [
         {
           "backend_key": "BA269"
+        },
+        {
+          "backend_key": "BA258",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
+        },
+        {
+          "backend_key": "BA259",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
+        },
+        {
+          "backend_key": "BA261",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
         }
       ],
       "nivel": "medio",
@@ -3410,13 +3459,31 @@
         }
       ],
       "orden": {
-        "messageId": null
+        "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
       }
     },
     "bucle_retro": {
       "candidatos": [
         {
           "backend_key": "BA05"
+        },
+        {
+          "backend_key": "BA258",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
+        },
+        {
+          "backend_key": "BA259",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
+        },
+        {
+          "backend_key": "BA261",
+          "orden": {
+            "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+          }
         }
       ],
       "nivel": "medio",
@@ -3431,7 +3498,7 @@
         }
       ],
       "orden": {
-        "messageId": null
+        "messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
       }
     }
   },

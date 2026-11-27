@@ -40,7 +40,7 @@ siguientes despachos. La convergencia queda diferida a un ticket posterior.
 
 `celdas` es SOLO LEGACY para sesiones IM/TR dadas de alta SIN hash; `CELLS_CUTOFF` es la fecha de esa rama. Un cambio de lente, de modelo o de celda NO se hace en `celdas` sino en `asignaciones.<puesto>` + `render_asignaciones.py --apply`; `asignaciones` rige para las altas con hash.
 
-<!-- ASIGNACIONES:BEGIN sha=cab7707ff64b19c3 -->
+<!-- ASIGNACIONES:BEGIN sha=2147c0accd7cd69f -->
 **Asignaciones del vuelo**:
 refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
 - co [alto]: claude:claudeAgent/claude-opus-5-5
@@ -48,14 +48,14 @@ refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
 - supervisora [alto]: claude:claudeAgent/claude-sonnet-5-5 PENDIENTE
 - im.builder [alto]: codex gpt-5.6-luna
 - im.revisor [medio]: claude:claudeAgent/claude-sonnet-5
-- im.v1 [medio]: qwen nan/qwen3.6 > gemma nan/gemma4
+- im.v1 [medio]: qwen nan/qwen3.6 > gemma nan/gemma4 > deepseek opencode/deepseek-v4.1-flash-free
 - im.subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
 - tr.triador [alto]: claude:claudeAgent/claude-sonnet-5-5
-- tr.revisor [medio]: codex gpt-5.6-luna
+- tr.revisor [medio]: codex gpt-5.6-luna > qwen nan/qwen3.6 > gemma nan/gemma4 > deepseek opencode/deepseek-v4.1-flash-free
 - tr.subagentes [base]: gemma nan/gemma4 PENDIENTE > qwen nan/qwen3.6 PENDIENTE
-- lentes_p34 [medio]: qwen nan/qwen3.6 > gemini:antigravity/gemini-3.8-flash-high > gemma nan/gemma4 PENDIENTE > mistral mistral-large-2512 PENDIENTE > codestral codestral-2508 PENDIENTE
-- lente_de_cierre [medio]: claude claude-sonnet-5 PENDIENTE
-- bucle_retro [medio]: codex gpt-5.6-luna PENDIENTE
+- lentes_p34 [medio]: qwen nan/qwen3.6 > gemini:antigravity/gemini-3.8-flash-high > gemma nan/gemma4 PENDIENTE > mistral mistral-large-2512 PENDIENTE > codestral codestral-2508 PENDIENTE > deepseek opencode/deepseek-v4.1-flash-free
+- lente_de_cierre [medio]: claude claude-sonnet-5 > qwen nan/qwen3.6 > gemma nan/gemma4 > deepseek opencode/deepseek-v4.1-flash-free
+- bucle_retro [medio]: codex gpt-5.6-luna > qwen nan/qwen3.6 > gemma nan/gemma4 > deepseek opencode/deepseek-v4.1-flash-free
 cambio: pega messageId; edita asignaciones.<puesto>.candidatos; ejecuta render_asignaciones.py --apply.
 no derivados: role_models.REVISOR, role_models.MANAGER, role_assignments.MANAGER, role_assignments.SUPERVISOR
 <!-- ASIGNACIONES:END -->

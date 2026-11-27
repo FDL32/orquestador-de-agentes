@@ -775,6 +775,10 @@ def test_m12_real_backends_and_required_assignments():
     assert assignments["im.v1"]["candidatos"] == [
         {"backend_key": "BA258"},
         {"backend_key": "BA259"},
+        {
+            "backend_key": "BA261",
+            "orden": {"messageId": "c777967d-7de0-4c0b-ab6a-4790fb8d6285"},
+        },
     ]
     assert (
         tr_revisor["candidato"],
@@ -809,6 +813,7 @@ def test_real_derived_eligible_and_pending_posts():
         "BA259",
         "BA150",
         "BA151",
+        "BA261",
     ]
     assert not set(module.derive_eligible(assignments, document)) & {
         "BA05",
@@ -824,14 +829,32 @@ def test_real_derived_eligible_and_pending_posts():
         "supervisora",
         "im.subagentes",
         "tr.subagentes",
-        "lente_de_cierre",
-        "bucle_retro",
     ):
         with pytest.raises(module.SinCandidatoError) as error:
             module.resolve(assignments, post, backends)
         assert error.value.saltados and all(
             item["motivo"] == "pendiente_confirmacion" for item in error.value.saltados
         )
+    # Orden c777967d (2026-11-27): lente_de_cierre y bucle_retro confirmados,
+    # con reservas qwen3.6 > gemma4 > deepseek-free detras de la primera opcion.
+    orden_reservas = "c777967d-7de0-4c0b-ab6a-4790fb8d6285"
+    for post, primera, familia in (
+        ("lente_de_cierre", "BA269", "claude"),
+        ("bucle_retro", "BA05", "codex"),
+    ):
+        resolved = module.resolve(assignments, post, backends)
+        assert (resolved["candidato"]["backend_key"], resolved["orden"]) == (
+            primera,
+            orden_reservas,
+        )
+        reserva = module.resolve(
+            assignments, post, backends, excluir_familias=(familia,)
+        )
+        assert reserva["candidato"]["backend_key"] == "BA258"
+        ultima = module.resolve(
+            assignments, post, backends, excluir_familias=(familia, "qwen", "gemma")
+        )
+        assert ultima["candidato"]["backend_key"] == "BA261"
     first = module.resolve(
         assignments, "lentes_p34", backends, excluir_familias=("codex", "claude")
     )
