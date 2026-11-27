@@ -915,6 +915,157 @@ class TestTicketProseIntegration:
         output = captured.getvalue()
         assert '"warnings": {}' in output
 
+    def test_validate_seed_neutral_generalizes_beyond_motor_none_sentinel_047z(
+        self, monkeypatch
+    ):
+        """A ``-`` seed ID skips every ticket-specific validation advisory."""
+        seed_plan = (
+            "# Work Plan - Seed\n\n"
+            "## Metadata\n"
+            "- **ID:** -\n"
+            "- **Estado:** READY_TO_START\n"
+            "- **deliverable_type:** code\n"
+            "- **Titulo:** Seed neutral del motor\n"
+            "- **Asignado a:** Manager\n"
+        )
+        seed_log = "# Execution Log - Seed\n\n**Estado:** READY_TO_START\n"
+
+        def fake_read(path):
+            name = str(path)
+            if name.endswith("work_plan.md"):
+                return seed_plan
+            if name.endswith("execution_log.md"):
+                return seed_log
+            if name.endswith("STATE.md"):
+                return "ACTIVE_TICKET: -\nSTATUS: READY_TO_START\n"
+            return ""
+
+        monkeypatch.setattr(agent_controller, "read_file", fake_read)
+        monkeypatch.setattr(
+            agent_controller, "_collect_deliverable_type_warnings", lambda _content: {}
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_scope_for_validate",
+            lambda *_args: (_ for _ in ()).throw(
+                AssertionError("scope check should be skipped for seed")
+            ),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_bus_drift",
+            lambda *_args: (_ for _ in ()).throw(
+                AssertionError("bus drift check should be skipped for seed")
+            ),
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_invariants",
+            lambda *_args: (_ for _ in ()).throw(
+                AssertionError("invariant check should be skipped for seed")
+            ),
+        )
+
+        def fail_validate_ticket_prose(*_args, **_kwargs):
+            raise AssertionError("ticket prose validator should be skipped for seed")
+
+        mock_module = type(
+            "MockModule",
+            (),
+            {"validate_ticket_prose": staticmethod(fail_validate_ticket_prose)},
+        )()
+        monkeypatch.setitem(sys.modules, "scripts.validate_ticket_prose", mock_module)
+
+        from io import StringIO
+
+        captured = StringIO()
+        old_stdout = sys.stdout
+        sys.stdout = captured
+        try:
+            exit_code = agent_controller._handle_validate(json_output=True)
+        finally:
+            sys.stdout = old_stdout
+
+        assert exit_code == 0
+        output = captured.getvalue()
+        assert '"warnings": {}' in output
+
+    def test_validate_invalid_id_with_blocked_log_runs_ticket_checks_047z(
+        self, tmp_path, monkeypatch
+    ):
+        """A non-ready log must not take the neutral-seed validation shortcut."""
+        plan_content = (
+            "# Work Plan - Seed\n\n"
+            "## Metadata\n"
+            "- **ID:** -\n"
+            "- **Estado:** READY_TO_START\n"
+            "- **deliverable_type:** code\n"
+            "- **Titulo:** Seed con log no neutral\n"
+            "- **Asignado a:** Manager\n"
+        )
+        log_content = "# Execution Log - Seed\n\n**Estado:** BLOCKED\n"
+        calls = {"scope": 0}
+
+        def fake_read(path):
+            name = str(path)
+            if name.endswith("work_plan.md"):
+                return plan_content
+            if name.endswith("execution_log.md"):
+                return log_content
+            if name.endswith("STATE.md"):
+                return "ACTIVE_TICKET: -\nSTATUS: READY_TO_START\n"
+            return ""
+
+        monkeypatch.setattr(agent_controller, "read_file", fake_read)
+        monkeypatch.setattr(agent_controller, "validate_state_files", lambda: {})
+        monkeypatch.setattr(
+            agent_controller, "_collect_deliverable_type_warnings", lambda _content: {}
+        )
+        monkeypatch.setattr(agent_controller, "get_collab_dir", lambda: tmp_path)
+
+        def record_scope(*_args):
+            calls["scope"] += 1
+            return [], []
+
+        monkeypatch.setattr(agent_controller, "_check_scope_for_validate", record_scope)
+        monkeypatch.setattr(
+            agent_controller, "_check_bootstrap_mismatch", lambda *_args: []
+        )
+        monkeypatch.setattr(agent_controller, "_check_turn_supervisor_sync", lambda: [])
+        monkeypatch.setattr(agent_controller, "_check_bus_drift", lambda *_args: [])
+        monkeypatch.setattr(
+            agent_controller,
+            "_check_invariants",
+            lambda *_args: {"errors": [], "warnings": []},
+        )
+        monkeypatch.setattr(
+            agent_controller,
+            "_validate_contract_gap_coherence",
+            lambda *_args: ([], []),
+        )
+        prose_module = type(
+            "MockModule",
+            (),
+            {"validate_ticket_prose": staticmethod(lambda *_args: {"warnings": []})},
+        )()
+        monkeypatch.setitem(sys.modules, "scripts.validate_ticket_prose", prose_module)
+
+        exit_code = agent_controller._handle_validate(json_output=True, no_heal=True)
+
+        assert exit_code == 0
+        assert calls == {"scope": 1}
+
+    def test_seed_neutral_requires_ready_plan_when_log_is_ready_047z(self):
+        """A blocked plan must not be neutral when the log is ready."""
+        plan_content = (
+            "# Work Plan - Seed\n\n## Metadata\n- **ID:** -\n- **Estado:** BLOCKED\n"
+        )
+        log_content = "# Execution Log - Seed\n\n**Estado:** READY_TO_START\n"
+
+        assert not agent_controller.state_validation.is_seed_neutral_state(
+            plan_content, log_content
+        )
+
     def test_validate_graceful_degrade_without_validator(self, tmp_path, monkeypatch):
         """_handle_validate works even if validator not available."""
         # Mock the validate_ticket_prose import to raise ImportError

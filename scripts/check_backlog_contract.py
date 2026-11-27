@@ -27,6 +27,7 @@ After: exit 0 when the contract holds; exit non-zero with a diagnostic per
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import subprocess
@@ -46,12 +47,29 @@ from pathlib import Path
 # hardcode a list so this gate never drifts from the machine it audits.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from bus.state_machine import NON_TERMINAL_STATES, TicketState
+_STATE_VALIDATION_PATH = (
+    Path(__file__).resolve().parent.parent / ".agent" / "state_validation.py"
+)
+if not _STATE_VALIDATION_PATH.is_file():
+    raise ImportError(
+        f"no se pudo cargar state_validation desde {_STATE_VALIDATION_PATH}"
+    )
+_state_validation_spec = importlib.util.spec_from_file_location(
+    "_state_validation_for_backlog_contract", _STATE_VALIDATION_PATH
+)
+if _state_validation_spec is None or _state_validation_spec.loader is None:
+    raise ImportError(
+        f"no se pudo cargar state_validation desde {_STATE_VALIDATION_PATH}"
+    )
+state_validation = importlib.util.module_from_spec(_state_validation_spec)
+sys.modules["_state_validation_for_backlog_contract"] = state_validation
+_state_validation_spec.loader.exec_module(state_validation)
+from bus.state_machine import NON_TERMINAL_STATES, TicketState  # noqa: E402
 
 # WOT-2026-048g: import the deliverable_type regex from the landing guard to
 # avoid reimplementing the WOT-2026-040s correction (logical-row search).
-from scripts.check_backlog_commits_landed import _DELIVERABLE_TYPE_RE
-from scripts.prefix_resolver import resolve_ticket_alternation
+from scripts.check_backlog_commits_landed import _DELIVERABLE_TYPE_RE  # noqa: E402
+from scripts.prefix_resolver import resolve_ticket_alternation  # noqa: E402
 
 
 # WOT-2026-012a closed vocabulary for the LIVE queue. Terminal states
@@ -776,7 +794,7 @@ def _check_ficha_bodies(content: str) -> list[str]:
 # Valores que STATE.md usa para decir "no hay ticket activo". El motor escribe
 # `-` al cerrar sesion; los demas son formas equivalentes que puede dejar una
 # proyeccion o una plantilla. Ninguno es un identificador de ticket.
-_NO_ACTIVE_TICKET_SENTINELS = frozenset({"-", "--", "none", "None", "NONE", "N/A"})
+_NO_ACTIVE_TICKET_SENTINELS = state_validation.INVALID_PLAN_IDS
 
 _ACTIVE_TICKET_RE = re.compile(r"^ACTIVE_TICKET:\s*(\S+)", re.MULTILINE)
 _STATUS_RE = re.compile(r"^STATUS:\s*(\S+)", re.MULTILINE)
@@ -804,7 +822,7 @@ def _read_active_ticket(root: Path) -> tuple[str | None, str | None]:
     # cierre correcto producia rc=1 por su propia escritura (medido en el
     # destino LEA, 2026-08-02). Tratarlo como ausencia devuelve el par
     # (None, None), que es justo el contrato de "el check no aplica".
-    if ticket in _NO_ACTIVE_TICKET_SENTINELS:
+    if ticket.strip().lower() in _NO_ACTIVE_TICKET_SENTINELS:
         return None, None
     status_m = _STATUS_RE.search(content)
     status = status_m.group(1).strip() if status_m else None
