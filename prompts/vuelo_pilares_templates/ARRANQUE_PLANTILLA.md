@@ -34,6 +34,13 @@
    con `t3_thread_list`. Para el GO de relevo, cita {{GO_MENSAJE_ID}} si aplica
    y verifica P6 (RATIFICADA, vinculante).
 
+5b. Activa y mide el modo de consulta de parada con estos comandos literales:
+
+    ```text
+    python scripts/flight/stop_consult_mode.py status
+    python scripts/flight/stop_consult_mode.py on --mode <vigente>
+    ```
+
 6. Errores a no repetir y lecciones: consulta la referencia vigente del
    vuelo; las lecciones completas viven en el ARRANQUE real derivado, no en
    esta plantilla.
