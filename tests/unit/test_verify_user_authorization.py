@@ -17,6 +17,7 @@ import sys
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -3783,3 +3784,315 @@ def test_chain_ledger_recursive_json_line_is_infra_without_touching_state(tmp_pa
         ledger.consume(CHAIN_MESSAGE_ID, 1, "CO-33", "CO-34")
     assert ledger.path.read_bytes() == raw
     assert not ledger._lock_path(CHAIN_MESSAGE_ID, 1).exists()
+
+
+# --------------------------------------------------------------------------
+# WOT-2026-239a: preflight, gate CLI y ledger de intentos.
+# --------------------------------------------------------------------------
+
+
+def _attempt_record(**overrides):
+    record = _ledger_record(
+        repo="demo_repo",
+        ref="refs/heads/main",
+        fullSha="a" * 40,
+        remoteSha="b" * 40,
+    )
+    record.update(overrides)
+    return record
+
+
+def _seal_files(root: Path, sha: str, *, history_row: dict | None = None) -> None:
+    runtime = root / ".agent" / "runtime" / "pytest-safe"
+    runtime.mkdir(parents=True, exist_ok=True)
+    seal = {
+        "status": "finished",
+        "exit_code": 0,
+        "tested_commit_sha": sha,
+        "level": "all",
+        "args_mode": "default_discovery",
+        "started_at": "2026-11-27T10:00:00+00:00",
+        "finished_at": "2026-11-27T10:10:00+00:00",
+    }
+    (runtime / "last-run.json").write_text(json.dumps(seal), encoding="utf-8")
+    row = history_row or seal
+    (runtime / "run_history.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+
+
+def _pp_receipt(root: Path, repo: str, sha: str, remote_sha: str, verdict="GREEN"):
+    path = root / ".agent" / "runtime" / "pytest-safe" / f"receipt_{repo}_{sha}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"sha40": sha, "remote_sha": remote_sha, "verdict": verdict}),
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_m01_check_gates_has_real_usage_rc_and_never_opens_ledger(
+    tmp_path, monkeypatch
+):
+    calls = []
+
+    def fake_collect(*args, **kwargs):
+        root = Path(kwargs.get("project_root", args[0]))
+        context = replace(
+            expected_context,
+            project_root=root,
+            remote="origin",
+            branch="main",
+        )
+        return context, None
+
+    expected_context = vua.PushContext(
+        project_root=tmp_path,
+        remote="origin",
+        branch="main",
+        repo="demo_repo",
+        full_sha="a" * 40,
+        sha12="a" * 12,
+        commit_count=1,
+        remote_sha="b" * 40,
+        expected=vua.ExpectedAuthorization.from_git_parts(
+            repo="demo_repo",
+            remote="origin",
+            branch="main",
+            sha12="a" * 12,
+            commit_count=1,
+        ),
+    )
+
+    class ExplodingLedger:
+        def __init__(self, *_args, **_kwargs):
+            raise AssertionError("--check-gates must not open the ledger")
+
+    monkeypatch.setattr(vua, "collect_push_context", fake_collect)
+    monkeypatch.setattr(
+        vua,
+        "run_gitleaks_gate",
+        lambda context: vua.Decision(False, "gitleaks-findings"),
+    )
+    monkeypatch.setattr(vua, "PushAuthorityLedger", ExplodingLedger)
+    rc = vua.main(["--check-gates", "--project-root", str(tmp_path)])
+    assert rc == vua.EXIT_REJECTED
+    assert calls == []
+
+
+def test_m02_preflight_rejects_before_find_and_consumption(tmp_path, monkeypatch):
+    args = SimpleNamespace(
+        tested_commit_sha="a" * 40,
+        project_root=tmp_path,
+        remote="origin",
+        branch="main",
+        anchor_message_id=ANCHOR_ID,
+        db=tmp_path / "db",
+        dry_run=False,
+    )
+    context = replace(_attempt_context(tmp_path), full_sha="a" * 40)
+    called = {"find": 0, "consume": 0}
+    monkeypatch.setattr(vua, "collect_push_context", lambda *a, **k: (context, None))
+    monkeypatch.setattr(
+        vua,
+        "_verify_push_preflight",
+        lambda _context: vua.Decision(False, "suite-seal-missing"),
+    )
+    monkeypatch.setattr(
+        vua,
+        "find_authorization",
+        lambda *a, **k: called.__setitem__("find", called["find"] + 1),
+    )
+    ledger = SimpleNamespace(
+        consume=lambda _record: called.__setitem__("consume", called["consume"] + 1)
+    )
+    assert vua._run_verify(args, ledger) == vua.EXIT_REJECTED
+    assert called == {"find": 0, "consume": 0}
+
+
+@pytest.mark.parametrize("history_kind", ["missing", "invalid"])
+def test_m03_suite_seal_rejects_missing_or_unreadable_run_history(
+    tmp_path, monkeypatch, history_kind
+):
+    sha = "a" * 40
+    _seal_files(tmp_path, sha)
+    history = tmp_path / ".agent" / "runtime" / "pytest-safe" / "run_history.jsonl"
+    if history_kind == "missing":
+        history.unlink()
+    else:
+        history.write_text("not-json\n", encoding="utf-8")
+    monkeypatch.setattr(
+        vua,
+        "assert_canonical_suite_green",
+        lambda *_: (True, {"reason": "fresh_green"}),
+    )
+    ok, reason = vua._verify_suite_seal(tmp_path, sha)
+    assert ok is False
+    assert reason == "run-history-unreadable"
+
+
+def test_m04_suite_seal_requires_fresh_green_reason(tmp_path, monkeypatch):
+    sha = "a" * 40
+    _seal_files(tmp_path, sha)
+    monkeypatch.setattr(
+        vua,
+        "assert_canonical_suite_green",
+        lambda *_: (True, {"reason": "inherited_failures_subset"}),
+    )
+    ok, reason = vua._verify_suite_seal(tmp_path, sha)
+    assert ok is False
+    assert reason == "suite-not-fresh-green"
+
+
+def test_m05_suite_seal_matches_history_sha_and_both_times(tmp_path, monkeypatch):
+    sha = "a" * 40
+    _seal_files(
+        tmp_path,
+        sha,
+        history_row={
+            "tested_commit_sha": sha,
+            "started_at": "2026-11-27T10:00:00+00:00",
+            "finished_at": "2026-11-27T10:09:00+00:00",
+        },
+    )
+    monkeypatch.setattr(
+        vua,
+        "assert_canonical_suite_green",
+        lambda *_: (True, {"reason": "fresh_green"}),
+    )
+    ok, reason = vua._verify_suite_seal(tmp_path, sha)
+    assert ok is False
+    assert reason == "run-history-seal-row-missing"
+    _seal_files(tmp_path, sha)
+    ok, reason = vua._verify_suite_seal(tmp_path, sha)
+    assert (ok, reason) == (True, None)
+
+
+def test_m06_pp_receipt_missing_or_other_sha_rejects_without_consuming(
+    tmp_path, monkeypatch
+):
+    context = _attempt_context(tmp_path)
+    (tmp_path / "scripts" / "flight").mkdir(parents=True)
+    (tmp_path / "scripts" / "flight" / "verify_user_authorization.py").write_text(
+        "", encoding="utf-8"
+    )
+    monkeypatch.setattr(vua, "_verify_suite_seal", lambda *_: (True, None))
+    ok = vua._verify_push_preflight(context)
+    assert (ok.allowed, ok.reason) == (False, "pp-receipt-missing")
+    wrong = _pp_receipt(tmp_path, context.repo, context.full_sha, context.remote_sha)
+    wrong.write_text(
+        json.dumps(
+            {"sha40": "c" * 40, "remote_sha": context.remote_sha, "verdict": "GREEN"}
+        ),
+        encoding="utf-8",
+    )
+    decision = vua._verify_push_preflight(context)
+    assert decision.allowed is False
+    assert decision.reason == "pp-receipt-sha-mismatch"
+
+
+def test_m07_pp_receipt_remote_sha_must_match_observation(tmp_path, monkeypatch):
+    context = _attempt_context(tmp_path)
+    (tmp_path / "scripts" / "flight").mkdir(parents=True)
+    (tmp_path / "scripts" / "flight" / "verify_user_authorization.py").write_text(
+        "", encoding="utf-8"
+    )
+    monkeypatch.setattr(vua, "_verify_suite_seal", lambda *_: (True, None))
+    _pp_receipt(tmp_path, context.repo, context.full_sha, "c" * 40)
+    decision = vua._verify_push_preflight(context)
+    assert decision.reason == "pp-receipt-remote-mismatch"
+
+
+def test_m08_suite_seal_is_motor_only(tmp_path, monkeypatch):
+    context = _attempt_context(tmp_path)
+    _pp_receipt(tmp_path, context.repo, context.full_sha, context.remote_sha)
+    monkeypatch.setattr(
+        vua, "_verify_suite_seal", lambda *_: (False, "suite-seal-missing")
+    )
+    assert vua._verify_push_preflight(context).allowed is True
+    motor = tmp_path / "motor"
+    (motor / "scripts" / "flight").mkdir(parents=True)
+    (motor / "scripts" / "flight" / "verify_user_authorization.py").write_text(
+        "", encoding="utf-8"
+    )
+    motor_context = replace(context, project_root=motor)
+    assert vua._verify_push_preflight(motor_context).reason == "suite-seal-missing"
+
+
+def test_m09_attempt_is_consumed_only_after_remote_verification(tmp_path):
+    ledger = vua.PushAuthorityLedger(tmp_path / "ledger.jsonl")
+    record = _attempt_record()
+    assert ledger.consume(record) is True
+    assert (
+        json.loads(ledger.path.read_text(encoding="utf-8").splitlines()[0])["state"]
+        == "INTENTO"
+    )
+    assert vua.reconcile_push_attempt(ledger, record, "a" * 40) is True
+    assert ledger.is_consumed(record["messageId"]) is True
+
+
+def test_m10_push_failure_with_original_remote_keeps_attempt_retryable(tmp_path):
+    ledger = vua.PushAuthorityLedger(tmp_path / "ledger.jsonl")
+    record = _attempt_record()
+    assert ledger.consume(record) is True
+    assert vua.reconcile_push_attempt(ledger, record, record["remoteSha"]) is True
+    assert ledger.is_consumed(record["messageId"]) is False
+    assert ledger.consume(record) is True
+
+
+def test_m11_reconciliation_function_marks_consumed(tmp_path):
+    ledger = vua.PushAuthorityLedger(tmp_path / "ledger.jsonl")
+    record = _attempt_record()
+    ledger.consume(record)
+    assert vua.reconcile_push_attempt(ledger, record, record["fullSha"]) is True
+    rows = [
+        json.loads(line)
+        for line in ledger.path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[-1]["state"] == "CONSUMIDO"
+
+
+def test_m12_attempt_reservation_is_exclusive_for_same_message(tmp_path):
+    ledger = vua.PushAuthorityLedger(tmp_path / "ledger.jsonl")
+    record = _attempt_record()
+    assert ledger.consume(record) is True
+    assert ledger.consume(record) is False
+
+
+def test_m13_remote_unreadable_is_fail_closed_without_consumption(tmp_path):
+    ledger = vua.PushAuthorityLedger(tmp_path / "ledger.jsonl")
+    record = _attempt_record()
+    ledger.consume(record)
+    assert vua.reconcile_push_attempt(ledger, record, None) is False
+    assert ledger.is_consumed(record["messageId"]) is False
+
+
+def test_m14_third_remote_sha_is_conflict_and_attempt_is_retained(tmp_path):
+    ledger = vua.PushAuthorityLedger(tmp_path / "ledger.jsonl")
+    record = _attempt_record()
+    ledger.consume(record)
+    assert vua.reconcile_push_attempt(ledger, record, "c" * 40) is False
+    rows = [
+        json.loads(line)
+        for line in ledger.path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert rows[-1]["state"] == "P_CONFLICTO"
+    assert ledger.consume(record) is False
+
+
+def _attempt_context(tmp_path: Path):
+    return vua.PushContext(
+        project_root=tmp_path,
+        remote="origin",
+        branch="main",
+        repo="demo_repo",
+        full_sha="a" * 40,
+        sha12="a" * 12,
+        commit_count=1,
+        remote_sha="b" * 40,
+        expected=vua.ExpectedAuthorization.from_git_parts(
+            repo="demo_repo",
+            remote="origin",
+            branch="main",
+            sha12="a" * 12,
+            commit_count=1,
+        ),
+    )

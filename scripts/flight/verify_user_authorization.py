@@ -45,6 +45,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
+from scripts.pre_handoff_guard import assert_canonical_suite_green
+
 
 try:
     import tomllib
@@ -1183,6 +1185,15 @@ _REASON_TEXT = {
         "esa confirmacion ya se uso antes (un solo uso; un lock huerfano del "
         "ledger, aunque no tenga linea, tambien cuenta como consumido)"
     ),
+    "suite-seal-missing": "falta el sello fresco de la suite canonica del motor",
+    "suite-not-fresh-green": "el sello de suite no es una corrida fresca verde",
+    "run-history-unreadable": "el historial de corridas no se puede leer de forma segura",
+    "run-history-seal-row-missing": "el historial no contiene la corrida sellada completa",
+    "pp-receipt-missing": "falta el recibo verde del gate pre-push",
+    "pp-receipt-invalid": "el recibo pre-push no tiene un veredicto verde legible",
+    "pp-receipt-sha-mismatch": "el recibo pre-push pertenece a otro SHA",
+    "pp-receipt-remote-mismatch": "el remoto observado no coincide con el recibo pre-push",
+    "push-attempt-conflict": "existe un intento de push en conflicto que requiere revision",
     "payload-unreadable": "una fila candidata tiene un payload ilegible",
     "timestamp-form": (
         "un timestamp no tiene la forma canonica .mmmZ (offset o formato no "
@@ -1197,12 +1208,12 @@ _REASON_TEXT = {
         "se corto y NO se autoriza. Remedio: pide una NUEVA peticion (ancla "
         "nueva) y repite el comando con --anchor-message-id del ancla nueva"
     ),
-    "push-failed": "el push fallo; la confirmacion quedo CONSUMIDA (un solo uso)",
+    "push-failed": "el push fallo; la confirmacion queda reintentable si el remoto no cambio",
     "ls-remote-failed": (
-        "no se pudo verificar el remoto tras el push; la confirmacion quedo CONSUMIDA"
+        "no se pudo verificar el remoto tras el push; la confirmacion queda pendiente de reconciliacion"
     ),
     "ls-remote-mismatch": (
-        "la ref remota no apunta al SHA probado; la confirmacion quedo CONSUMIDA"
+        "la ref remota no apunta al SHA probado; la confirmacion queda pendiente de reconciliacion"
     ),
     "head-moved": (
         "HEAD cambio entre la validacion y el push; no se empujo y la "
@@ -1378,17 +1389,19 @@ class ExecutionResult:
 
 
 class PushAuthorityLedger:
-    """Ledger append-only con consumo atomico de un solo uso (O_EXCL).
+    """Ledger append-only con reserva atomica y reconciliacion (O_EXCL).
 
     Before: `path` apunta a `push_authority_ledger.jsonl` (propio, NUNCA
         comms_ledger). El directorio de locks vive junto al ledger.
-    During: `consume` crea un fichero lock con `O_CREAT|O_EXCL` por messageId
-        (el ganador es unico) y despues anade UNA linea JSON al ledger. Si el
-        append falla, retira el lock para permitir reintento y eleva
-        `ledger-append-failed`.
-    After: `is_consumed` es True si existe el lock o el ledger ya tiene la
-        linea. Los campos obligatorios del registro son messageId, createdAt,
-        textSha256, fullSha y anchorMessageId.
+    During: los registros nuevos de push incluyen repo, ref, fullSha y
+        remoteSha. `consume` reserva uno de esos intentos con un lock
+        `O_CREAT|O_EXCL` por messageId y anade estado INTENTO; la reserva solo
+        pasa a CONSUMIDO mediante `reconcile_attempt` cuando el remoto confirma
+        fullSha. Los registros legacy conservan la semantica historica para no
+        romper consumidores antiguos.
+    After: `is_consumed` solo es True para un registro consumido (o legacy);
+        un intento reintentable no quema la frase y un P_CONFLICTO conserva el
+        lock para bloquear cualquier reutilizacion ambigua.
     """
 
     REQUIRED_FIELDS = (
@@ -1398,6 +1411,7 @@ class PushAuthorityLedger:
         "fullSha",
         "anchorMessageId",
     )
+    ATTEMPT_FIELDS = ("repo", "ref", "remoteSha")
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -1418,6 +1432,40 @@ class PushAuthorityLedger:
     def _lock_path(self, message_id: str) -> Path:
         return self.lock_dir / (self._key(message_id) + ".lock")
 
+    @staticmethod
+    def _attempt_key(record: dict) -> str:
+        material = "|".join(
+            str(record.get(name, ""))
+            for name in ("messageId", "repo", "ref", "fullSha", "remoteSha")
+        )
+        return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def _attempt_lock_path(self, message_id: str) -> Path:
+        return self.lock_dir / ("attempt-" + self._key(message_id) + ".lock")
+
+    def _records(self, message_id: str) -> list[dict]:
+        if not self.path.exists():
+            return []
+        records = []
+        try:
+            with self.path.open("r", encoding="utf-8") as handle:
+                for raw in handle:
+                    stripped = raw.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        record = json.loads(stripped)
+                    except (TypeError, ValueError):
+                        continue
+                    if (
+                        isinstance(record, dict)
+                        and record.get("messageId") == message_id
+                    ):
+                        records.append(record)
+        except OSError as exc:
+            raise InfraError("ledger-unreadable", str(exc)) from exc
+        return records
+
     def is_consumed(self, message_id: str) -> bool:
         """True si el messageId ya fue consumido.
 
@@ -1427,32 +1475,196 @@ class PushAuthorityLedger:
         """
         if self._lock_path(message_id).exists():
             return True
+        records = self._records(message_id)
+        key = self._key(message_id)
+        for record in records:
+            if record.get("messageIdSha256") == key and record.get("state") in {
+                None,
+                "CONSUMIDO",
+            }:
+                return True
+            if record.get("state") == "CONSUMIDO":
+                return True
+        return False
+
+    def _has_conflict(self, message_id: str) -> bool:
+        return any(
+            record.get("state") == "P_CONFLICTO" for record in self._records(message_id)
+        )
+
+    def has_retryable_attempt(self, context: PushContext) -> bool:
+        """Return whether this exact push context has an unlocked INTENTO."""
         if not self.path.exists():
             return False
-        key = self._key(message_id)
         try:
             with self.path.open("r", encoding="utf-8") as handle:
                 for raw in handle:
-                    stripped = raw.strip()
-                    if not stripped:
+                    if not raw.strip():
                         continue
-                    try:
-                        record = json.loads(stripped)
-                    except ValueError:
+                    record = json.loads(raw)
+                    if not isinstance(record, dict) or record.get("state") != "INTENTO":
                         continue
-                    if record.get("messageId") == message_id:
+                    if (
+                        record.get("repo") == context.repo
+                        and record.get("ref") == f"refs/heads/{context.branch}"
+                        and record.get("fullSha") == context.full_sha
+                        and record.get("remoteSha") == context.remote_sha
+                        and not self._attempt_lock_path(
+                            str(record.get("messageId"))
+                        ).exists()
+                    ):
                         return True
-                    if record.get("messageIdSha256") == key:
-                        return True
-        except OSError as exc:
+        except (OSError, TypeError, ValueError) as exc:
             raise InfraError("ledger-unreadable", str(exc)) from exc
         return False
 
+    def _append(self, payload: dict) -> None:
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            raise InfraError("ledger-append-failed", str(exc)) from exc
+
+    def _rewrite_attempt_state(self, record: dict, state: str, observed: str) -> None:
+        """Update the single reservation row atomically while retaining one row."""
+        if not self.path.exists():
+            self._append({**record, "state": state, "observedRemoteSha": observed})
+            return
+        try:
+            lines = self.path.read_text(encoding="utf-8").splitlines()
+            target = self._attempt_key(record)
+            replaced = False
+            updated = []
+            for raw in lines:
+                if not raw.strip():
+                    continue
+                try:
+                    current = json.loads(raw)
+                except (TypeError, ValueError):
+                    updated.append(raw)
+                    continue
+                if (
+                    isinstance(current, dict)
+                    and current.get("attemptKey") == target
+                    and current.get("messageId") == record["messageId"]
+                ):
+                    current = {**current, "state": state, "observedRemoteSha": observed}
+                    replaced = True
+                updated.append(json.dumps(current, ensure_ascii=False))
+            if not replaced:
+                updated.append(
+                    json.dumps(
+                        {
+                            **record,
+                            "messageIdSha256": self._key(str(record["messageId"])),
+                            "attemptKey": target,
+                            "state": state,
+                            "observedRemoteSha": observed,
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+            temporary = self.path.with_name(self.path.name + ".tmp")
+            temporary.write_text(
+                "\n".join(updated) + "\n", encoding="utf-8", newline="\n"
+            )
+            os.replace(temporary, self.path)
+        except OSError as exc:
+            raise InfraError("ledger-append-failed", str(exc)) from exc
+
+    def reserve_attempt(self, record: dict) -> bool:
+        """Reserva un intento ligado a repo/ref/SHA local y SHA remoto.
+
+        Before: `record` contiene los campos legacy y la clave de push.
+        During: adquiere el lock exclusivo por messageId y escribe INTENTO.
+        After: devuelve False para replay, conflicto o carrera; no consume.
+        """
+        missing = [
+            name
+            for name in self.REQUIRED_FIELDS + self.ATTEMPT_FIELDS
+            if not record.get(name)
+        ]
+        if missing:
+            raise ValueError(f"registro de ledger incompleto: {', '.join(missing)}")
+        message_id = str(record["messageId"])
+        if self.is_consumed(message_id) or self._has_conflict(message_id):
+            return False
+        try:
+            self.lock_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise InfraError("ledger-lock-failed", str(exc)) from exc
+        lock_path = self._attempt_lock_path(message_id)
+        payload = {
+            **record,
+            "messageIdSha256": self._key(message_id),
+            "attemptKey": self._attempt_key(record),
+            "state": "INTENTO",
+        }
+        try:
+            descriptor = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        except FileExistsError:
+            return False
+        except OSError as exc:
+            raise InfraError("ledger-lock-failed", str(exc)) from exc
+        try:
+            os.write(
+                descriptor, json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            )
+        finally:
+            os.close(descriptor)
+        try:
+            self._append(payload)
+        except InfraError:
+            with contextlib.suppress(OSError):
+                lock_path.unlink()
+            raise
+        return True
+
+    def release_attempt(self, record: dict) -> None:
+        """Libera una reserva cuyo remoto confirmado sigue sin cambios."""
+        with contextlib.suppress(OSError):
+            self._attempt_lock_path(str(record["messageId"])).unlink()
+
+    def reconcile_attempt(self, record: dict, observed_remote_sha: str | None) -> bool:
+        """Reconcilia INTENTO tras `ls-remote` y conserva estados fail-closed.
+
+        Before: existe una reserva y `observed_remote_sha` es la observacion
+            posterior al push, o None si el remoto no fue legible.
+        During: CONSUMIDO solo para fullSha; remoto original libera para retry;
+            cualquier tercer SHA escribe P_CONFLICTO y mantiene el lock.
+        After: True solo para CONSUMIDO o retry seguro; False para conflicto o
+            remoto ilegible.
+        """
+        if observed_remote_sha is None:
+            return False
+        observed = observed_remote_sha.strip().lower()
+        state = (
+            "CONSUMIDO"
+            if observed == str(record["fullSha"]).lower()
+            else (
+                "INTENTO"
+                if observed == str(record["remoteSha"]).lower()
+                else "P_CONFLICTO"
+            )
+        )
+        self._rewrite_attempt_state(record, state, observed)
+        if state == "INTENTO":
+            self.release_attempt(record)
+            return True
+        return state == "CONSUMIDO"
+
     def consume(self, record: dict) -> bool:
-        """Consume el messageId de forma atomica; False si ya estaba usado."""
+        """Reserva un intento nuevo o conserva la semantica legacy.
+
+        Los records con la clave topologica nueva son INTENTO; los callers
+        legacy sin ella siguen produciendo un consumo terminal.
+        """
         missing = [name for name in self.REQUIRED_FIELDS if not record.get(name)]
         if missing:
             raise ValueError(f"registro de ledger incompleto: {', '.join(missing)}")
+        if all(record.get(name) for name in self.ATTEMPT_FIELDS):
+            return self.reserve_attempt(record)
         message_id = str(record["messageId"])
         if self.is_consumed(message_id):
             return False
@@ -2008,6 +2220,173 @@ def collect_push_context(
     )
 
 
+def _is_motor_push(project_root: str | Path) -> bool:
+    """Decide si `project_root` es el motor y por tanto necesita sello.
+
+    Before: `project_root` es la raiz del checkout que se va a publicar.
+    During: un destino enlazado no exige el sello del motor; un checkout que
+        contiene este wrapper bajo `scripts/flight` se trata como motor.
+    After: devuelve un booleano conservador sin abrir ningun ledger.
+    """
+    root = Path(project_root).resolve()
+    link = root / ".agent" / "config" / "motor_destination_link.json"
+    if link.exists():
+        try:
+            data = json.loads(link.read_text(encoding="utf-8"))
+            if Path(str(data.get("destination_root", ""))).resolve() == root:
+                return False
+        except (OSError, TypeError, ValueError):
+            pass
+    return (root / "scripts" / "flight" / Path(__file__).name).is_file()
+
+
+def _suite_runtime_root(project_root: str | Path) -> Path:
+    return Path(project_root).resolve() / ".agent" / "runtime" / "pytest-safe"
+
+
+def _verify_suite_seal(  # noqa: C901
+    project_root: str | Path, expected_sha: str
+) -> tuple[bool, str | None]:
+    """Verifica el sello canonical y su fila de historial correspondiente.
+
+    Before: `project_root` es un motor git y `expected_sha` es el SHA que se
+        observó para el push.
+    During: delega toda la semantica de `last-run.json` a
+        `assert_canonical_suite_green`, exige exclusivamente `fresh_green`, y
+        cruza SHA y ambos timestamps con una fila legible de run_history.
+    After: devuelve `(True, None)` solo con evidencia completa; cualquier
+        ausencia, JSON roto o fila discrepante es rechazo fail-closed.
+    """
+    ok, diag = assert_canonical_suite_green(Path(project_root).resolve(), "code")
+    if not ok or diag.get("reason") != "fresh_green":
+        if diag.get("reason") == "last_run_missing":
+            return False, "suite-seal-missing"
+        return False, "suite-not-fresh-green"
+    runtime = _suite_runtime_root(project_root)
+    last_run = runtime / "last-run.json"
+    history = runtime / "run_history.jsonl"
+    try:
+        seal = json.loads(last_run.read_text(encoding="utf-8"))
+        if not isinstance(seal, dict):
+            return False, "suite-not-fresh-green"
+        if any(
+            seal.get(field) != expected
+            for field, expected in (
+                ("status", "finished"),
+                ("exit_code", 0),
+                ("tested_commit_sha", expected_sha),
+                ("level", "all"),
+                ("args_mode", "default_discovery"),
+            )
+        ):
+            return False, "suite-not-fresh-green"
+        started_at = seal.get("started_at")
+        finished_at = seal.get("finished_at")
+        if not isinstance(started_at, str) or not isinstance(finished_at, str):
+            return False, "suite-not-fresh-green"
+        raw_rows = history.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError, json.JSONDecodeError, TypeError):
+        return False, "run-history-unreadable"
+    rows = []
+    try:
+        for raw in raw_rows:
+            if not raw.strip():
+                continue
+            row = json.loads(raw)
+            if not isinstance(row, dict):
+                return False, "run-history-unreadable"
+            rows.append(row)
+    except (json.JSONDecodeError, TypeError):
+        return False, "run-history-unreadable"
+    if not any(
+        row.get("tested_commit_sha") == expected_sha
+        and row.get("started_at") == started_at
+        and row.get("finished_at") == finished_at
+        for row in rows
+    ):
+        return False, "run-history-seal-row-missing"
+    return True, None
+
+
+def _pp_receipt_path(project_root: str | Path, repo: str, sha: str) -> Path:
+    """Return the canonical pre-push receipt path for a repo/SHA pair."""
+    return _suite_runtime_root(project_root) / f"receipt_{repo}_{sha}.json"
+
+
+def _pp_receipt_candidates(
+    project_root: str | Path, repo: str, sha: str
+) -> tuple[Path, ...]:
+    """Return the bounded receipt locations used by motor and delivery layouts."""
+    root = Path(project_root).resolve()
+    name = f"receipt_{repo}_{sha}.json"
+    return (
+        _pp_receipt_path(root, repo, sha),
+        root / name,
+        root / ".agent" / "runtime" / name,
+        root / "orchestrator_pipeline" / "reports" / name,
+    )
+
+
+def _read_pp_receipt(
+    project_root: str | Path, repo: str, sha: str
+) -> tuple[dict | None, str | None]:
+    """Read only the identity, remote SHA and generic green verdict."""
+    path = next(
+        (
+            candidate
+            for candidate in _pp_receipt_candidates(project_root, repo, sha)
+            if candidate.exists()
+        ),
+        None,
+    )
+    if path is None:
+        return None, "pp-receipt-missing"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None, "pp-receipt-missing"
+    if not isinstance(data, dict):
+        return None, "pp-receipt-invalid"
+    sha_value = data.get("sha40", data.get("sha", data.get("tested_commit_sha")))
+    remote_sha = data.get("remote_sha")
+    verdict = data.get("verdict", data.get("pp_verdict", data.get("result")))
+    green = verdict is True or (
+        isinstance(verdict, str)
+        and verdict.strip().upper() in {"GREEN", "PASS", "PASSED", "OK"}
+    )
+    if not green or not isinstance(remote_sha, str):
+        return None, "pp-receipt-invalid"
+    if sha_value != sha:
+        return None, "pp-receipt-sha-mismatch"
+    return {"sha40": sha_value, "remote_sha": remote_sha.strip().lower()}, None
+
+
+def _verify_push_preflight(context: PushContext) -> Decision:
+    """Verify motor suite evidence and PP receipt before reading authorization."""
+    if not _is_motor_push(context.project_root):
+        return Decision(True, "preflight-not-required")
+    ok, reason = _verify_suite_seal(context.project_root, context.full_sha)
+    if not ok:
+        return Decision(False, reason or "suite-seal-missing")
+    receipt, reason = _read_pp_receipt(
+        context.project_root, context.repo, context.full_sha
+    )
+    if receipt is None:
+        return Decision(False, reason or "pp-receipt-invalid")
+    if receipt["remote_sha"] != context.remote_sha:
+        return Decision(False, "pp-receipt-remote-mismatch")
+    return Decision(True, "preflight-ok")
+
+
+def reconcile_push_attempt(
+    ledger: PushAuthorityLedger,
+    record: dict,
+    observed_remote_sha: str | None,
+) -> bool:
+    """Public reconciliation seam used after a push and by future callers."""
+    return ledger.reconcile_attempt(record, observed_remote_sha)
+
+
 def build_prompt_link(*, environment_id: str, thread_id: str, phrase: str) -> str:
     """Construye el enlace `t3code://threads/<env>/<hilo>?prompt=<frase>`.
 
@@ -2052,6 +2431,12 @@ def execute_authorized_push(
         push-failed) deja el messageId QUEMADO: el usuario debe enviar un
         mensaje NUEVO con la frase exacta; `format_decision` lo explica.
     """
+    has_retryable = getattr(ledger, "has_retryable_attempt", lambda _context: False)
+    retryable_attempt = not dry_run and has_retryable(context)
+    if not dry_run and not retryable_attempt:
+        preflight = _verify_push_preflight(context)
+        if not preflight.allowed:
+            return ExecutionResult(EXIT_REJECTED, preflight)
     connection = open_store_ro(db_path)
     try:
         decision = find_authorization(
@@ -2062,11 +2447,12 @@ def execute_authorized_push(
         )
         if not decision.allowed:
             return ExecutionResult(EXIT_REJECTED, decision)
-        gitleaks_decision = run_gitleaks_gate(
-            context, gitleaks_runner=gitleaks_runner, git_runner=git_runner
-        )
-        if not gitleaks_decision.allowed:
-            return ExecutionResult(EXIT_REJECTED, gitleaks_decision)
+        if not retryable_attempt:
+            gitleaks_decision = run_gitleaks_gate(
+                context, gitleaks_runner=gitleaks_runner, git_runner=git_runner
+            )
+            if not gitleaks_decision.allowed:
+                return ExecutionResult(EXIT_REJECTED, gitleaks_decision)
         if dry_run:
             return ExecutionResult(EXIT_ALLOWED, decision, pushed=False)
         record = {
@@ -2076,9 +2462,17 @@ def execute_authorized_push(
             "textSha256": decision.text_sha256,
             "fullSha": context.full_sha,
             "anchorMessageId": anchor_message_id,
+            "repo": context.repo,
+            "ref": f"refs/heads/{context.branch}",
+            "remoteSha": context.remote_sha,
         }
         if not ledger.consume(record):
-            return ExecutionResult(EXIT_REJECTED, Decision(False, "consumed"))
+            reason = (
+                "push-attempt-conflict"
+                if ledger._has_conflict(str(decision.message_id))
+                else "consumed"
+            )
+            return ExecutionResult(EXIT_REJECTED, Decision(False, reason))
         again = revalidate(
             connection,
             message_id=str(decision.message_id),
@@ -2089,17 +2483,21 @@ def execute_authorized_push(
             expected=context.expected,
         )
         if not again.allowed:
+            ledger.release_attempt(record)
             return ExecutionResult(EXIT_REJECTED, again)
     finally:
         connection.close()
 
-    return _push_and_verify(context, decision, git_runner)
+    return _push_and_verify(context, decision, git_runner, ledger=ledger, record=record)
 
 
-def _push_and_verify(
+def _push_and_verify(  # noqa: C901
     context: PushContext,
     decision: Decision,
     git_runner: Callable[[Sequence[str]], tuple[int, str, str]] | None,
+    *,
+    ledger: PushAuthorityLedger | None = None,
+    record: dict | None = None,
 ) -> ExecutionResult:
     """Relee HEAD y la ref remota, empuja con lease y verifica con ls-remote.
 
@@ -2113,6 +2511,8 @@ def _push_and_verify(
     run = git_runner or _default_git_runner(context.project_root)
     rc, out, err = run(["rev-parse", "HEAD"])
     if rc != 0:
+        if ledger is not None and record is not None:
+            ledger.release_attempt(record)
         return ExecutionResult(
             EXIT_PUSH_FAILED,
             Decision(False, "head-unreadable"),
@@ -2120,6 +2520,8 @@ def _push_and_verify(
             push_rc=rc,
         )
     if out.strip().lower() != context.full_sha:
+        if ledger is not None and record is not None:
+            ledger.release_attempt(record)
         return ExecutionResult(
             EXIT_PUSH_FAILED,
             Decision(False, "head-moved"),
@@ -2136,6 +2538,8 @@ def _push_and_verify(
     fields = out.split()
     current_remote = fields[0].strip().lower() if fields else ""
     if current_remote != context.remote_sha:
+        if ledger is not None and record is not None:
+            ledger.release_attempt(record)
         return ExecutionResult(
             EXIT_PUSH_FAILED,
             Decision(False, "remote-moved"),
@@ -2152,6 +2556,16 @@ def _push_and_verify(
         ]
     )
     if rc != 0:
+        if ledger is not None and record is not None:
+            rc_after, out_after, _err_after = run(
+                ["ls-remote", context.remote, f"refs/heads/{context.branch}"]
+            )
+            if rc_after == 0:
+                fields_after = out_after.split()
+                observed_after = (
+                    fields_after[0].strip().lower() if fields_after else None
+                )
+                reconcile_push_attempt(ledger, record, observed_after)
         return ExecutionResult(
             EXIT_PUSH_FAILED,
             Decision(False, "push-failed"),
@@ -2170,12 +2584,16 @@ def _push_and_verify(
     fields = out.split()
     remote_sha = fields[0].strip().lower() if fields else ""
     if remote_sha != context.full_sha:
+        if ledger is not None and record is not None:
+            reconcile_push_attempt(ledger, record, remote_sha)
         return ExecutionResult(
             EXIT_PUSH_FAILED,
             Decision(False, "ls-remote-mismatch"),
             pushed=True,
             detail=remote_sha[:64],
         )
+    if ledger is not None and record is not None:
+        reconcile_push_attempt(ledger, record, remote_sha)
     return ExecutionResult(
         EXIT_ALLOWED,
         Decision(
@@ -2298,6 +2716,10 @@ def _run_verify(args, ledger) -> int:
     """
     if not args.tested_commit_sha:
         raise UsageError("--tested-commit-sha es obligatorio para verificar y push")
+    if not args.db or not args.anchor_message_id:
+        raise UsageError(
+            "--db y --anchor-message-id son obligatorios para verificar y push"
+        )
     context, reason = collect_push_context(
         args.project_root,
         tested_commit_sha=args.tested_commit_sha,
@@ -2337,6 +2759,25 @@ def _run_verify(args, ledger) -> int:
     return result.exit_code
 
 
+def _run_check_gates(args) -> int:
+    """Run the reusable Gitleaks gate without authorization or ledger access."""
+    context, reason = collect_push_context(
+        args.project_root,
+        tested_commit_sha=None,
+        remote=args.remote,
+        branch=args.branch,
+    )
+    if context is None:
+        print(f"GATES FAILED ({reason}).")
+        return EXIT_REJECTED
+    decision = run_gitleaks_gate(context)
+    if decision.allowed:
+        print("GATES OK (gitleaks-clean).")
+    else:
+        print(f"GATES FAILED ({decision.reason}).")
+    return EXIT_ALLOWED if decision.allowed else EXIT_REJECTED
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI del wrapper: muestra la frase o verifica y ejecuta el push."""
     import argparse
@@ -2347,8 +2788,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     parser = _Parser(description=__doc__)
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
-    parser.add_argument("--db", type=Path, required=True)
-    parser.add_argument("--anchor-message-id", required=True)
+    parser.add_argument("--db", type=Path, required=False)
+    parser.add_argument("--anchor-message-id", required=False)
     parser.add_argument("--tested-commit-sha", default=None)
     parser.add_argument("--remote", default="origin")
     parser.add_argument("--branch", default="main")
@@ -2356,18 +2797,27 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--ledger", type=Path, default=None)
     parser.add_argument("--print-phrase", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--check-gates", action="store_true")
     try:
         args = parser.parse_args(argv)
     except UsageError as exc:
         print(f"USO: {exc}", file=sys.stderr)
         return EXIT_USAGE
 
-    ledger = (
-        PushAuthorityLedger(args.ledger)
-        if args.ledger is not None
-        else PushAuthorityLedger.default(args.project_root)
-    )
     try:
+        if args.check_gates:
+            if args.print_phrase or args.dry_run or args.tested_commit_sha:
+                raise UsageError(
+                    "--check-gates no admite --print-phrase, --dry-run ni --tested-commit-sha"
+                )
+            return _run_check_gates(args)
+        if not args.db or not args.anchor_message_id:
+            raise UsageError("--db y --anchor-message-id son obligatorios")
+        ledger = (
+            PushAuthorityLedger(args.ledger)
+            if args.ledger is not None
+            else PushAuthorityLedger.default(args.project_root)
+        )
         if args.print_phrase:
             return _run_print_phrase(args)
         return _run_verify(args, ledger)
