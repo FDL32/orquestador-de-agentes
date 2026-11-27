@@ -393,6 +393,10 @@ def _read_encargos_tr(path, n):  # noqa: C901 - six-field queue and T1/T2/T3 gat
     if not isinstance(payload, dict) or not isinstance(payload.get("encargos"), list):
         base["motivo"] = "formato ilegible: se esperaba encargos[]"
         return base
+    lanzamientos = payload.get("lanzamientos", [])
+    if not isinstance(lanzamientos, list):
+        base["motivo"] = "lanzamientos ilegible: se esperaba una lista"
+        return base
     rows = payload["encargos"]
     if not all(_valid_encargo(row) for row in rows):
         base["motivo"] = "fila ilegible: faltan campos ENCARGOS_TR"
@@ -404,7 +408,7 @@ def _read_encargos_tr(path, n):  # noqa: C901 - six-field queue and T1/T2/T3 gat
         {
             "rows": rows,
             "abiertos": open_rows,
-            "lanzamientos": payload.get("lanzamientos", []),
+            "lanzamientos": lanzamientos,
         }
     )
     if not open_rows:
@@ -530,6 +534,8 @@ def _confirmed_run_ids(connection):
                 return set()
             if isinstance(ordinal, bool) or not isinstance(ordinal, (int, float)):
                 return set()
+            if isinstance(ordinal, float) and not ordinal.is_integer():
+                return set()
             ordinal_value = int(ordinal)
             previous = latest.get(thread_id)
             if previous is None or ordinal_value > previous[0]:
@@ -605,7 +611,13 @@ def _trace_dispatchables():
             result = []
             for key in ("im", "tr"):
                 value = values.get(key, 0)
-                result.append(value if isinstance(value, int) and value >= 0 else 0)
+                result.append(
+                    value
+                    if isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    else 0
+                )
             return tuple(result)
         value = record.get("cola_despachable", 0)
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:

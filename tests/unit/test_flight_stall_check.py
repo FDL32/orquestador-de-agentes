@@ -5538,12 +5538,12 @@ def test_wot184h_m02_gaps_reports_both_roles_with_shared_liveness(box, monkeypat
     checker = box.m._load_cell_checker()
     connection, _, settled = checker._store_lookup(box.m.CFG.store)
     try:
-        monkeypatch.setattr(checker, "is_activa", lambda _status: False)
-        live_ims, live_trs = box.m._live_im_tr(sessions, settled, checker)
-        assert live_ims == [] and live_trs == []
+        with monkeypatch.context() as patch:
+            patch.setattr(checker, "is_activa", lambda _status: False)
+            live_ims, live_trs = box.m._live_im_tr(sessions, settled, checker)
+            assert live_ims == [] and live_trs == []
     finally:
         connection.close()
-    monkeypatch.undo()
     sessions = [_im_tr_session("IM-184", "im-184")]
     _p8_registry_and_store(box, sessions)
     encargos = box.flight / "ENCARGOS_TR.json"
@@ -5643,6 +5643,44 @@ def test_wot184h_fix3_pending_queue_has_no_action_without_declared_launch(box):
     assert result.rc == 1
     assert '"cola_motivo": "PENDIENTE"' in result.out
     assert '"accion": null' in result.out
+
+
+def test_wot184h_fix5_invalid_launches_type_is_no_medido_not_broken(box):
+    """Fix 5: a non-list ``lanzamientos`` value cannot crash the report."""
+    sessions = [_im_tr_session("IM-184", "im-184")]
+    _p8_registry_and_store(box, sessions)
+    encargos = box.flight / "ENCARGOS_TR.json"
+    encargos.write_text(
+        json.dumps(
+            {
+                "encargos": [
+                    {
+                        "id": "TR-ENC-1",
+                        "bloque": "B1",
+                        "prioridad": 1,
+                        "zona": "z1",
+                        "estado": "abierto",
+                        "dueno": "TR-1",
+                    }
+                ],
+                "lanzamientos": 5,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = box.tick(
+        "--p8-gaps",
+        "--t3-new-rows",
+        "1",
+        "--encargos-tr-file",
+        str(encargos),
+        "--dry-run",
+    )
+
+    assert result.rc == 1
+    assert "STALL_CHECK_BROKEN" not in result.out
+    assert '"cola_motivo": "NO_MEDIDO"' in result.out
 
 
 def test_wot184h_m04_t3_n_is_configured_and_rejects_absent_or_non_integer():
