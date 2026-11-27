@@ -90,7 +90,7 @@ def _clause_errors(protocol: str) -> list[str]:
             errors.append(
                 f"clausula autoridad: {name} aparece {count} veces; se exige una"
             )
-    command = "PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python C:/Temp/co27/user_msgs.py"
+    command = "PYTHONUTF8=1 PYTHONIOENCODING=utf-8 python scripts/flight/user_msgs.py"
     if protocol.count(command) != 1 or "linea final `user msgs: N`" not in protocol:
         errors.append("clausula autoridad: forma de user_msgs.py incompleta")
     if protocol.count("[USUARIO]") < 2 or protocol.count("[DERIVADO") < 6:
