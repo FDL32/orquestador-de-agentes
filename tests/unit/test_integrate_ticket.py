@@ -35,7 +35,29 @@ TICKET = "WOT-2026-999z"
 WRAPPER = _MOTOR_ROOT / "scripts" / "flight" / "integrate_ticket.py"
 _TS_EMIT = "2026-10-11T10:00:00+00:00"
 _TS_ROUND = "2026-10-11T10:05:00+00:00"
-EVIDENCE_BACKEND_KEYS: tuple[str, ...] = ("BA04", "BA07")
+
+
+def _derive_evidence_backend_keys() -> tuple[str, str]:
+    """Deriva 2 backend_keys elegibles reales desde agents.json en vez de
+    hardcodearlos: eligible_coverage cambia (render_asignaciones.py --apply
+    la regenera) y un par fijo queda obsoleto sin que el test lo note."""
+    agents_path = _MOTOR_ROOT / ".agent" / "config" / "agents.json"
+    data = json.loads(agents_path.read_text(encoding="utf-8"))
+    coverage = (
+        data.get("ensemble_registry", {})
+        .get("eligible_coverage", {})
+        .get("MANAGER_REVIEW:repo_motor", {})
+    )
+    keys = sorted(coverage.get("backend_keys", []))
+    if len(keys) < 2:
+        raise RuntimeError(
+            "eligible_coverage.MANAGER_REVIEW:repo_motor.backend_keys tiene "
+            f"menos de 2 claves elegibles: {keys!r}"
+        )
+    return (keys[0], keys[1])
+
+
+EVIDENCE_BACKEND_KEYS: tuple[str, ...] = _derive_evidence_backend_keys()
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -117,8 +139,21 @@ def test_mutation_evidence_fixture_ineligible_keys_raise_error() -> None:
         Path(__file__).resolve().parents[2] / ".agent" / "config" / "agents.json"
     )
     data = json.loads(agents_path.read_text(encoding="utf-8"))
+    registry = data.get("ensemble_registry", {})
+    all_keys = set(registry.get("backend_keys", {}).keys())
+    eligible = set(
+        registry.get("eligible_coverage", {})
+        .get("MANAGER_REVIEW:repo_motor", {})
+        .get("backend_keys", [])
+    )
+    ineligible_candidates = sorted(all_keys - eligible)
+    assert ineligible_candidates, (
+        "no hay ninguna clave en ensemble_registry.backend_keys fuera del "
+        "conjunto elegible para construir el negativo"
+    )
+    ineligible_key = ineligible_candidates[0]
     with pytest.raises(AssertionError):
-        _assert_keys_eligible(("BA03", "BA07"), data)
+        _assert_keys_eligible((EVIDENCE_BACKEND_KEYS[0], ineligible_key), data)
 
 
 def _world(
@@ -220,7 +255,9 @@ def _write_family_evidence(
 ) -> None:
     ensemble = destino / ".agent" / "runtime" / "ensemble"
     ensemble.mkdir(parents=True, exist_ok=True)
-    family_keys = (*EVIDENCE_BACKEND_KEYS, "BA08", "BA09", "BA150", "BA151")
+    family_keys = tuple(
+        dict.fromkeys((*EVIDENCE_BACKEND_KEYS, "BA08", "BA09", "BA150", "BA151"))
+    )
     rows = [
         {
             "event": "ronda",
