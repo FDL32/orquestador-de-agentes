@@ -4930,6 +4930,25 @@ def test_co_sin_asentar_cadena_contexto_ilegible_ciega(box, cadena_contexto):
     assert out["co_sin_asentar_ciego"] == "roster no medido"
 
 
+def test_co_sin_asentar_ancestro_directo_ilegible_no_cae_a_cadena(box):
+    """An illegible declared ancestor blinds even with a readable context head."""
+    _co_store(box, [_co_row(box, 110)])
+    _co_roster(
+        box,
+        1,
+        ancestro={"threadId": "", "session_code": "CO-999"},
+        cadena_contexto=[{"threadId": "co:102", "session_code": "CO-102"}],
+    )
+    _co_cfg(box)
+    out = {}
+
+    found = box.m.check_co_sin_asentar(out, {})
+
+    assert found[0][0:2] == ("co-sin-asentar", "AVISO")
+    assert out["co_sin_asentar_ciego"] == "roster no medido"
+    assert "CO-102" not in found[0][2]
+
+
 # ------------------------------------------------------------------ WOT-2026-230b: calculo de gasto Nan por tokens y tarifas
 
 

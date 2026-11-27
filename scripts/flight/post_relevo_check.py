@@ -267,10 +267,6 @@ def _co_outside_triad(  # noqa: C901 - triad/status classification mirrors contr
     After: return deterministic coordinator codes without mutating either input.
     """
 
-    if settled is None and callable(cadena_contexto):
-        settled = cadena_contexto
-        cadena_contexto = None
-
     def is_current_status(value: object) -> bool:
         """Classify only explicitly current CO status vocabulary."""
         status = str(value or "").strip().upper()
