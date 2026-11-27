@@ -277,13 +277,26 @@ def test_destino_artifact_parses_and_renders_via_opencode(tmp_path):
         Si el binario falta, `_opencode_bin` hace `pytest.fail` (sin skip).
     After: el agente `auditor` aparece en el listado y sus 14 claves
         no-lectura resuelven `deny`, con el allow especifico al motor
-        presente entre las reglas renderizadas.
+        presente entre las reglas renderizadas desde `opencode.json`.
     """
     import scripts.check_agent_write_enforced as cawe
 
     root = tmp_path / ".opencode" / "agents"
     root.mkdir(parents=True, exist_ok=True)
     (root / "auditor.md").write_text(DESTINO_AUDITOR_TEXT, encoding="utf-8")
+    motor_pattern = str(_MOTOR_ROOT).replace("/", "\\") + "\\*"
+    config = {
+        "$schema": "https://opencode.ai/config.json",
+        "permission": {
+            "external_directory": {
+                "*": "deny",
+                motor_pattern: "allow",
+            }
+        },
+    }
+    (tmp_path / ".opencode" / "opencode.json").write_text(
+        json.dumps(config, indent=2), encoding="utf-8"
+    )
     rules = cawe._agent_permission_rules(_opencode_bin(), str(tmp_path), "auditor")
     assert rules is not None, (
         "opencode NO listo el auditor desde la fixture: el frontmatter del "
@@ -296,10 +309,46 @@ def test_destino_artifact_parses_and_renders_via_opencode(tmp_path):
         for r in rules
         if r.get("permission") == "external_directory" and r.get("pattern") != "*"
     ]
-    assert any(
-        r.get("action") == "allow" and "orquestador_de_agentes" in str(r.get("pattern"))
+    exact = [
+        r
         for r in specific
-    ), "el allow especifico al motor debe sobrevivir al render real"
+        if r.get("pattern") == motor_pattern and r.get("action") == "allow"
+    ]
+    assert exact == [
+        {
+            "permission": "external_directory",
+            "pattern": motor_pattern,
+            "action": "allow",
+        }
+    ], "el allow exacto al motor debe sobrevivir al render real"
+
+
+def test_frontmatter_external_allow_is_not_rendered_by_opencode(tmp_path):
+    """F3: un allow externo solo en frontmatter no se renderiza.
+
+    Before: `auditor.md` contiene un allow especifico de
+        `external_directory`, pero no existe la inyeccion de configuracion
+        que usa el launcher en produccion.
+    During: ejecuta el helper de produccion contra el artefacto aislado.
+    After: OpenCode 1.18.35 carga el agente, pero no conserva ese allow;
+        cualquier cambio de OpenCode que lo renderice obliga a revisar la
+        ruta productiva y este contrato.
+    """
+    import scripts.check_agent_write_enforced as cawe
+
+    root = tmp_path / ".opencode" / "agents"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "auditor.md").write_text(DESTINO_AUDITOR_TEXT, encoding="utf-8")
+    rules = cawe._agent_permission_rules(_opencode_bin(), str(tmp_path), "auditor")
+    motor_pattern = str(_MOTOR_ROOT).replace("/", "\\") + "\\*"
+    exact = [
+        rule
+        for rule in (rules or [])
+        if rule.get("permission") == "external_directory"
+        and rule.get("pattern") == motor_pattern
+        and rule.get("action") == "allow"
+    ]
+    assert exact == []
 
 
 @pytest.mark.parametrize("permission", NON_READ_PERMISSION_KEYS)
