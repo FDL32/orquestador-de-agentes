@@ -147,6 +147,127 @@ def _write_ficha(repo: Path, ticket: str, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _primary_trigger_ficha(receipt: str = "") -> str:
+    return (
+        "redactada_por: co\n"
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: nan_api|deepseek-v4-flash|APPROVE\n"
+        "lente_2: kilo|nan/glm5.3-flash|APPROVE\n"
+        "## Files Likely Touched\n"
+        "- AGENTS.md\n"
+        f"{receipt}"
+    )
+
+
+def test_wot_2026_231f_explicit_range_applies_primary_source(
+    monkeypatch, tmp_path, capsys
+):
+    """El rango explícito también ejecuta PRIMARY_SOURCE_CHECK."""
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    ticket = "WOT-2026-231f"
+    candidate = row(ticket)
+    commit = commit_alta_with_ficha(
+        repo, candidate, "alta sin recibo", ticket, _primary_trigger_ficha()
+    )
+
+    code = cba.main(
+        [
+            "--git-root",
+            str(repo),
+            "--base",
+            cutoff,
+            "--head",
+            commit,
+            "--json",
+        ]
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert any(
+        finding["veredicto"] == cba.VER_PRIMARY_SOURCE_NO_CONFORME
+        for finding in report["findings"]
+    )
+
+
+def test_wot_2026_231f_partial_base_is_used(tmp_path, capsys):
+    """--base sin --head conserva la base solicitada y resuelve HEAD."""
+    repo = init_repo(tmp_path)
+    first = "WOT-2026-231f"
+    first_sha = commit_alta(repo, row(first), "primera alta")
+    second = "WOT-2026-231g"
+    second_sha = commit_alta(repo, row(second), "segunda alta")
+
+    assert cba.main(["--git-root", str(repo), "--base", first_sha]) == 1
+    output = capsys.readouterr().out
+    assert f"rango auditado: {first_sha[:12]}..{second_sha[:12]}" in output
+    assert first not in output
+    assert second in output
+
+
+def test_wot_2026_231f_unresolvable_partial_range_is_measurement_failure(
+    tmp_path, capsys
+):
+    """Un rango parcial sin origin produce el error de medición existente."""
+    repo = tmp_path / "repo"
+    (repo / BACKLOG_REL).parent.mkdir(parents=True)
+    git(tmp_path, "init", str(repo))
+    git(repo, "config", "user.email", "builder@example.com")
+    git(repo, "config", "user.name", "Builder Test")
+    (repo / BACKLOG_REL).write_text(HEADER, encoding="utf-8")
+    git(repo, "add", ".")
+    git(repo, "commit", "-m", "base")
+    head = git(repo, "rev-parse", "HEAD").strip()
+
+    assert cba.main(["--git-root", str(repo), "--head", head]) == 2
+    assert "MEDICION_FALLIDA" in capsys.readouterr().out
+
+
+def test_wot_2026_231f_retroactive_primary_warning_is_non_blocking(
+    monkeypatch, tmp_path
+):
+    """La exención degrada solo PRIMARY_SOURCE defectuoso y no bloquea."""
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    ticket = "WOT-2026-231e"
+    commit = commit_alta_with_ficha(
+        repo, row(ticket), "alta retroactiva", ticket, _primary_trigger_ficha()
+    )
+    alta = {"id": ticket, "commit": commit}
+    lines: list[str] = []
+    finding = cba._primary_source_finding(repo, alta, lines)
+    assert finding is not None
+    assert finding["veredicto"] == cba.VER_PRIMARY_SOURCE_WARN_RETROACTIVE
+    assert "DEC ee81f56e" in lines[-1]
+    code, final_lines, findings = cba._apply_lens_and_primary_checks(
+        repo, commit, [alta], ["VEREDICTO GLOBAL: RECIBO_COHERENTE"], [], 0
+    )
+    assert code == 0
+    assert "VEREDICTO GLOBAL: FALLO" not in "\n".join(final_lines)
+    assert findings == [finding]
+
+
+def test_wot_2026_231f_exemption_does_not_skip_c14(monkeypatch, tmp_path):
+    """La exención de PRIMARY_SOURCE no altera el control c-14."""
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    ticket = "WOT-2026-231e"
+    commit = commit_alta_with_ficha(
+        repo, row(ticket), "alta c14 defectuosa", ticket, "redactada_por: codex\n"
+    )
+    lines: list[str] = []
+    finding = cba._c14_finding(repo, {"id": ticket, "commit": commit}, cutoff, lines)
+    assert finding["veredicto"] == cba.LENTES_TR_NO_CONFORME
+    _code, _lines, findings = cba._apply_lens_and_primary_checks(
+        repo, commit, [{"id": ticket, "commit": commit}], [], [], 0
+    )
+    assert any(item["veredicto"] == cba.LENTES_TR_NO_CONFORME for item in findings)
+
+
 def test_standalone_rejects_verdict_outside_set():
     ficha = (
         "triador_modelo: kilo|nan/gemma4\n"
