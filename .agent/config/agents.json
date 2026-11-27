@@ -3130,7 +3130,7 @@
         }
       ],
       "orden": {
-        "messageId": "7de3b6a7-76a2-4269-af97-2135d82e3349"
+        "messageId": "d1cee4b5-c2a5-408c-a728-2c70aac19807"
       }
     },
     "co_subagentes": {
@@ -3290,6 +3290,14 @@
           "tipo": "t3_session",
           "familia": "claude",
           "nivel": "alto",
+          "instanceId": "claudeAgent_alvarovans",
+          "model": "claude-sonnet-5-5",
+          "effort": "high"
+        },
+        {
+          "tipo": "t3_session",
+          "familia": "claude",
+          "nivel": "alto",
           "instanceId": "claudeAgent",
           "model": "claude-sonnet-5-5",
           "effort": "high"
@@ -3307,7 +3315,7 @@
         }
       ],
       "orden": {
-        "messageId": "7de3b6a7-76a2-4269-af97-2135d82e3349"
+        "messageId": "d1cee4b5-c2a5-408c-a728-2c70aac19807"
       }
     },
     "tr.revisor": {

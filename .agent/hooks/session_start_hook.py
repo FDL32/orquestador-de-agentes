@@ -435,7 +435,7 @@ def _health_line(root: Path) -> str:
 _LAYER_ROLES = ("orchestrator", "manager", "revisor", "builder")
 
 
-# ASIGNACIONES:BEGIN sha=2147c0accd7cd69f
+# ASIGNACIONES:BEGIN sha=e180e35a2592cd3d
 # **Asignaciones del vuelo**:
 # refugio comun: codex gpt-5.6-luna,claude claude-sonnet-5
 # - co [alto]: claude:claudeAgent/claude-opus-5-5
@@ -445,7 +445,7 @@ _LAYER_ROLES = ("orchestrator", "manager", "revisor", "builder")
 # - im.revisor [medio]: claude:claudeAgent/claude-sonnet-5
 # - im.v1 [medio]: qwen nan/qwen3.6 > gemma nan/gemma4 > deepseek opencode/deepseek-v4.1-flash-free
 # - im.subagentes [medio]: codex gpt-5.6-luna PENDIENTE > claude claude-sonnet-5 PENDIENTE
-# - tr.triador [alto]: claude:claudeAgent/claude-sonnet-5-5
+# - tr.triador [alto]: claude:claudeAgent_alvarovans/claude-sonnet-5-5 > claude:claudeAgent/claude-sonnet-5-5
 # - tr.revisor [medio]: codex gpt-5.6-luna > qwen nan/qwen3.6 > gemma nan/gemma4 > deepseek opencode/deepseek-v4.1-flash-free
 # - tr.subagentes [base]: gemma nan/gemma4 PENDIENTE > qwen nan/qwen3.6 PENDIENTE
 # - lentes_p34 [medio]: qwen nan/qwen3.6 > gemini:antigravity/gemini-3.8-flash-high > gemma nan/gemma4 PENDIENTE > mistral mistral-large-2512 PENDIENTE > codestral codestral-2508 PENDIENTE > deepseek opencode/deepseek-v4.1-flash-free
