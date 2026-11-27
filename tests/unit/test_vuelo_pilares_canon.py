@@ -298,6 +298,19 @@ def test_mutation_p9_without_stop_consult_barrier_fails_explicitly() -> None:
         assert_p9_mechanism_cites_stop_barrier(candidate)
 
 
+def test_mutation_p9_without_stop_consult_mode_barrier_fails_explicitly() -> None:
+    """Mutating away the stop-consult script name must fail P9 explicitly.
+
+    Before: the real canonical index cites ``stop_consult_mode.py`` in P9.
+    During: remove only that mechanism citation while retaining the ticket.
+    After: the P9 mechanism assertion rejects the candidate by script name.
+    """
+    text = CANON_PATH.read_text(encoding="utf-8")
+    candidate = mutate_once(text, "stop_consult_mode.py", "stop_consult_mode_legacy.py")
+    with pytest.raises(ValueError, match=re.escape("stop_consult_mode.py")):
+        assert_p9_mechanism_cites_stop_barrier(candidate)
+
+
 def test_p28_fixture_without_revisor_fails_explicitly() -> None:
     fixture_row = (
         "| P28 | La verificación del DoD es de la coordinadora mediante una "

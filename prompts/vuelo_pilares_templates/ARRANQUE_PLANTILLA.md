@@ -37,8 +37,8 @@
 5b. Activa y mide el modo de consulta de parada con estos comandos literales:
 
     ```text
-    python scripts/flight/stop_consult_mode.py status
-    python scripts/flight/stop_consult_mode.py on --mode <vigente>
+    {{PYTHON}} scripts/flight/stop_consult_mode.py status
+    {{PYTHON}} scripts/flight/stop_consult_mode.py on --mode <vigente>
     ```
 
 6. Errores a no repetir y lecciones: consulta la referencia vigente del

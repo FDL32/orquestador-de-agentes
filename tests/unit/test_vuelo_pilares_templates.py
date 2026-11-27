@@ -642,7 +642,7 @@ def test_mutation_m07_reintroduced_p16_fails() -> None:
 
 
 def extract_latido_supervisora_block(text: str) -> str:
-    """Extract LATIDO step 12b between steps 12 and 13.
+    """Extract LATIDO step 12b between steps 12 and 12c.
 
     Before: ``text`` is a complete LATIDO template with its marker header.
     During: remove the header and locate the 12b block boundaries in the body.
@@ -826,18 +826,23 @@ CONSULTA_SEMANTIC_PINS = (
     "ultimo mensaje",
     "SEGUIR <paso>",
     "Si decide PARAR, ejecuta `scripts/flight/stop_consult_pause.py --set",
-    '--minutos <minutos> --consulta "<motivo>" --now <hora>',
-    "minutos, motivo y hora",
-    "python scripts/flight/stop_consult_mode.py status --report",
+    '--minutos <minutos> --consulta "<motivo>" --acting-thread {{HILO_PROPIO}}',
+    "anade `--now <hora>` solo si quieres fijar una hora distinta a la actual",
+    "minutos debe ser <=60",
+    "minutos, motivo (consulta) y el hilo propio (acting-thread)",
+    "{{PYTHON}} scripts/flight/stop_consult_mode.py status --report",
     "modo, filas no_medido, topes y escapes de las ultimas 24h",
     "rc literal",
     "NO MEDIDO",
     "Regla de turno:",
     CONSULTA_SEGUIR_PARAR_FRAGMENT,
     "mensaje final de cualquier sesion nunca solo anuncia un paso",
-    "lo ejecuta, (b) declara bloqueo, o (c) pregunta",
+    "(a) lo ejecuta, (b) declara bloqueo, o (c) pregunta",
     "URGENTE",
     "se registra como escape",
+    "despierta a la coordinadora sin respuesta",
+    "fichero `stop_consult_pause.json` vigente) cuenta como respuesta valida",
+    '"sin respuesta" significa que ni se envio SEGUIR ni se establecio una pausa',
     "dueno=supervisora, momento=24 horas, destinatario=usuario",
     "informe A13 de WOT-2026-215b",
 )
@@ -891,13 +896,27 @@ def test_latido_consulta_semantic_pins_mutant(literal: str) -> None:
     normalized = " ".join(extract_latido_consulta_block(text).split())
     candidate = mutate_once(normalized, literal, "")
     with pytest.raises(ValueError) as excinfo:
-        assert_latido_consulta_semantic_pin(candidate, literal)
+        assert_latido_consulta_semantic_pins(candidate)
     assert literal in str(excinfo.value)
 
 
+def test_latido_consulta_minutes_limit_mutant() -> None:
+    """Removing the pause duration cap must fail the plural pin validator.
+
+    Before: the real LATIDO template contains the operational ``<=60`` cap.
+    During: remove only that cap from the normalized consultation block.
+    After: the production-path plural validator rejects the candidate.
+    """
+    text = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    normalized = " ".join(extract_latido_consulta_block(text).split())
+    candidate = mutate_once(normalized, "minutos debe ser <=60, ", "")
+    with pytest.raises(ValueError, match="minutos debe ser <=60"):
+        assert_latido_consulta_semantic_pins(candidate)
+
+
 ARRANQUE_STOP_CONSULTA_COMMANDS = (
-    "python scripts/flight/stop_consult_mode.py status",
-    "python scripts/flight/stop_consult_mode.py on --mode <vigente>",
+    "{{PYTHON}} scripts/flight/stop_consult_mode.py status",
+    "{{PYTHON}} scripts/flight/stop_consult_mode.py on --mode <vigente>",
 )
 
 
