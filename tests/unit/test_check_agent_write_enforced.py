@@ -323,6 +323,37 @@ def test_destino_artifact_parses_and_renders_via_opencode(tmp_path):
     ], "el allow exacto al motor debe sobrevivir al render real"
 
 
+def _normalise_external_directory_pattern(pattern: str) -> str:
+    """Normaliza separadores y la variante de glob final de OpenCode.
+
+    Before: `pattern` es una ruta emitida por YAML o por `opencode agent list`.
+    During: convierte separadores `/` a `\\` y trata `\\**` y `\\*` como
+        el mismo glob de directorio final, que OpenCode puede renderizar con
+        cualquiera de las dos formas.
+    After: devuelve un patrón comparable sin cambiar sus componentes de ruta.
+    """
+    normalized = pattern.replace("/", "\\")
+    if normalized.endswith("\\**"):
+        return normalized[:-3] + "\\*"
+    return normalized
+
+
+def _frontmatter_external_allow_pattern() -> str:
+    """Extrae el patrón allow externo declarado por la fixture YAML.
+
+    Before: `DESTINO_AUDITOR_TEXT` contiene el frontmatter del auditor.
+    During: parsea el bloque `permission` con el mismo helper YAML usado por
+        las pruebas de contrato y selecciona su único allow específico.
+    After: devuelve el patrón literal declarado por el frontmatter.
+    """
+    permission = _frontmatter_permission(DESTINO_AUDITOR_TEXT)
+    external = permission["external_directory"]
+    assert isinstance(external, dict)
+    allows = [pattern for pattern, action in external.items() if action == "allow"]
+    assert len(allows) == 1
+    return allows[0]
+
+
 def test_frontmatter_external_allow_is_not_rendered_by_opencode(tmp_path):
     """F3: un allow externo solo en frontmatter no se renderiza.
 
@@ -340,15 +371,58 @@ def test_frontmatter_external_allow_is_not_rendered_by_opencode(tmp_path):
     root.mkdir(parents=True, exist_ok=True)
     (root / "auditor.md").write_text(DESTINO_AUDITOR_TEXT, encoding="utf-8")
     rules = cawe._agent_permission_rules(_opencode_bin(), str(tmp_path), "auditor")
-    motor_pattern = str(_MOTOR_ROOT).replace("/", "\\") + "\\*"
+    frontmatter_pattern = _frontmatter_external_allow_pattern()
+    normalized_pattern = _normalise_external_directory_pattern(frontmatter_pattern)
     exact = [
         rule
         for rule in (rules or [])
         if rule.get("permission") == "external_directory"
-        and rule.get("pattern") == motor_pattern
+        and _normalise_external_directory_pattern(str(rule.get("pattern")))
+        == normalized_pattern
         and rule.get("action") == "allow"
     ]
     assert exact == []
+
+
+def test_frontmatter_external_allow_renders_when_injected_in_config(tmp_path):
+    """El predicado negativo detecta el mismo patrón si producción lo inyecta.
+
+    Before: la fixture declara un allow específico que OpenCode no renderiza
+        desde el frontmatter por sí solo.
+    During: añade ese patrón literal al mapa `external_directory` del
+        `opencode.json`, como hace la inyección runtime del launcher.
+    After: el patrón normalizado aparece exactamente como allow en las reglas
+        devueltas por el helper de producción.
+    """
+    import scripts.check_agent_write_enforced as cawe
+
+    root = tmp_path / ".opencode" / "agents"
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "auditor.md").write_text(DESTINO_AUDITOR_TEXT, encoding="utf-8")
+    frontmatter_pattern = _frontmatter_external_allow_pattern()
+    normalized_pattern = _normalise_external_directory_pattern(frontmatter_pattern)
+    config = {
+        "$schema": "https://opencode.ai/config.json",
+        "permission": {
+            "external_directory": {
+                "*": "deny",
+                frontmatter_pattern: "allow",
+            }
+        },
+    }
+    (tmp_path / ".opencode" / "opencode.json").write_text(
+        json.dumps(config, indent=2), encoding="utf-8"
+    )
+    rules = cawe._agent_permission_rules(_opencode_bin(), str(tmp_path), "auditor")
+    exact = [
+        rule
+        for rule in (rules or [])
+        if rule.get("permission") == "external_directory"
+        and _normalise_external_directory_pattern(str(rule.get("pattern")))
+        == normalized_pattern
+        and rule.get("action") == "allow"
+    ]
+    assert len(exact) == 1
 
 
 @pytest.mark.parametrize("permission", NON_READ_PERMISSION_KEYS)
