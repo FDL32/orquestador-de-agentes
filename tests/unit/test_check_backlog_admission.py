@@ -207,6 +207,34 @@ def test_wot_2026_231f_partial_base_is_used(tmp_path, capsys):
     assert second in output
 
 
+def test_wot_2026_231f_partial_head_uses_merge_base_and_stops_at_head(
+    monkeypatch, tmp_path, capsys
+):
+    """--head sin --base usa merge-base y no audita commits posteriores a Y."""
+    repo = init_repo(tmp_path)
+    base = git(repo, "rev-parse", "refs/remotes/origin/main").strip()
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", base)
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", base)
+
+    before = "WOT-2026-231h"
+    y = commit_alta_with_ficha(
+        repo,
+        row(before),
+        "alta antes de Y",
+        before,
+        _primary_trigger_ficha(),
+    )
+    after = "WOT-2026-231i"
+    commit_alta(repo, row(after), "alta posterior a Y")
+
+    assert cba.main(["--git-root", str(repo), "--head", y]) == 1
+    output = capsys.readouterr().out
+    assert f"rango auditado: {base[:12]}..{y[:12]}" in output
+    assert before in output
+    assert after not in output
+    assert cba.VER_PRIMARY_SOURCE_NO_CONFORME in output
+
+
 def test_wot_2026_231f_unresolvable_partial_range_is_measurement_failure(
     tmp_path, capsys
 ):
