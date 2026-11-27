@@ -291,6 +291,23 @@ def test_extract_prefix_malformed_short_sequence_raises() -> None:
         extract_prefix("ABC-2026-1a")
 
 
+def test_extract_prefix_malformed_message_states_canonical_form_074p() -> None:
+    with pytest.raises(ValueError, match=r"PREFIX-YYYY-NNNx") as exc_info:
+        extract_prefix("WOT-2026-020")
+
+    assert "WOT-2026-020t" in str(exc_info.value)
+
+
+def test_extract_prefix_malformed_message_names_lax_validators_074p() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        extract_prefix("WOT-2026-020")
+
+    message = str(exc_info.value)
+    assert "check_backlog_contract.py" in message
+    assert "check_backlog_commits_landed.py" in message
+    assert "check_flight_plan_collision.py" in message
+
+
 def test_extract_prefix_empty_string_returns_none() -> None:
     assert extract_prefix("") is None
 

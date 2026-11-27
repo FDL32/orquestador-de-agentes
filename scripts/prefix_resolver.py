@@ -641,7 +641,9 @@ def extract_prefix(ticket_or_project: str) -> str | None:
     if TICKET_ID_RE.match(ticket_or_project):
         return ticket_or_project.split("-")[0]
     if MALFORMED_ID_RE.match(ticket_or_project):
-        raise ValueError(f"Malformed ticket ID: {ticket_or_project}")
+        raise ValueError(
+            f"Malformed ticket ID: {ticket_or_project}; expected PREFIX-YYYY-NNNx (e.g. WOT-2026-020t). Note: check_backlog_contract.py, check_backlog_commits_landed.py, and check_flight_plan_collision.py accept this form without the final letter."
+        )
     return None
 
 
