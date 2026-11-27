@@ -15,6 +15,8 @@ thin wrappers that read the files and pass content here, so its globals
 
 from __future__ import annotations
 
+import re
+
 
 # Estados validos para validacion
 VALID_PLAN_STATES = {
@@ -86,9 +88,11 @@ def get_status(content: str, marker: str) -> str:
 
 def get_plan_id(content: str) -> str:
     """Extrae el ID del plan de trabajo."""
+    pattern = re.compile(r"^\s*(?:-\s*)?\*\*(?:ID|Plan ID):\*\*(.*)$")
     for line in content.split("\n"):
-        if "**ID:**" in line or "**Plan ID:**" in line:
-            return line.split(":**")[1].strip()
+        match = pattern.match(line)
+        if match:
+            return match.group(1).strip()
     return "N/A"
 
 

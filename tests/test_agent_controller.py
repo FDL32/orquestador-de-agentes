@@ -2182,6 +2182,19 @@ class TestDualPrefixParsing:
         content = "# Work Plan\n- **Estado:** PENDING\n"
         assert agent_controller.get_plan_id(content) == "N/A"
 
+    def test_get_plan_id_ignores_backtick_quoted_marker_citation(self):
+        """Quoted marker prose does not shadow a later real plan ID."""
+        content = (
+            "Documentation cites `**ID:**` in prose, not as a plan field.\n"
+            "- **ID:** WP-2026-074y\n"
+        )
+        assert agent_controller.get_plan_id(content) == "WP-2026-074y"
+
+    def test_get_plan_id_returns_na_when_only_cited_in_prose(self):
+        """A marker cited only in prose is not a plan ID."""
+        content = "Documentation cites `**Plan ID:**` in prose only.\n"
+        assert agent_controller.get_plan_id(content) == "N/A"
+
     def test_validation_accepts_wp_ticket_in_work_plan(self, monkeypatch):
         """get_plan_id() extracts WP- from work_plan content and returns dict result."""
         wp_content = "# Work Plan\n- **ID:** WP-2026-100\n- **Estado:** APPROVED\n- **deliverable_type:** code\n"
