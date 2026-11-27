@@ -726,7 +726,7 @@ def test_alta_quota_gate_receipt(tmp_path, capsys):
         "waiver": "triage manual",
     }
 
-    coord = _alta_args(5, role="coord", code="CO-1")
+    coord = _alta_args(5, role="orquestadora", code="CO-1")
     coord_session = registry_ops._session_for_alta(coord, {"sessions": []})
     assert coord_session["quota_gate_receipt"] == {"rc": 5}
 
@@ -769,7 +769,7 @@ def test_registry_parser_apply_receipt(tmp_path, capsys):
         "--code",
         "CO-2",
         "--role",
-        "coord",
+        "orquestadora",
         "--slot",
         "coord-2",
         "--thread-id",

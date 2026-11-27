@@ -60,6 +60,8 @@ RC_CONFLICT = 4
 RC_LOCK = 5
 RC_LOCK_RELEASE = 6
 CUTOFF_DATE = "2026-11-10"  # espejo de check_cell_conformance.CUTOFF_DATE
+CANONICAL_ROLES = ("implantacion", "triaje", "orquestadora", "supervisora")
+NON_CANONICAL_CLOSURE_PREFIXES = ("settled", "completed", "completada")
 _CELL_CHECKER = None
 _ASSIGNMENT_RESOLVER = None
 LOCK_ATTEMPTS = 20
@@ -154,6 +156,66 @@ def _check_activa_status(status):
             f"status invalido: {status!r} empieza por ACTIVA y no casa el "
             "predicado ^ACTIVA(\\s|$) de is_activa (check_cell_conformance); "
             "usa ACTIVA o 'ACTIVA (detalle)'",
+            RC_INVALID,
+        )
+
+
+def _validate_role(role):
+    """Valida el vocabulario cerrado de roles de registry_ops.
+
+    Before: ``role`` es el valor recibido por alta o asiento.
+    During: compara literalmente contra los cuatro roles canonicos, sin alias.
+    After: retorna ``None`` si es valido o lanza ``RegistryError`` rc 2.
+    """
+    if role in CANONICAL_ROLES:
+        return
+    suggestion = "; sugiere implantacion" if role == "implantador" else ""
+    admitted = ", ".join(CANONICAL_ROLES)
+    raise RegistryError(
+        f"role invalido: {role!r}; roles admitidos: {admitted}{suggestion}",
+        RC_INVALID,
+    )
+
+
+def _is_before_cutoff(started):
+    """Determina si una fecha textual conserva la exencion pre-corte.
+
+    Before: ``started`` puede ser cualquier valor del registry.
+    During: parsea fechas ISO como el predicado historico de ASENTADA.
+    After: retorna ``True`` solo para una fecha valida anterior al corte.
+    """
+    if not isinstance(started, str) or not started.strip():
+        return False
+    try:
+        return (
+            datetime.fromisoformat(started.strip().replace("Z", "+00:00"))
+            .date()
+            .isoformat()
+            < CUTOFF_DATE
+        )
+    except ValueError:
+        return False
+
+
+def _check_cierre_no_canonico(role, status, started):
+    """Rechaza cierres con entrega no canonicos para IM/TR nuevos.
+
+    Before: ``role``, ``status`` y ``started`` son los valores proyectados.
+    During: aplica el corte y compara el status normalizado contra los prefijos
+        de cierre historico que no acreditan la entrega canonica.
+    After: retorna ``None`` o lanza ``RegistryError`` rc 2 sin mutar datos.
+    """
+    normalized_status = status.strip().casefold() if isinstance(status, str) else ""
+    if (
+        role in ("implantacion", "triaje")
+        and not _is_before_cutoff(started)
+        and normalized_status.startswith(NON_CANONICAL_CLOSURE_PREFIXES)
+    ):
+        raise RegistryError(
+            f"cierre no canonico: status recibido {status!r}; el cierre CON "
+            "ENTREGA es ASENTADA (exige dos veredictos de lentes y T3 asentado); "
+            "un cierre SIN entrega usa un estado de no entrega (ejemplo: "
+            "FALLIDA, CANCELADA o PARADA)",
             RC_INVALID,
         )
 
@@ -579,6 +641,7 @@ def _session_for_alta(args, data):  # noqa: C901
     After: retorna el diccionario listo para anadir o lanza rc 2/4. Dry-run y
         apply comparten esta validacion; el campo es opcional para otros roles.
     """
+    _validate_role(args.role)
     if _find_session(data, args.code) is not None:
         raise RegistryError(
             f"sesion duplicada: code={args.code} ya existe", RC_CONFLICT
@@ -591,6 +654,7 @@ def _session_for_alta(args, data):  # noqa: C901
         "started": args.started,
         "status": args.status,
     }
+    _check_cierre_no_canonico(item["role"], item["status"], item["started"])
     for field in OPTIONAL_FIELDS:
         value = getattr(args, field)
         if value is not None:
@@ -724,19 +788,8 @@ def _validate_cell_requirements(  # noqa: C901 - cell, lens and T3 gates are one
     role_requires_lenses = item.get("role") in ("implantacion", "triaje")
     status = str(item.get("status", "")).strip().casefold()
     started = item.get("started")
-    before_cutoff = False
-    # CO-69 ronda 8: un `started` no textual (p.ej. el entero JSON 20261109)
-    # no concede la exencion de fecha; la sesion queda sujeta a los veredictos.
-    if isinstance(started, str) and started.strip():
-        try:
-            before_cutoff = (
-                datetime.fromisoformat(started.strip().replace("Z", "+00:00"))
-                .date()
-                .isoformat()
-                < CUTOFF_DATE
-            )
-        except ValueError:
-            before_cutoff = False
+    # CO-69 ronda 8: un `started` no textual no concede la exencion de fecha.
+    before_cutoff = _is_before_cutoff(started)
     if role_requires_lenses and status.startswith("asentada") and not before_cutoff:
         lenses = item.get("lentes")
         if (
@@ -888,6 +941,8 @@ def _handle_asiento(args):  # noqa: C901 - valida la proyeccion dry-run y apply
         for field in MUTABLE_FIELDS
         if getattr(args, field) is not None
     }
+    if "role" in changes:
+        _validate_role(changes["role"])
     if not changes:
         raise RegistryError("asiento sin campos a cambiar", RC_INVALID)
     path = Path(args.registry)
@@ -898,6 +953,10 @@ def _handle_asiento(args):  # noqa: C901 - valida la proyeccion dry-run y apply
             if field == "lentes":
                 value = _parse_json_field(value, field, list)
             projected[field] = value
+        if "status" in changes:
+            _check_cierre_no_canonico(
+                projected["role"], changes["status"], projected.get("started")
+            )
         _validate_cell_requirements(
             projected, settle_no_medido_motivo=args.settle_no_medido_motivo
         )
@@ -916,6 +975,10 @@ def _handle_asiento(args):  # noqa: C901 - valida la proyeccion dry-run y apply
         if field == "lentes":
             value = _parse_json_field(value, field, list)
         projected[field] = value
+    if "status" in changes:
+        _check_cierre_no_canonico(
+            projected["role"], changes["status"], projected.get("started")
+        )
     _validate_cell_requirements(
         projected, settle_no_medido_motivo=args.settle_no_medido_motivo
     )
@@ -927,6 +990,10 @@ def _handle_asiento(args):  # noqa: C901 - valida la proyeccion dry-run y apply
             if field == "lentes":
                 value = _parse_json_field(value, field, list)
             projected[field] = value
+        if "status" in changes:
+            _check_cierre_no_canonico(
+                projected["role"], changes["status"], projected.get("started")
+            )
         _validate_cell_requirements(
             projected, settle_no_medido_motivo=args.settle_no_medido_motivo
         )

@@ -131,7 +131,7 @@ def _collision_command(command, apply=False):
             "--code",
             "IM-2",
             "--role",
-            "builder",
+            "orquestadora",
             "--slot",
             "slot-2",
             "--thread-id",
@@ -637,7 +637,7 @@ def test_alta_dry_run_prints_session_without_writing(tmp_path):
         "--code",
         "IM-2",
         "--role",
-        "builder",
+        "orquestadora",
         "--slot",
         "slot-2",
         "--thread-id",
@@ -668,7 +668,7 @@ def test_alta_apply_writes_optional_fields_backup_and_ledger(tmp_path):
         "--code",
         "IM-2",
         "--role",
-        "builder",
+        "orquestadora",
         "--slot",
         "slot-2",
         "--thread-id",
@@ -708,7 +708,7 @@ def test_alta_rejects_duplicate_code(tmp_path):
         "--code",
         "IM-1",
         "--role",
-        "builder",
+        "orquestadora",
         "--slot",
         "s",
         "--thread-id",
@@ -935,7 +935,7 @@ def test_invalid_registry_forms_return_schema_error(tmp_path, contents):
         "--code",
         "IM-2",
         "--role",
-        "builder",
+        "orquestadora",
         "--slot",
         "s",
         "--thread-id",
@@ -1190,7 +1190,7 @@ def test_write_registry_fsync_precedes_replace(tmp_path, monkeypatch):
             "--code",
             "IM-2",
             "--role",
-            "builder",
+            "orquestadora",
             "--slot",
             "slot-2",
             "--thread-id",
@@ -1520,7 +1520,7 @@ def test_release_failure_before_mutation_keeps_current_rc(tmp_path):
             "--code",
             "IM-2",
             "--role",
-            "builder",
+            "orquestadora",
             "--slot",
             "slot-2",
             "--thread-id",
@@ -2209,7 +2209,7 @@ def test_l3_ledger_alta_contains_exact_audit_fields(tmp_path):
         "--code",
         "IM-2",
         "--role",
-        "builder",
+        "orquestadora",
         "--slot",
         "slot-2",
         "--thread-id",
@@ -2647,7 +2647,7 @@ def test_all_subcommands_reject_duplicate_registry_codes(tmp_path, command):
             "--code",
             "IM-2",
             "--role",
-            "builder",
+            "orquestadora",
             "--slot",
             "slot-2",
             "--thread-id",
@@ -2692,7 +2692,7 @@ def test_4i_missing_registry_dry_run_returns_schema_error(tmp_path, command):
             "--code",
             "IM-1",
             "--role",
-            "builder",
+            "orquestadora",
             "--slot",
             "s",
             "--thread-id",
@@ -2724,7 +2724,7 @@ def test_4ii_alta_duplicate_apply_returns_conflict_without_change(tmp_path):
         "--code",
         "IM-1",
         "--role",
-        "builder",
+        "orquestadora",
         "--slot",
         "s",
         "--thread-id",
@@ -2852,7 +2852,7 @@ def _post_commit_command(command, snapshot):
             "--code",
             "IM-2",
             "--role",
-            "builder",
+            "orquestadora",
             "--slot",
             "slot-2",
             "--thread-id",
@@ -3502,6 +3502,264 @@ def test_alta_implantacion_con_celda_rc0(tmp_path):
     assert result.returncode == 0
 
 
+@pytest.mark.parametrize("apply", [False, True])
+@pytest.mark.parametrize("role", ["implantador", "rol-inventado"])
+def test_dod_m01_alta_rechaza_role_no_canonico_sin_escritura(tmp_path, role, apply):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "registry_changes.jsonl"
+    write_registry(registry)
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        "alta",
+        "--code",
+        "IM-146D",
+        "--role",
+        role,
+        "--slot",
+        "slot-1",
+        "--thread-id",
+        "thread-146d",
+        "--started",
+        "2026-11-12T10:00:00+01:00",
+        "--status",
+        "ACTIVE",
+        "--by",
+        "test",
+        "--reason",
+        "role contract",
+        *(["--apply"] if apply else []),
+        ledger=ledger,
+    )
+    assert result.returncode == 2
+    assert role in result.stderr
+    for admitted in ("implantacion", "triaje", "orquestadora", "supervisora"):
+        assert admitted in result.stderr
+    if role == "implantador":
+        assert "sugiere implantacion" in result.stderr
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+    assert not registry.with_name("registry.json.bak1").exists()
+
+
+def test_dod_m03_asiento_role_valida_solo_si_se_cambia(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry, [{**session(), "role": "implantador"}])
+    invalid = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--role",
+        "implantador",
+        "--by",
+        "test",
+        "--reason",
+        "role contract",
+    )
+    assert invalid.returncode == 2
+    assert "implantador" in invalid.stderr
+    valid = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        "--role",
+        "implantacion",
+        "--by",
+        "test",
+        "--reason",
+        "role contract",
+    )
+    assert valid.returncode == 0
+
+
+@pytest.mark.parametrize(
+    "field_args", [["--status", "SETTLED"], ["--reporta-a", "CO-1"]]
+)
+def test_dod_m04_asiento_sin_role_no_valida_role_historico(tmp_path, field_args):
+    registry = tmp_path / "registry.json"
+    write_registry(
+        registry,
+        [{**session(), "role": "implantador", "status": "SETTLED"}],
+    )
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-1",
+        *field_args,
+        "--by",
+        "test",
+        "--reason",
+        "historical role",
+    )
+    assert result.returncode == 0
+
+
+@pytest.mark.parametrize("apply", [False, True])
+@pytest.mark.parametrize("role", ["implantacion", "triaje"], ids=["im", "tr"])
+@pytest.mark.parametrize(
+    "status", ["SETTLED", "settled (detalle)", "COMPLETED (integrado)", "COMPLETADA"]
+)
+def test_dod_m09_asiento_cierre_no_canonico_rechaza_sin_escritura(
+    tmp_path, role, status, apply
+):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "registry_changes.jsonl"
+    code = "IM-1" if role == "implantacion" else "TR-1"
+    write_registry(
+        registry,
+        [
+            {
+                **session(code),
+                "role": role,
+                "started": "2026-11-12T10:00:00+01:00",
+            }
+        ],
+    )
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        code,
+        "--status",
+        status,
+        "--by",
+        "test",
+        "--reason",
+        "status contract",
+        *(["--apply"] if apply else []),
+        ledger=ledger,
+    )
+    assert result.returncode == 2
+    assert status in result.stderr
+    assert "ASENTADA" in result.stderr
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_dod_m10_alta_cierre_no_canonico_rechaza_sin_escritura(tmp_path, apply):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "registry_changes.jsonl"
+    write_registry(registry)
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        "alta",
+        "--code",
+        "IM-146D-SETTLED",
+        "--role",
+        "implantacion",
+        "--slot",
+        "slot-1",
+        "--thread-id",
+        "thread-settled",
+        "--started",
+        "2026-11-12T10:00:00+01:00",
+        "--status",
+        "SETTLED",
+        "--by",
+        "test",
+        "--reason",
+        "status contract",
+        *(["--apply"] if apply else []),
+        ledger=ledger,
+    )
+    assert result.returncode == 2
+    assert "SETTLED" in result.stderr
+    assert "ASENTADA" in result.stderr
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+
+
+def test_dod_m11_cierre_no_canonico_permite_roles_no_im_tr_y_pasado(tmp_path):
+    for index, (role, started) in enumerate(
+        [
+            ("supervisora", "2026-11-12T10:00:00+01:00"),
+            ("orquestadora", "2026-11-12T10:00:00+01:00"),
+            ("implantacion", "2026-11-09T23:59:00+01:00"),
+        ],
+        start=1,
+    ):
+        registry = tmp_path / f"registry-{index}.json"
+        write_registry(
+            registry,
+            [{**session(f"IM-{index}"), "role": role, "started": started}],
+        )
+        result = run_cli(
+            registry,
+            "asiento",
+            "--code",
+            f"IM-{index}",
+            "--status",
+            "SETTLED",
+            "--by",
+            "test",
+            "--reason",
+            "status contract",
+        )
+        assert result.returncode == 0
+
+
+def test_dod_m12_asentada_predicado_sigue_literal_y_prefijos_fuente_unica():
+    assert (
+        "ASENTADA exige dos veredictos de lentes"
+        in _REGISTRY_OPS_MODULE.__dict__[
+            "_validate_cell_requirements"
+        ].__code__.co_consts
+    )
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert source.count("NON_CANONICAL_CLOSURE_PREFIXES =") == 1
+    assert "NON_CANONICAL_CLOSURE_PREFIXES" in source
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_dod_m17_triaje_settled_rechaza_y_asentada_canonica_pasa(tmp_path, apply):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "registry_changes.jsonl"
+    write_registry(
+        registry,
+        [{**session("TR-1"), "role": "triaje", "started": "2026-11-12T10:00:00+01:00"}],
+    )
+    before = registry.read_bytes()
+    rejected = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "TR-1",
+        "--status",
+        "SETTLED (EXCEPCION DECLARADA: brief sin lentes; LISTO verificado por CO-195)",
+        "--by",
+        "test",
+        "--reason",
+        "triaje closure",
+        *(["--apply"] if apply else []),
+        ledger=ledger,
+    )
+    assert rejected.returncode == 2
+    assert "ASENTADA" in rejected.stderr
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+    accepted = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "TR-1",
+        "--status",
+        "ASENTADA",
+        "--lentes",
+        json.dumps([{"veredicto": "APPROVE"}, {"veredicto": "APPROVE"}]),
+        "--by",
+        "test",
+        "--reason",
+        "triaje closure",
+    )
+    assert accepted.returncode == 0
+
+
 def _settle_args(lenses, apply=False):
     return [
         "asiento",
@@ -4031,7 +4289,7 @@ def test_alta_asiento_status_activa_acepta_predicado(tmp_path, command, status):
             "--code",
             "IM-2",
             "--role",
-            "builder",
+            "orquestadora",
             "--slot",
             "builder-2",
             "--thread-id",
