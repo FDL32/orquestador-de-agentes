@@ -334,10 +334,42 @@ def test_wot_2026_231f_exemption_does_not_skip_c14(monkeypatch, tmp_path):
     lines: list[str] = []
     finding = cba._c14_finding(repo, {"id": ticket, "commit": commit}, cutoff, lines)
     assert finding["veredicto"] == cba.LENTES_TR_NO_CONFORME
-    _code, _lines, findings = cba._apply_lens_and_primary_checks(
+    code, _lines, findings = cba._apply_lens_and_primary_checks(
         repo, commit, [{"id": ticket, "commit": commit}], [], [], 0
     )
     assert any(item["veredicto"] == cba.LENTES_TR_NO_CONFORME for item in findings)
+    assert code == 1
+
+
+def test_wot_2026_231f_exempt_conforming_primary_stays_conforme(monkeypatch, tmp_path):
+    """Una exención conforme no fabrica un WARN retroactivo."""
+    expected = frozenset(
+        {
+            "WOT-2026-231e",
+            "WOT-2026-237b",
+            "WOT-2026-146b",
+            "WOT-2026-174b",
+            "WOT-2026-215c",
+        }
+    )
+    assert isinstance(cba.PRIMARY_SOURCE_RETROACTIVE_EXEMPT, frozenset)
+    assert expected == cba.PRIMARY_SOURCE_RETROACTIVE_EXEMPT
+
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    ticket = "WOT-2026-231e"
+    commit = commit_alta_with_ficha(
+        repo,
+        row(ticket),
+        "alta retroactiva con recibo PRIMARY_SOURCE",
+        ticket,
+        normative_flt_ficha(primary_source_receipt(ticket)),
+    )
+    finding = cba._primary_source_finding(repo, {"id": ticket, "commit": commit}, [])
+    assert finding is not None
+    assert finding["veredicto"] == cba.VER_PRIMARY_SOURCE_CONFORME
+    assert finding["veredicto"] != cba.VER_PRIMARY_SOURCE_WARN_RETROACTIVE
 
 
 def test_standalone_rejects_verdict_outside_set():
