@@ -29,6 +29,41 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.flight import verify_user_authorization as vua  # noqa: E402
 
 
+def test_module_loads_by_path_without_repo_on_sys_path(tmp_path):
+    """Ensure route-based flight loaders can import the verifier in isolation.
+
+    Before: the verifier is loaded by file path from outside the repository
+        with isolated interpreter imports, as the flight guards do.
+    During: register the module before executing its spec in a subprocess.
+    After: the module loads without a ``scripts`` package on ``sys.path``.
+    """
+    source = """
+import importlib.util
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("verify_user_authorization", path)
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-c",
+            source,
+            str(REPO_ROOT / "scripts" / "flight" / "verify_user_authorization.py"),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 # DDL REAL copiado de sqlite_master de la copia de statev2.sqlite (solo esquema).
 MESSAGES_DDL = """
 CREATE TABLE orchestration_v2_projection_messages (

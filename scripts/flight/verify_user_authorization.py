@@ -45,8 +45,6 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import quote
 
-from scripts.pre_handoff_guard import assert_canonical_suite_green
-
 
 try:
     import tomllib
@@ -77,6 +75,7 @@ THREAD_COLUMNS = ("thread_id", "created_at", "updated_at", "deleted_at")
 
 ACCEPTED_CREATED_BY = "user"
 ACCEPTED_SOURCES = frozenset({"web", "mobile"})
+assert_canonical_suite_green = None
 
 # Se miran en el messageId, NUNCA en el texto.
 FORBIDDEN_MESSAGE_ID_PREFIXES = (
@@ -2257,7 +2256,13 @@ def _verify_suite_seal(  # noqa: C901
     After: devuelve `(True, None)` solo con evidencia completa; cualquier
         ausencia, JSON roto o fila discrepante es rechazo fail-closed.
     """
-    ok, diag = assert_canonical_suite_green(Path(project_root).resolve(), "code")
+    suite_checker = assert_canonical_suite_green
+    if suite_checker is None:
+        from scripts.pre_handoff_guard import (
+            assert_canonical_suite_green as suite_checker,
+        )
+
+    ok, diag = suite_checker(Path(project_root).resolve(), "code")
     if not ok or diag.get("reason") != "fresh_green":
         if diag.get("reason") == "last_run_missing":
             return False, "suite-seal-missing"
