@@ -76,6 +76,36 @@
     (prefijo `mcp:`, modo queue) a {{HILO_COORDINADORA}} y, tras el siguiente
     aviso, notifica al usuario; nunca la relevas sola.
 
+12c. Solo supervisora: si existe una CONSULTA_SEGUIR_PARAR pendiente, responde
+     siempre antes que el resto del latido. Lee la ultima entrada de
+     OPERACION_EN_CURSO de {{ID_COORDINADORA}} y su ultimo mensaje.
+
+     Si decide SEGUIR, responde por mensaje `SEGUIR <paso>`. Si decide PARAR,
+     ejecuta `scripts/flight/stop_consult_pause.py --set --minutos <minutos>
+     --consulta "<motivo>" --acting-thread {{HILO_PROPIO}}` (anade `--now
+     <hora>` solo si quieres fijar una hora distinta a la actual); minutos debe
+     ser <=60, y los campos obligatorios son minutos, motivo (consulta) y el
+     hilo propio (acting-thread).
+
+     En cada tick anade la orden fija literal `{{PYTHON}}
+     scripts/flight/stop_consult_mode.py status --report`. El reporte describe
+     modo, filas no_medido, topes y escapes de las ultimas 24h y conserva su rc
+     literal; si falla, declara exactamente `NO MEDIDO`, nunca verde silencioso.
+
+     A las 24 horas desde la activacion del modo, la supervisora entrega al
+     usuario el informe A13 de WOT-2026-215b: dueno=supervisora, momento=24
+     horas, destinatario=usuario.
+
+12d. Regla de turno: consulta a tu supervisora con t3_thread_send a <threadId de active_roles.supervisor> con CONSULTA_SEGUIR_PARAR: <ultima accion> | <cola>, y lanza un temporizador en segundo plano de 600 s.
+     Un mensaje final de cualquier sesion nunca solo anuncia un paso: siempre
+     (a) lo ejecuta, (b) declara bloqueo, o (c) pregunta. Si el temporizador de
+     600s despierta a la coordinadora sin respuesta, la coordinadora escribe
+     `URGENTE` al usuario en su mensaje final; el segundo cierre sin respondedor
+     se registra como escape. Establecer una pausa (fichero
+     `stop_consult_pause.json` vigente) cuenta como respuesta valida; "sin
+     respuesta" significa que ni se envio SEGUIR ni se establecio una pausa
+     vigente dentro de la ventana.
+
 13. Decide si releer el latido entero aplicando P27 (RATIFICADA, vinculante).
 
 Reporte final: 1-3 líneas con lo medido, incluido el rc del guard y el estado

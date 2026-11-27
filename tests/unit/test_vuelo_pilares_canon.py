@@ -221,6 +221,36 @@ def assert_pillar_contains_terms(
         raise ValueError(f"pillar {pillar} phrase missing term: {missing[0]}")
 
 
+P9_STOP_CONSULT_MECHANISM_TERMS = (
+    "minutos de IM ocioso con cola pendiente",
+    "WOT-2026-215b",
+    "stop_consult_mode.py",
+)
+P9_MESSAGE_ID = "96c8ad52-4bf5-4bf7-ad4a-9b6d4cad698d"
+
+
+def assert_p9_mechanism_cites_stop_barrier(text: str) -> None:
+    """Require P9's mechanism to retain its old evidence and cite 215b.
+
+    Before: ``text`` is a complete canonical pillar index.
+    During: parse the real P9 row and inspect only its mechanism cell.
+    After: return silently when the messageId, idle indicator, ticket, and
+    barrier name are all present; otherwise raise ``ValueError``.
+    """
+    row_re = re.compile(r"^\| P9 \|.*\|$", re.MULTILINE)
+    match = row_re.search(text)
+    if match is None:
+        raise ValueError("pillar P9 is missing")
+    row = parse_row(match.group(0))
+    if row["message_id"] != P9_MESSAGE_ID:
+        raise ValueError("pillar P9 messageId mismatch")
+    missing = [
+        term for term in P9_STOP_CONSULT_MECHANISM_TERMS if term not in row["mechanism"]
+    ]
+    if missing:
+        raise ValueError(f"pillar P9 mechanism missing term: {missing[0]}")
+
+
 P28_REQUIRED_TERMS = (
     "REVISOR",
     "cláusula",
@@ -242,6 +272,43 @@ def test_real_canon_p28_phrase_has_required_terms() -> None:
 def test_real_canon_p29_phrase_has_required_terms() -> None:
     text = CANON_PATH.read_text(encoding="utf-8")
     assert_pillar_contains_terms(text, "P29", P29_REQUIRED_TERMS)
+
+
+def test_real_canon_p9_mechanism_cites_stop_consult_barrier() -> None:
+    """Pin d-03's P9 evidence and the WOT-2026-215b barrier citation.
+
+    Before: the canonical P9 row is present in the production index.
+    During: parse the row and inspect its mechanism cell.
+    After: the old messageId and idle indicator remain alongside the new
+    stop-consult barrier citation.
+    """
+    assert_p9_mechanism_cites_stop_barrier(CANON_PATH.read_text(encoding="utf-8"))
+
+
+def test_mutation_p9_without_stop_consult_barrier_fails_explicitly() -> None:
+    """Mutating away d-03's 215b citation must fail the P9 contract.
+
+    Before: the real canonical index contains exactly one 215b citation in P9.
+    During: remove only the ticket citation and retain the prior evidence.
+    After: the P9 mechanism assertion rejects the candidate explicitly.
+    """
+    text = CANON_PATH.read_text(encoding="utf-8")
+    candidate = mutate_once(text, "barrera: WOT-2026-215b", "barrera: WOT-2026-215c")
+    with pytest.raises(ValueError, match="WOT-2026-215b"):
+        assert_p9_mechanism_cites_stop_barrier(candidate)
+
+
+def test_mutation_p9_without_stop_consult_mode_barrier_fails_explicitly() -> None:
+    """Mutating away the stop-consult script name must fail P9 explicitly.
+
+    Before: the real canonical index cites ``stop_consult_mode.py`` in P9.
+    During: remove only that mechanism citation while retaining the ticket.
+    After: the P9 mechanism assertion rejects the candidate by script name.
+    """
+    text = CANON_PATH.read_text(encoding="utf-8")
+    candidate = mutate_once(text, "stop_consult_mode.py", "stop_consult_mode_legacy.py")
+    with pytest.raises(ValueError, match=re.escape("stop_consult_mode.py")):
+        assert_p9_mechanism_cites_stop_barrier(candidate)
 
 
 def test_p28_fixture_without_revisor_fails_explicitly() -> None:

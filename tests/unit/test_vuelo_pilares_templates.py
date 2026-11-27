@@ -642,7 +642,7 @@ def test_mutation_m07_reintroduced_p16_fails() -> None:
 
 
 def extract_latido_supervisora_block(text: str) -> str:
-    """Extract LATIDO step 12b between steps 12 and 13.
+    """Extract LATIDO step 12b between steps 12 and 12c.
 
     Before: ``text`` is a complete LATIDO template with its marker header.
     During: remove the header and locate the 12b block boundaries in the body.
@@ -655,9 +655,30 @@ def extract_latido_supervisora_block(text: str) -> str:
     start = body.find("\n12b.")
     if start < 0:
         raise ValueError("LATIDO supervisora block 12b is missing")
+    end = body.find("\n12c.", start)
+    if end < 0:
+        raise ValueError("LATIDO supervisora block has no step 12c boundary")
+    return body[start:end]
+
+
+def extract_latido_consulta_block(text: str) -> str:
+    """Extract LATIDO step 12c between its own numbered boundaries.
+
+    Before: ``text`` is a complete LATIDO template with its marker header.
+    During: remove the header and locate the 12c block boundaries at steps 12c
+    and 13.
+    After: return the raw 12c block, or raise an explanatory ``ValueError``.
+    """
+    header = HEADER_RE.search(text)
+    if header is None:
+        raise ValueError("template is missing marker header")
+    body = text[header.end() :]
+    start = body.find("\n12c.")
+    if start < 0:
+        raise ValueError("LATIDO consulta block 12c is missing")
     end = body.find("\n13.", start)
     if end < 0:
-        raise ValueError("LATIDO supervisora block has no step 13 boundary")
+        raise ValueError("LATIDO consulta block has no step 13 boundary")
     return body[start:end]
 
 
@@ -791,6 +812,155 @@ def test_latido_supervisora_semantic_pins_mutant(literal: str) -> None:
     with pytest.raises(ValueError) as excinfo:
         assert_latido_supervisora_semantic_pin(candidate, literal)
     assert literal in str(excinfo.value)
+
+
+CONSULTA_SEGUIR_PARAR_FRAGMENT = (
+    "consulta a tu supervisora con t3_thread_send a <threadId de "
+    "active_roles.supervisor> con CONSULTA_SEGUIR_PARAR: <ultima accion> | "
+    "<cola>, y lanza un temporizador en segundo plano de 600 s."
+)
+CONSULTA_SEMANTIC_PINS = (
+    "12c. Solo supervisora: si existe una CONSULTA_SEGUIR_PARAR pendiente, "
+    "responde siempre antes que el resto del latido",
+    "Lee la ultima entrada de OPERACION_EN_CURSO de {{ID_COORDINADORA}} y su "
+    "ultimo mensaje",
+    "SEGUIR <paso>",
+    "Si decide PARAR, ejecuta `scripts/flight/stop_consult_pause.py --set",
+    '--minutos <minutos> --consulta "<motivo>" --acting-thread {{HILO_PROPIO}}',
+    "anade `--now <hora>` solo si quieres fijar una hora distinta a la actual",
+    "minutos debe ser <=60",
+    "minutos, motivo (consulta) y el hilo propio (acting-thread)",
+    "{{PYTHON}} scripts/flight/stop_consult_mode.py status --report",
+    "modo, filas no_medido, topes y escapes de las ultimas 24h",
+    "rc literal",
+    "NO MEDIDO",
+    "Regla de turno:",
+    CONSULTA_SEGUIR_PARAR_FRAGMENT,
+    "mensaje final de cualquier sesion nunca solo anuncia un paso",
+    "(a) lo ejecuta, (b) declara bloqueo, o (c) pregunta",
+    "URGENTE",
+    "se registra como escape",
+    "despierta a la coordinadora sin respuesta",
+    "fichero `stop_consult_pause.json` vigente) cuenta como respuesta valida",
+    '"sin respuesta" significa que ni se envio SEGUIR ni se establecio una pausa',
+    "dueno=supervisora, momento=24 horas, destinatario=usuario",
+    "informe A13 de WOT-2026-215b",
+)
+
+
+def assert_latido_consulta_semantic_pin(normalized: str, literal: str) -> None:
+    """Require one independent 12c consultation contract pin.
+
+    Before: ``normalized`` is the whitespace-collapsed LATIDO step 12c block.
+    During: check the requested clause independently from the other pins.
+    After: return silently when the clause exists; otherwise raise a named
+    ``ValueError`` so a one-clause mutant cannot pass.
+    """
+    if literal not in normalized:
+        raise ValueError(f"LATIDO 12c is missing semantic pin: {literal}")
+
+
+def assert_latido_consulta_semantic_pins(normalized: str) -> None:
+    """Require all d-01..d-10 pins inside the normalized 12c block.
+
+    Before: ``normalized`` is a whitespace-collapsed LATIDO step 12c block.
+    During: apply one named assertion to every consultation clause, retaining
+    separate checks for the two halves of d-06, d-08, and d-09.
+    After: return silently only for the complete consultation protocol.
+    """
+    for literal in CONSULTA_SEMANTIC_PINS:
+        assert_latido_consulta_semantic_pin(normalized, literal)
+
+
+def test_latido_consulta_semantic_pins() -> None:
+    """Pin the consultation protocol in LATIDO step 12c.
+
+    Before: the real LATIDO template is present on disk.
+    During: extract and normalize 12c, then check each d-01..d-10 clause.
+    After: the complete supervisory consultation contract is accepted.
+    """
+    text = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    normalized = " ".join(extract_latido_consulta_block(text).split())
+    assert_latido_consulta_semantic_pins(normalized)
+
+
+@pytest.mark.parametrize("literal", CONSULTA_SEMANTIC_PINS)
+def test_latido_consulta_semantic_pins_mutant(literal: str) -> None:
+    """Drop each consultation pin and require its independent failure.
+
+    Before: the real LATIDO template yields a normalized 12c block.
+    During: remove exactly one semantic pin with :func:`mutate_once`.
+    After: the assertion raises ``ValueError`` naming the removed clause.
+    """
+    text = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    normalized = " ".join(extract_latido_consulta_block(text).split())
+    candidate = mutate_once(normalized, literal, "")
+    with pytest.raises(ValueError) as excinfo:
+        assert_latido_consulta_semantic_pins(candidate)
+    assert literal in str(excinfo.value)
+
+
+def test_latido_consulta_minutes_limit_mutant() -> None:
+    """Removing the pause duration cap must fail the plural pin validator.
+
+    Before: the real LATIDO template contains the operational ``<=60`` cap.
+    During: remove only that cap from the normalized consultation block.
+    After: the production-path plural validator rejects the candidate.
+    """
+    text = TEMPLATE_PATHS[0].read_text(encoding="utf-8")
+    normalized = " ".join(extract_latido_consulta_block(text).split())
+    candidate = mutate_once(normalized, "minutos debe ser <=60, ", "")
+    with pytest.raises(ValueError, match="minutos debe ser <=60"):
+        assert_latido_consulta_semantic_pins(candidate)
+
+
+ARRANQUE_STOP_CONSULTA_COMMANDS = (
+    "{{PYTHON}} scripts/flight/stop_consult_mode.py status",
+    "{{PYTHON}} scripts/flight/stop_consult_mode.py on --mode <vigente>",
+)
+
+
+def assert_arranque_stop_consulta_commands(text: str) -> None:
+    """Require both literal stop-consult commands in ARRANQUE step 5b.
+
+    Before: ``text`` is the complete ARRANQUE template.
+    During: isolate step 5b and check status and activation commands separately.
+    After: return silently only when both d-07 command halves are present.
+    """
+    start = text.find("\n5b.")
+    end = text.find("\n6.", start)
+    if start < 0 or end < 0:
+        raise ValueError("ARRANQUE step 5b boundaries are missing")
+    block = text[start:end]
+    for literal in ARRANQUE_STOP_CONSULTA_COMMANDS:
+        if literal not in block:
+            raise ValueError(f"ARRANQUE 5b is missing literal: {literal}")
+
+
+def test_arranque_stop_consulta_commands() -> None:
+    """Pin the d-07 status and activation commands in ARRANQUE step 5b.
+
+    Before: the real ARRANQUE template is present on disk.
+    During: validate the isolated 5b block.
+    After: both literal commands are accepted.
+    """
+    assert_arranque_stop_consulta_commands(
+        TEMPLATE_PATHS[1].read_text(encoding="utf-8")
+    )
+
+
+@pytest.mark.parametrize("literal", ARRANQUE_STOP_CONSULTA_COMMANDS)
+def test_arranque_stop_consulta_commands_mutant(literal: str) -> None:
+    """Remove either d-07 command and require an explicit failure.
+
+    Before: the real ARRANQUE template contains both commands.
+    During: mutate one command in a fixture copy.
+    After: the isolated 5b contract rejects the missing half.
+    """
+    text = TEMPLATE_PATHS[1].read_text(encoding="utf-8")
+    candidate = mutate_once(text, literal, "")
+    with pytest.raises(ValueError):
+        assert_arranque_stop_consulta_commands(candidate)
 
 
 MANIFIESTO_ROLES_PATH = TEMPLATES_DIR / "MANIFIESTO_ARRANQUE_ROLES.md"

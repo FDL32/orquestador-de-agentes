@@ -1,4 +1,4 @@
-<!-- CANON_SHA256: bd69bb9627d9bf1408dfc11a20f7298b473b74b6fb868e01ce1c2198904ecdcf -->
+<!-- CANON_SHA256: aa9b1c8ca7b1b9de0963fa906d55c75a506d96b99828d3262db0ae7c5c0455a3 -->
 
 | Pilar | Frase | ESTADO | messageId | fuente larga | mecanismo | a quien preguntar | ambito |
 |---|---|---|---|---|---|---|---|
