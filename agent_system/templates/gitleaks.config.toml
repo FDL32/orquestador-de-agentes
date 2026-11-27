@@ -132,3 +132,25 @@ description = "fixture sintetico del test de aislamiento de entorno del sandbox 
 regexes = [
   '''valor-secreto-123''',
 ]
+
+# WOT-2026-146c: clave de ACUSE sintetica de una alerta del latido, no una
+# credencial. tests/unit/test_flight_stall_check.py la asigna como
+# `key = "im-sin-asentar-IM-905"` para comprobar el ack/re-aviso de
+# check_im_sin_asentar, y la regla generic-api-key la toma por un secreto por
+# la forma `key = "..."` (bloqueo del push del 2026-11-27, gitleaks en el rango
+# origin/main..HEAD, commit f604ad4e).
+#
+# PROCEDENCIA SINTETICA VERIFICADA (mismo contrato que WOT-2026-063c arriba):
+#  1. `git log --all -S'im-sin-asentar-IM-905'` devuelve solo los dos commits
+#     del test (6c754827 y f604ad4e, los dos WOT-2026-146c).
+#  2. `git grep` en HEAD solo lo encuentra en tests/unit/test_flight_stall_check.py.
+#  3. Es el nombre de detector `im-sin-asentar` con el codigo de sesion IM-905
+#     de la fixture: identificadores legibles, ninguno emitido por un proveedor.
+#
+# EXACTITUD: [a-z0-9-] puro, sin metacaracteres: como regex casa solo a si
+# mismo. Cualquier otro valor con forma de clave sigue bloqueando.
+[[allowlists]]
+description = "clave de acuse sintetica del test del detector im-sin-asentar (WOT-2026-146c). NO es una credencial: es el id de alerta que el test reconoce. Procedencia sintetica verificada, ver comentario."
+regexes = [
+  '''im-sin-asentar-IM-905''',
+]
