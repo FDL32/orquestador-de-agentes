@@ -218,6 +218,54 @@ def test_r06_invalid_inputs_return_rc2_without_paths(
     assert expected_error in str(payload["error"])
 
 
+def test_r03_r04_sweep_uses_destination_siblings_not_repos_root(
+    tmp_path: Path,
+) -> None:
+    """The collision/duplicate sweep must ignore ``repos_root`` entirely.
+
+    Measured defect (IM, WOT-2026-240a, e-01 against the real vuelo
+    workspace): sweeping ``repos_root`` (the normally-absent output tree)
+    instead of the selected destination's own siblings silently hid the real
+    ``destination_id`` duplicate this ticket exists to surface. ``repos_root``
+    here is a disjoint tree from where the destinations live, exactly like
+    the real ``C:/repos`` vs. ``Proyectos_Python`` layout.
+    """
+    repos_root = tmp_path / "repos"  # disjoint from both destination trees below
+
+    dup_tree = tmp_path / "proyectos_dup"
+    selected = dup_tree / "workspace"
+    duplicate_sibling = dup_tree / "motor_checkout"
+    _write_link(selected, destination_id="same", repos_root=repos_root)
+    duplicate_link = _write_link(
+        duplicate_sibling, prefix=None, destination_id="same", repos_root=repos_root
+    )
+
+    proc = _run_cli(selected, repos_root)
+    payload = _payload(proc)
+    assert proc.returncode == 0
+    assert len(payload["paths"]) == 5
+    assert any(
+        "AVISO" in warning and "same" in warning and str(duplicate_link) in warning
+        for warning in payload["warnings"]
+    )
+
+    collision_tree = tmp_path / "proyectos_collision"
+    collision_a = collision_tree / "collision_a"
+    collision_b = collision_tree / "collision_b"
+    first_link = _write_link(
+        collision_a, destination_root=collision_a, repos_root=repos_root
+    )
+    second_link = _write_link(
+        collision_b, destination_root=collision_b, repos_root=repos_root
+    )
+    collision_proc = _run_cli(collision_a, repos_root)
+    collision_payload = _payload(collision_proc)
+    assert collision_proc.returncode == 1
+    assert collision_payload["paths"] == []
+    assert str(first_link) in str(collision_payload["error"])
+    assert str(second_link) in str(collision_payload["error"])
+
+
 def test_r07_imports_reader_primitives_without_defining_a_reader() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     tree = ast.parse(source)

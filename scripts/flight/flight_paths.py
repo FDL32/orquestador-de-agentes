@@ -67,17 +67,23 @@ def _invalid_input(vuelo_id: str, repos_root: Path) -> str | None:
 
 
 def _read_tree_links(
-    repos_root: Path, selected_link: Path
+    sweep_root: Path, selected_link: Path
 ) -> tuple[list[tuple[Path, dict]], list[str]]:
-    """Read every direct child link under ``repos_root`` through shared helpers.
+    """Read every direct child link under ``sweep_root`` through shared helpers.
 
-    Before: ``repos_root`` identifies the sibling-repository tree and
-            ``selected_link`` is the already resolved link for the request.
+    Before: ``sweep_root`` is the directory that holds the SELECTED destination
+            as one of its direct children (its sibling-destinations tree), the
+            same convention ``scan_links`` uses for ``parent(motor_root)`` --
+            it is derived from the resolved link path, never from
+            ``repos_root`` (the output tree, normally empty or nonexistent
+            during this read-only piloto and unrelated to where destinations
+            actually live). ``selected_link`` is the already resolved link for
+            the request.
     During: enumerates link-bearing children with ``_link_dirs`` and reads each
             JSON document with ``_read_link``; no directory or file is created.
     After: returns readable link data plus warnings for unreadable documents.
     """
-    link_paths = [child / LINK_REL for child in _link_dirs(repos_root)]
+    link_paths = [child / LINK_REL for child in _link_dirs(sweep_root)]
     selected_resolved = selected_link.resolve()
     if selected_link.exists() and selected_resolved not in {
         link.resolve() for link in link_paths
@@ -157,8 +163,10 @@ def resolve_flight_paths(
             single path segment, and ``repos_root`` is an absolute sibling
             repository root. No output directory needs to exist.
     During: locates the selected link with ``find_destination_link``, reads it
-            via ``_read_link``, audits all sibling links through ``_link_dirs``,
-            and checks the dedicated three-letter prefix contract.
+            via ``_read_link``, audits all SIBLING-DESTINATION links (the
+            selected link's own parent directory, never ``repos_root``)
+            through ``_link_dirs``, and checks the dedicated three-letter
+            prefix contract.
     After: returns four flight subdirectories and ``<repos_root>/_motor`` on
            success; any validation, link, prefix, or collision failure returns
            no paths and a non-zero-compatible result. Never writes.
@@ -181,7 +189,14 @@ def resolve_flight_paths(
     if prefix_error is not None:
         return FlightPathsResult(error=prefix_error)
 
-    links, warnings = _read_tree_links(repos_root, link_path)
+    # The sweep tree is the SELECTED destination's own parent directory (its
+    # siblings), derived from the resolved link path -- WOT-2026-240a measured
+    # that sweeping ``repos_root`` instead finds nothing in the real tree: the
+    # output root is normally absent during this read-only piloto and is not
+    # where destinations live (``_link_dirs`` expects ``parent(destino_root)``,
+    # the same convention ``scan_links`` documents for ``parent(motor_root)``).
+    sweep_root = link_path.parents[3]
+    links, warnings = _read_tree_links(sweep_root, link_path)
     warnings.extend(_duplicate_destination_warnings(links))
     collision = _prefix_collision(links)
     if collision is not None:
