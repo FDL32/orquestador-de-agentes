@@ -95,9 +95,12 @@ def _load_rows(path: Path) -> list[dict[str, Any]]:
     return _parse_index_text(text, str(path))
 
 
-def _artifact_path(row: dict[str, Any], key: str, base: Path) -> Path:
+def _artifact_path(
+    row: dict[str, Any], key: str, base: Path, *, allow_d_drive: bool = False
+) -> Path:
     """Before: ``row`` contains an archive artifact reference.
-    During: resolve it below the disposable copy and reject D: paths.
+    During: resolve it below ``base`` and, unless the caller is the
+        real-root mode (``allow_d_drive``), reject D: paths.
     After: return a path safe to inspect without modifying the archive.
     """
     value = row.get(key)
@@ -106,16 +109,20 @@ def _artifact_path(row: dict[str, Any], key: str, base: Path) -> Path:
     path = Path(str(value))
     if not path.is_absolute():
         path = base / path
-    _reject_d_drive(path)
+    if not allow_d_drive:
+        _reject_d_drive(path)
     return path
 
 
-def _manifest_entries(row: dict[str, Any], base: Path) -> list[dict[str, Any]]:
-    """Before: ``row`` points at a manifest in a disposable archive copy.
+def _manifest_entries(
+    row: dict[str, Any], base: Path, *, allow_d_drive: bool = False
+) -> list[dict[str, Any]]:
+    """Before: ``row`` points at a manifest in a disposable archive copy or,
+        with ``allow_d_drive``, at a real mounted root.
     During: decode and validate every manifest entry.
     After: return entries in deterministic relative-path order.
     """
-    path = _artifact_path(row, "manifest", base)
+    path = _artifact_path(row, "manifest", base, allow_d_drive=allow_d_drive)
     try:
         decoded = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -130,14 +137,16 @@ def _manifest_entries(row: dict[str, Any], base: Path) -> list[dict[str, Any]]:
     return sorted(entries, key=lambda item: str(item["rel"]))
 
 
-def _enrich_row(row: dict[str, Any], base: Path) -> dict[str, Any]:
+def _enrich_row(
+    row: dict[str, Any], base: Path, *, allow_d_drive: bool = False
+) -> dict[str, Any]:
     """Before: ``row`` identifies existing archive evidence.
     During: verify the zip/hash and derive list and clone evidence.
     After: return a complete deterministic row with no source fields lost.
     """
     result = dict(row)
-    zip_path = _artifact_path(row, "zip", base)
-    manifest_path = _artifact_path(row, "manifest", base)
+    zip_path = _artifact_path(row, "zip", base, allow_d_drive=allow_d_drive)
+    manifest_path = _artifact_path(row, "manifest", base, allow_d_drive=allow_d_drive)
     if not zip_path.is_file() or not manifest_path.is_file():
         raise ValueError(f"archive artifacts missing for {row.get('family')}")
     expected_hash = row.get("zip_sha256")
@@ -153,7 +162,7 @@ def _enrich_row(row: dict[str, Any], base: Path) -> dict[str, Any]:
         != str(expected_manifest_hash).lower()
     ):
         raise ValueError(f"manifest hash mismatch for {manifest_path}")
-    entries = _manifest_entries(row, base)
+    entries = _manifest_entries(row, base, allow_d_drive=allow_d_drive)
     canonical = [
         {"rel": str(item["rel"]).replace("\\", "/"), "sha256": str(item["sha256"])}
         for item in entries
@@ -185,7 +194,7 @@ def _origin_is_present(row: dict[str, Any], base: Path) -> bool:
 
 
 def _generated_rows(
-    row: dict[str, Any], base: Path
+    row: dict[str, Any], base: Path, *, allow_d_drive: bool = False
 ) -> tuple[dict[str, Any]] | tuple[dict[str, Any], dict[str, Any]]:
     """Before: ``row`` is a legacy retired-local or archived record.
     During: copy every field and replace only the lifecycle status; skip the
@@ -194,7 +203,7 @@ def _generated_rows(
     After: return only the ARCHIVADO row for a live origin, or the ARCHIVADO
         then RETIRADO pair for an absent one (today's behavior).
     """
-    archived = _enrich_row(row, base)
+    archived = _enrich_row(row, base, allow_d_drive=allow_d_drive)
     archived["status"] = ARCHIVED_STATUS
     if _origin_is_present(row, base):
         return (archived,)
@@ -217,8 +226,11 @@ def _migration_rows(
     source_rows: Iterable[dict[str, Any]],
     target_rows: Iterable[dict[str, Any]],
     base: Path,
+    *,
+    allow_d_drive: bool = False,
 ) -> tuple[list[dict[str, Any]], int, int]:
-    """Before: source and target rows came from isolated index copies.
+    """Before: source and target rows came from isolated index copies, or,
+        with ``allow_d_drive``, from a real root mounted on D:.
     During: preserve target history and append missing generated transitions.
     After: return output rows, legacy-row count, and newly added-row count.
     """
@@ -244,7 +256,7 @@ def _migration_rows(
         ):
             continue
         migrated += 1
-        for generated in _generated_rows(source_row, base):
+        for generated in _generated_rows(source_row, base, allow_d_drive=allow_d_drive):
             if generated.get("status") == ARCHIVED_STATUS and archived_exists:
                 continue
             key = _row_key(generated)
@@ -409,7 +421,9 @@ def migrate_real_root(
     index = Path(index)
     initial_bytes = _read_real_root_bytes(index)
     initial_rows = _parse_index_text(initial_bytes.decode("utf-8"), str(index))
-    _, migrated, added = _migration_rows(initial_rows, initial_rows, index.parent)
+    _, migrated, added = _migration_rows(
+        initial_rows, initial_rows, index.parent, allow_d_drive=True
+    )
     would_write = added > 0
     if not apply:
         return MigrationResult(migrated, added, would_write, False)
@@ -433,7 +447,7 @@ def migrate_real_root(
             )
         locked_rows = _parse_index_text(locked_bytes.decode("utf-8"), str(index))
         output_rows, migrated, added = _migration_rows(
-            locked_rows, locked_rows, index.parent
+            locked_rows, locked_rows, index.parent, allow_d_drive=True
         )
         would_write = added > 0
         if would_write:

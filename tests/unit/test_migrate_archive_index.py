@@ -396,7 +396,9 @@ def test_f03_4_backup_dir_inside_root_is_rejected(tmp_path: Path) -> None:
     assert not (index.parent / ".p7.lock").exists()
 
 
-def test_f03_4b_backup_copy_with_sha256_lands_outside_root(tmp_path: Path) -> None:
+def test_f03_4_valid_backup_copy_with_sha256_lands_outside_root(
+    tmp_path: Path,
+) -> None:
     """Before: a real-root index is about to be migrated with --apply.
     During: run migrate_real_root successfully.
     After: a verbatim pre-write copy and its sha256 exist in backup-dir."""
@@ -546,3 +548,39 @@ def test_f06_real_root_second_apply_adds_nothing_and_does_not_rewrite(
     assert second.added_rows == 0
     assert second.written is False
     assert index.read_bytes() == bytes_after_first
+
+
+def test_f03_artifact_path_allows_d_drive_only_when_flagged() -> None:
+    """Before: a row's zip/manifest artifact lives directly under D:.
+    During: resolve its path with and without the real-root bypass.
+    After: only allow_d_drive=True (real-root) accepts the D: artifact path;
+           the default (disposable-copy) path still rejects it closed."""
+    row = {"zip": "fam/x.zip"}
+    base = Path("D:/flight_archive")
+
+    allowed = migrate_archive_index._artifact_path(row, "zip", base, allow_d_drive=True)
+    assert allowed == base / "fam/x.zip"
+
+    with pytest.raises(ValueError, match="forbidden"):
+        migrate_archive_index._artifact_path(row, "zip", base, allow_d_drive=False)
+
+
+def test_f03_real_root_enrichment_bypasses_d_drive_rejection() -> None:
+    """Before: a real-root row's zip/manifest base is a D: path (never
+       written to; only Path.is_file() is probed, which is read-only and
+       returns False for a path that is not mounted or does not exist).
+    During: enrich the row with allow_d_drive=True.
+    After: the failure is "archive artifacts missing", never "D: archive
+           paths are forbidden" -- proving real-root mode can reach real
+           evidence checks on D: instead of being rejected before trying.
+           Without the flag, the old D:-rejection failure mode returns."""
+    row = {"family": "fam", "zip": "fam/x.zip", "manifest": "fam/x.json"}
+    base = Path("D:/wot175f_nonexistent_probe_dir")
+
+    with pytest.raises(ValueError) as excinfo:
+        migrate_archive_index._enrich_row(row, base, allow_d_drive=True)
+    assert "forbidden" not in str(excinfo.value)
+    assert "missing" in str(excinfo.value)
+
+    with pytest.raises(ValueError, match="forbidden"):
+        migrate_archive_index._enrich_row(row, base, allow_d_drive=False)
