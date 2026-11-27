@@ -795,8 +795,8 @@ q("P1G", 'limits = data["rateLimits"]', 'limits = payload["rateLimits"]')
 m(
     "P4A",
     "2A",
-    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "im-ocioso",\n    "cola-despachable",\n    "huerfano",\n)',
-    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "im-ocioso",\n    "huerfano",\n)',
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "im-ocioso",\n    "cola-despachable",\n    "huerfano",\n    "busqueda-huerfana",\n)',
+    'DETECTOR_NAMES = (\n    "quota",\n    "cola",\n    "git",\n    "ocio-con-cola",\n    "disco",\n    "hook",\n    "im-ocioso",\n    "huerfano",\n    "busqueda-huerfana",\n)',
 )
 m("P4B", "2A", "if len(streak) < DIAG_TICKS:", "if len(streak) < 1:")
 m(
@@ -814,7 +814,7 @@ m(
 m(
     "IM1",
     "2A",
-    "receipt_trigger = bool(ticket_candidates & integrated)",
+    "receipt_trigger = bool(\n            started_at is not None\n            and started_at >= FRONTERA_RECIBO_IM_TR\n            and ticket is not None\n            and ticket in integrated\n        )",
     "receipt_trigger = False",
 )
 m(
@@ -1208,6 +1208,8 @@ REANCHORED = {
     "N93": "163a: codex exception shape changed",
     "Q25": "163a: codex no-probe shape changed",
     "A1b": "163a: quota account tuple normalization moved",
+    "P4A": "227c 6fe1e860: DETECTOR_NAMES incluye busqueda-huerfana",
+    "IM1": "146f 7d94ae36: receipt_trigger lee started_at/frontera/ticket integrado",
 }
 
 if __name__ == "__main__":

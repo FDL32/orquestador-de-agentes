@@ -32,7 +32,7 @@ REANCHORED = {
     "N2": "153m 567eb000: bloque except de load_state con STATE_LOAD_STATUS",
     "E2": "153m 567eb000: validacion de tipo de load_state",
     "N7": "153m 567eb000: _try_lock usa seek y LK_NBLCK",
-    "X14": "153i vigente: rama ack de clave ausente",
+    "X14": "153i vigente: rama ack de clave ausente; 146c f81f1acd: resolve repite el patron, se ancla a la linea _rec de ack",
     "N30": "153i vigente: borrado de clave en reconcile",
     "N31": "153i vigente: rama dry de reconcile",
     "N32": "153i vigente: rama update_state de reconcile",
@@ -247,8 +247,8 @@ m(
 m(
     "X14",
     "1A",
-    '    if "event:" + key not in state:\n        print(f"sin registro de {key}")\n        return 10',
-    '    if "event:" + key not in state:\n        print(f"sin registro de {key}")\n        return 0',
+    '        return 10\n    if _rec(state["event:" + key]) is None:',
+    '        return 0\n    if _rec(state["event:" + key]) is None:',
 )
 m(
     "N28",

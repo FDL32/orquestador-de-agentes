@@ -55,7 +55,7 @@ def _tree(root):
 
 
 def test_catalogo_de_mutaciones_y_reanclajes_es_completo():
-    """El arnés conserva el denominador completo y los 12 reanclajes de 153j."""
+    """El arnés conserva el denominador completo y los 19 reanclajes."""
     module = _load_harness()
 
     assert len(module.MUT) == 187
@@ -78,6 +78,8 @@ def test_catalogo_de_mutaciones_y_reanclajes_es_completo():
         "N93",
         "Q25",
         "A1b",
+        "P4A",
+        "IM1",
     }
     assert all(module.REANCHORED.values())
     assert module.main(["--repo", str(ROOT), "--validate-only"]) == 0
