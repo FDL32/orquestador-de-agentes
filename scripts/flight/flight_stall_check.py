@@ -3881,10 +3881,14 @@ def main(argv=None):
         a.baseline or a.self_check or a.heartbeat_check or a.test_detector
     ):
         ap.error("--p8-gaps no se combina con modos de tick")
+    if a.p8_gaps:
+        try:
+            return run_p8_gaps(a)
+        except Exception as exc:
+            print(f"STALL_CHECK_BROKEN: {type(exc).__name__}: {str(exc)[:160]}")
+            return 2
     try:
-        if a.self_check:
-            return self_check(a)
-        return run_p8_gaps(a) if a.p8_gaps else run(a)
+        return self_check(a) if a.self_check else run(a)
     except Exception as exc:
         print(f"STALL_CHECK_BROKEN: {type(exc).__name__}: {str(exc)[:160]}")
         return 2
