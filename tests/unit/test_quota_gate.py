@@ -548,6 +548,99 @@ def test_quota_gate_cli_declara_flag_explicito_de_aumento():
     assert parsed.aumento_concurrencia is True
 
 
+def test_quota_gate_aumento_rechaza_sesion_que_excede_cupo_de_tipo(
+    tmp_path, monkeypatch, capsys
+):
+    """Reject a target account whose third active session exceeds two declared slots."""
+    roster = roster_for(
+        accounts={"claudeAgent_alvarovans": "alvarovans"},
+        supervisor="alvarovans",
+    )
+    roster["sessions"] = {
+        "implantacion-1": {"type": "implantacion"},
+        "implantacion-2": {"type": "implantacion"},
+    }
+    payload = payload_for(
+        {"cuenta": "alvarovans", "block_pct": 10},
+    )
+    payload["dimensions"] = {
+        "sesiones": {"estado": "NO_MEDIDO", "causas": ["sesion_excede_cupo"]},
+        "subagentes": {"estado": "NO_MEDIDO", "causas": ["sesion_excede_cupo"]},
+    }
+    payload["sesiones"] = [
+        {
+            "sesion": "IM-302",
+            "cuenta": "alvarovans",
+            "calidad_medida": "OK",
+            "block_pct": 10,
+        },
+        {
+            "sesion": "IM-303",
+            "cuenta": "alvarovans",
+            "calidad_medida": "OK",
+            "block_pct": 10,
+        },
+        {
+            "sesion": "IM-ROGUE-REALISTA",
+            "cuenta": "alvarovans",
+            "calidad_medida": "NO_MEDIDO",
+            "block_pct": None,
+            "causa": "sesion_excede_cupo",
+        },
+    ]
+    payload["subagentes"] = [
+        {
+            "subagente": "IM-302:im.builder",
+            "sesion": "IM-302",
+            "cuenta": "alvarovans",
+            "calidad_medida": "OK",
+            "block_pct": 10,
+        },
+        {
+            "subagente": "IM-303:im.builder",
+            "sesion": "IM-303",
+            "cuenta": "alvarovans",
+            "calidad_medida": "OK",
+            "block_pct": 10,
+        },
+        {
+            "subagente": "IM-ROGUE-REALISTA:im.builder",
+            "sesion": "IM-ROGUE-REALISTA",
+            "cuenta": "alvarovans",
+            "calidad_medida": "NO_MEDIDO",
+            "block_pct": None,
+            "causa": "sesion_excede_cupo",
+        },
+    ]
+
+    result = quota_gate.evaluate(
+        roster,
+        payload,
+        "claudeAgent_alvarovans",
+        increase_concurrency=True,
+    )
+
+    assert result["rc"] == 9
+    assert "sesion_excede_cupo" in result["motivo"]
+
+    flight_dir = tmp_path / "flight"
+    flight_dir.mkdir()
+    (flight_dir / "flight_roster.json").write_text(json.dumps(roster), encoding="utf-8")
+    monkeypatch.setattr(quota_gate, "measure", lambda _flight_dir: payload)
+    cli_rc = quota_gate.main(
+        [
+            "--target-instance",
+            "claudeAgent_alvarovans",
+            "--flight-dir",
+            str(flight_dir),
+            "--aumento-concurrencia",
+        ]
+    )
+    cli_output = capsys.readouterr().out
+    assert cli_rc == 9
+    assert "sesion_excede_cupo" in cli_output
+
+
 def test_quota_gate_m04_payload_legacy_sin_censo_nuevo_sigue_siendocompatible():
     """Keep old account-only rosters compatible while no new dimension is declared."""
     result = quota_gate.evaluate(

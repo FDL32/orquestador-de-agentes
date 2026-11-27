@@ -835,6 +835,80 @@ def test_quota_tick_m01_mide_cuenta_sesion_y_subagente_con_forma_real(rig):
     }
 
 
+def test_quota_tick_cupo_por_tipo_marca_la_tercera_sesion_activa(rig):
+    """Reject the third active session when the roster declares two slots of its type."""
+    rig.roster(
+        raw=json.dumps(
+            {
+                "sessions": {
+                    "implantacion-1": {"type": "implantacion"},
+                    "implantacion-2": {"type": "implantacion"},
+                },
+                "quota": {
+                    "account_policy": {
+                        "provider_map": {"claudeAgent_alvarovans": "alvarovans"},
+                        "preferred_account": "alvarovans",
+                    }
+                },
+            }
+        )
+    )
+    valid_cell = {
+        "resolucion": {
+            "puestos": {
+                "im.builder": {"lanzamiento": {"instanceId": "claudeAgent_alvarovans"}}
+            }
+        }
+    }
+    registry = {
+        "sessions": [
+            {
+                "code": "IM-302",
+                "threadId": "thread-im-302",
+                "role": "implantacion",
+                "status": "ACTIVA",
+                "slot": "implantacion-1",
+                "nota": "WOT-2026-153c_CUENTA_alvarovans",
+                "celda_asignacion": valid_cell,
+            },
+            {
+                "code": "IM-303",
+                "threadId": "thread-im-303",
+                "role": "implantacion",
+                "status": "ACTIVA",
+                "slot": "implantacion-2",
+                "nota": "WOT-2026-153c_CUENTA_alvarovans",
+                "celda_asignacion": valid_cell,
+            },
+            {
+                "code": "IM-ROGUE-REALISTA",
+                "threadId": "thread-im-rogue-realista",
+                "role": "implantacion",
+                "status": "ACTIVA",
+                "slot": "implantacion-rogue",
+                "nota": "WOT-2026-153c_CUENTA_alvarovans",
+                "celda_asignacion": valid_cell,
+            },
+        ]
+    }
+    (rig.dir / "session_registry.json").write_text(
+        json.dumps(registry), encoding="utf-8"
+    )
+    rig.monitor_out = json.dumps(accounts(alvarovans=acct(10)))
+
+    rc, encoded = rig.tick("--json")
+    payload = json.loads(encoded)
+    rogue = next(
+        entry for entry in payload["sesiones"] if entry["sesion"] == "IM-ROGUE-REALISTA"
+    )
+
+    assert rc == 0 and payload["rc_info"] == 0
+    assert rogue["calidad_medida"] == "NO_MEDIDO"
+    assert rogue["causa"] == "sesion_excede_cupo"
+    assert payload["dimensions"]["sesiones"]["estado"] == "NO_MEDIDO"
+    assert payload["dimensions"]["subagentes"]["estado"] == "NO_MEDIDO"
+
+
 @pytest.mark.parametrize(
     ("mutation", "cause"),
     (

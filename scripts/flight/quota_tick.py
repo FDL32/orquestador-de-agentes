@@ -532,6 +532,23 @@ def _dimensions(accounts, flight_dir, policy):  # noqa: C901
         for entry in active
         if entry.get("role") in declared_types or entry.get("slot") in declared
     ]
+    slots_by_type = {}
+    for value in declared.values():
+        role = value.get("type") if isinstance(value, dict) else None
+        if isinstance(role, str):
+            slots_by_type[role] = slots_by_type.get(role, 0) + 1
+    overflow_entry_ids = set()
+    for role, capacity in slots_by_type.items():
+        role_entries = [
+            entry for entry in declared_entries if entry.get("role") == role
+        ]
+        overflow_entry_ids.update(id(entry) for entry in role_entries[capacity:])
+    declared_entry_ids = {
+        id(entry) for entry in declared_entries if id(entry) not in overflow_entry_ids
+    }
+    declared_entries = [
+        entry for entry in declared_entries if id(entry) in declared_entry_ids
+    ]
     present_types = {
         entry.get("role")
         for entry in declared_entries
@@ -622,11 +639,17 @@ def _dimensions(accounts, flight_dir, policy):  # noqa: C901
 
     declared_slots = set(declared)
     for entry in active:
-        if entry in declared_entries:
+        if id(entry) in declared_entry_ids:
             continue
         role = entry.get("role")
         slot = entry.get("slot")
-        if role not in declared_types and slot not in declared_slots:
+        if id(entry) in overflow_entry_ids:
+            cause = "sesion_excede_cupo"
+        elif role not in declared_types and slot not in declared_slots:
+            cause = "sesion_no_declarada"
+        else:
+            continue
+        if cause:
             code = entry.get("code")
             session_id = code if isinstance(code, str) and code else slot
             if not isinstance(session_id, str) or not session_id:
@@ -639,7 +662,7 @@ def _dimensions(accounts, flight_dir, policy):  # noqa: C901
                     _session_account(entry),
                     accounts,
                     census,
-                    "sesion_no_declarada",
+                    cause,
                 )
             )
             subagents.append(
@@ -650,7 +673,7 @@ def _dimensions(accounts, flight_dir, policy):  # noqa: C901
                     None,
                     accounts,
                     census,
-                    "sesion_no_declarada",
+                    cause,
                 )
             )
 
