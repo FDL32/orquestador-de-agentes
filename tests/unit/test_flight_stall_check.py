@@ -4343,7 +4343,7 @@ def _co_store(box, rows, runs=()):
     return db
 
 
-def _co_roster(box, since_min, ancestro=None):
+def _co_roster(box, since_min, ancestro=None, cadena_contexto=None):
     """Before: ``box.clock`` es el reloj sintético del vuelo.
     During: escribe el roster canónico con roles activos y ``since`` relativo.
     After: devuelve la ruta del roster escrito.
@@ -4358,7 +4358,10 @@ def _co_roster(box, since_min, ancestro=None):
     if ancestro is not None:
         roles["ancestro_directo"] = ancestro
     roster = box.flight / "flight_roster.json"
-    roster.write_text(json.dumps({"active_roles": roles}), encoding="utf-8")
+    payload = {"active_roles": roles}
+    if cadena_contexto is not None:
+        payload["cadena_contexto"] = cadena_contexto
+    roster.write_text(json.dumps(payload), encoding="utf-8")
     return roster
 
 
@@ -4492,20 +4495,22 @@ def test_co_sin_asentar_mutation_terna_parcial_y_orden(box):
         _co_row(box, number, age_min=210 - number) for number in (110, 111, 112, 113)
     ]
     _co_store(box, rows)
-    _co_roster(box, 1)
+    _co_roster(
+        box,
+        1,
+        cadena_contexto=[{"threadId": "co:110", "session_code": "CO-110"}],
+    )
     _co_cfg(box)
     out = {}
     found = box.m.check_co_sin_asentar(out, {})
-    assert (
-        "terna parcial: conserva el primero como ancestro directo hasta 194b"
-        in found[0][2]
-    )
+    assert "ancestro directo excluido CO-110" in found[0][2]
+    assert "fuente cadena_contexto[0]" in found[0][2]
     assert [item["code"] for item in out["co_sin_asentar"]] == [
         "CO-113",
         "CO-112",
         "CO-111",
-        "CO-110",
     ]
+    assert "asentar CO-113, CO-112, CO-111" in found[0][2]
 
 
 def test_co_sin_asentar_mutation_registro_y_tick_real(box):
@@ -4604,7 +4609,7 @@ def test_co_sin_asentar_mutation_filtro_terna_por_id_y_codigo(box):
     found = box.m.check_co_sin_asentar(out, {})
     assert [item["code"] for item in out["co_sin_asentar"]] == ["CO-111", "CO-110"]
     assert "asentar CO-111, CO-110" in found[0][2]
-    listed = found[0][2].split("): ", 1)[1]
+    listed = found[0][2].split("asentar ", 1)[1].split(";", 1)[0]
     assert all(
         value not in listed
         for value in ("CO-100", "CO-101", "CO-102", "orch", "sup", "anc")
@@ -4869,21 +4874,79 @@ def test_co_sin_asentar_mutation_roster_terna_incompleta(box, case):
     assert out["co_sin_asentar_ciego"] == "roster no medido"
 
 
-def test_co_sin_asentar_roster_valido_sin_ancestro_sigue_parcial(box):
+@pytest.mark.parametrize("cadena_contexto", [None, []], ids=["ausente", "vacia"])
+def test_co_sin_asentar_roster_valido_sin_ancestro_sigue_parcial(box, cadena_contexto):
     """Before: el supervisor y el orquestador son válidos, sin ancestro declarado.
     During: se ejecuta el detector con cuatro CO raíz sin asentar.
-    After: el tope avisa y conserva la advertencia de terna parcial.
+    After: el tope avisa y declara la terna sin ancestro.
     """
     _co_store(box, [_co_row(box, number) for number in (110, 111, 112, 113)])
-    _co_roster(box, 1)
+    _co_roster(box, 1, cadena_contexto=cadena_contexto)
     _co_cfg(box)
     out = {}
     found = box.m.check_co_sin_asentar(out, {})
-    assert (
-        found
-        and "terna parcial: conserva el primero como ancestro directo hasta 194b"
-        in found[0][2]
+    assert found and "terna sin ancestro directo en el roster" in found[0][2]
+
+
+def test_co_sin_asentar_ancestro_declarado_prevalece_sobre_cadena(box):
+    """Both readable ancestor sources exist; the explicit role wins."""
+    rows = [_co_row(box, number) for number in (102, 103)]
+    _co_store(box, rows)
+    _co_roster(
+        box,
+        20,
+        ancestro={"threadId": "co:103", "session_code": "CO-103"},
+        cadena_contexto=[{"threadId": "co:102", "session_code": "CO-102"}],
     )
+    _co_cfg(box)
+    out = {}
+
+    found = box.m.check_co_sin_asentar(out, {})
+
+    assert [item["code"] for item in out["co_sin_asentar"]] == ["CO-102"]
+    assert "ancestro directo excluido CO-103" in found[0][2]
+    assert "fuente ancestro_directo" in found[0][2]
+
+
+@pytest.mark.parametrize(
+    "cadena_contexto",
+    [
+        ["texto plano"],
+        [{"threadId": "", "session_code": "CO-102"}],
+        [{"threadId": "co:102", "session_code": ""}],
+    ],
+    ids=["texto-plano", "thread-vacio", "codigo-vacio"],
+)
+def test_co_sin_asentar_cadena_contexto_ilegible_ciega(box, cadena_contexto):
+    """An unreadable context head fails closed instead of falling back."""
+    _co_store(box, [_co_row(box, 110)])
+    _co_roster(box, 1, cadena_contexto=cadena_contexto)
+    _co_cfg(box)
+    out = {}
+
+    found = box.m.check_co_sin_asentar(out, {})
+
+    assert found[0][0:2] == ("co-sin-asentar", "AVISO")
+    assert out["co_sin_asentar_ciego"] == "roster no medido"
+
+
+def test_co_sin_asentar_ancestro_directo_ilegible_no_cae_a_cadena(box):
+    """An illegible declared ancestor blinds even with a readable context head."""
+    _co_store(box, [_co_row(box, 110)])
+    _co_roster(
+        box,
+        1,
+        ancestro={"threadId": "", "session_code": "CO-999"},
+        cadena_contexto=[{"threadId": "co:102", "session_code": "CO-102"}],
+    )
+    _co_cfg(box)
+    out = {}
+
+    found = box.m.check_co_sin_asentar(out, {})
+
+    assert found[0][0:2] == ("co-sin-asentar", "AVISO")
+    assert out["co_sin_asentar_ciego"] == "roster no medido"
+    assert "CO-102" not in found[0][2]
 
 
 # ------------------------------------------------------------------ WOT-2026-230b: calculo de gasto Nan por tokens y tarifas

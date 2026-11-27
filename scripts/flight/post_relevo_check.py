@@ -64,7 +64,6 @@ _CO_CURRENT_STATUS_PREFIXES = ("ACTIVA", "SUPERVISORA", "FALLIDA", "ENTREGADO")
 _CO_SETTLED_STATUS_MARKERS = (
     "ASENTADA",
     "SETTLED",
-    "CASCADA DE CONTEXTO",
     "CASCADA ASENTADA",
 )
 
@@ -253,16 +252,18 @@ def _apta_unclaimed(backlog: Path, registry_path: Path) -> bool:
 
 
 def _co_outside_triad(  # noqa: C901 - triad/status classification mirrors contract clauses
-    sessions: list[dict], roles: object
+    sessions: list[dict],
+    roles: object,
+    cadena_contexto: object = None,
+    settled=None,
 ) -> list[str]:
     """Return current coordinator rows whose identity is outside the active triad.
 
     Before: ``sessions`` is the validated registry list and ``roles`` is the roster
         active-role mapping.
     During: collect session-code and thread-id identities from all active roles,
-        then select only CO rows with a current status (ACTIVA, SUPERVISORA,
-        FALLIDA or ENTREGADO), excluding ASENTADA/SETTLED and historical
-        CASCADA DE CONTEXTO variants, that do not belong to that set.
+        add the readable context head when no explicit ancestor exists, then
+        select current CO rows whose T3 thread is not settled.
     After: return deterministic coordinator codes without mutating either input.
     """
 
@@ -271,7 +272,9 @@ def _co_outside_triad(  # noqa: C901 - triad/status classification mirrors contr
         status = str(value or "").strip().upper()
         if not status or any(marker in status for marker in _CO_SETTLED_STATUS_MARKERS):
             return False
-        return status.startswith(_CO_CURRENT_STATUS_PREFIXES)
+        return status.startswith(_CO_CURRENT_STATUS_PREFIXES) or (
+            "CASCADA DE CONTEXTO" in status
+        )
 
     triad = set()
     if isinstance(roles, dict):
@@ -281,6 +284,36 @@ def _co_outside_triad(  # noqa: C901 - triad/status classification mirrors contr
                     value = role.get(field)
                     if isinstance(value, str) and value.strip():
                         triad.add(value)
+        if "ancestro_directo" in roles:
+            ancestor = roles["ancestro_directo"]
+            if (
+                not isinstance(ancestor, dict)
+                or not isinstance(ancestor.get("threadId"), str)
+                or not ancestor["threadId"].strip()
+                or not isinstance(ancestor.get("session_code"), str)
+                or not ancestor["session_code"].strip()
+            ):
+                raise ValueError("roster no medido")
+        elif cadena_contexto not in (None, []):
+            if not isinstance(cadena_contexto, list) or not cadena_contexto:
+                raise ValueError("roster no medido")
+            ancestor = cadena_contexto[0]
+            if (
+                not isinstance(ancestor, dict)
+                or not isinstance(ancestor.get("threadId"), str)
+                or not ancestor["threadId"].strip()
+                or not isinstance(ancestor.get("session_code"), str)
+                or not ancestor["session_code"].strip()
+            ):
+                raise ValueError("roster no medido")
+            triad.update(
+                {
+                    ancestor["threadId"].strip(),
+                    ancestor["session_code"].strip(),
+                }
+            )
+    if settled is None:
+        raise ValueError("store T3 no medido")
     candidates = []
     for session in sessions:
         code = session.get("code")
@@ -290,17 +323,24 @@ def _co_outside_triad(  # noqa: C901 - triad/status classification mirrors contr
             continue
         if code in triad or session.get("threadId") in triad:
             continue
+        if settled(session.get("threadId")):
+            continue
         candidates.append(code)
     return sorted(set(candidates))
 
 
 def _reproduction_command(
-    flight_dir: Path, ops_dir: Path, backlog: Path, observed: datetime
+    flight_dir: Path,
+    ops_dir: Path,
+    backlog: Path,
+    observed: datetime,
+    store: Path,
 ) -> str:
     """Build the literal command needed to reproduce an alerting tick."""
     return (
         "python scripts/flight/post_relevo_check.py"
         f" --flight-dir {flight_dir} --ops-dir {ops_dir} --backlog {backlog}"
+        f" --store {store}"
         f" --now {observed.isoformat()}"
     )
 
@@ -311,11 +351,13 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
     backlog: Path,
     *,
     now: str | None = None,
+    store: Path | None = None,
 ) -> CheckResult:
     """Evaluate one post-rotation heartbeat using only explicit input routes.
 
     Before: all three paths are supplied by the heartbeat and are readable.
-    During: evaluate the deadline, live IM count, reporta_a creations, and APTA.
+    During: evaluate the deadline, read T3 settlement state, and measure the
+        live IM count, reporta_a creations, APTA, and P24.
     After: update detector state and return a stable rc/message result.
     """
     try:
@@ -352,7 +394,19 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
             return CheckResult(
                 0, f"NO EVALUADO: plazo activo hasta {deadline.isoformat()}"
             )
+        store_path = Path(
+            store
+            if store is not None
+            else os.environ.get(
+                "T3_STATE_DB", Path.home() / ".t3" / "userdata" / "statev2.sqlite"
+            )
+        )
         checker = _load_sibling("check_cell_conformance.py")
+        connection = None
+        try:
+            connection, _, settled = checker._store_lookup(store_path)
+        except Exception as exc:
+            return CheckResult(2, f"ERROR: store T3 no medido: {exc}")
         live_ims = sum(
             item.get("role") == "implantacion" and checker.is_activa(item.get("status"))
             for item in sessions
@@ -365,7 +419,20 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
             reasons.append("sin IM/TR creados tras el ACTIVO con reporta_a")
         if _apta_unclaimed(backlog, registry_path):
             reasons.append("ficha APTA sin brief")
-        co_candidates = _co_outside_triad(sessions, roster.get("active_roles"))
+        try:
+            co_candidates = _co_outside_triad(
+                sessions,
+                roster.get("active_roles"),
+                roster.get("cadena_contexto"),
+                settled,
+            )
+        except ValueError:
+            raise
+        except Exception as exc:
+            return CheckResult(2, f"ERROR: store T3 no medido: {exc}")
+        finally:
+            if connection is not None:
+                connection.close()
         if co_candidates:
             reasons.append(
                 "CO asentable fuera de la terna: " + ", ".join(co_candidates)
@@ -400,7 +467,9 @@ def evaluate(  # noqa: C901 - detector branches mirror contract clauses
             if owned_keys:
                 _write_state(state_path, state)
             return CheckResult(0, "OK: relevo atendido")
-        command = _reproduction_command(flight_dir, ops_dir, backlog, observed)
+        command = _reproduction_command(
+            flight_dir, ops_dir, backlog, observed, store_path
+        )
         for alert_key, alert_reason in alert_items:
             message = f"{incoming}: {alert_reason}"
             rc = _alert(alert_key, message, ops_dir, incoming)
@@ -437,16 +506,22 @@ def main(argv=None) -> int:
 
     Before: the heartbeat passes flight, operations, and backlog paths.
     During: evaluate once and print the stable result message.
-    After: return the detector rc without consulting defaults or environment.
+    After: return the detector rc, resolving an optional ``--store`` first and
+        otherwise using ``T3_STATE_DB`` or the default T3 statev2 path.
     """
     parser = argparse.ArgumentParser()
     parser.add_argument("--flight-dir", required=True)
     parser.add_argument("--ops-dir", required=True)
     parser.add_argument("--backlog", required=True)
     parser.add_argument("--now", help="test clock hook; heartbeat omits it")
+    parser.add_argument("--store", help="optional read-only T3 state store")
     args = parser.parse_args(argv)
     result = evaluate(
-        Path(args.flight_dir), Path(args.ops_dir), Path(args.backlog), now=args.now
+        Path(args.flight_dir),
+        Path(args.ops_dir),
+        Path(args.backlog),
+        now=args.now,
+        store=Path(args.store) if args.store else None,
     )
     print(result.message)
     return result.rc
