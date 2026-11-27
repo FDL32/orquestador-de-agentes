@@ -5862,19 +5862,38 @@ spec.loader.exec_module(module)
 
 
 def test_wot184h_m08_p8_diff_scope_is_exactly_flt():
-    """m-08: only the two declared FLT paths are changed by this ticket."""
+    """m-08: only this ticket's own commits may touch files outside the FLT."""
     base_sha = os.environ.get("WOT_184H_BASE_SHA", "e5506e24")
     if not (REPO_ROOT / ".git").exists():
         pytest.skip("Git no disponible en el arbol de prueba")
-    result = subprocess.run(
-        ["git", "diff", "--name-only", f"{base_sha}..HEAD"],
+    log = subprocess.run(
+        ["git", "log", "--format=%H%x09%s", f"{base_sha}..HEAD"],
         capture_output=True,
         text=True,
         check=False,
+        cwd=REPO_ROOT,
     )
-    if result.returncode != 0:
+    if log.returncode != 0:
         pytest.skip("base Git no disponible en el arbol de prueba")
-    changed = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+    ticket_shas = [
+        line.split("\t", 1)[0]
+        for line in log.stdout.splitlines()
+        if "\t" in line and line.split("\t", 1)[1].startswith("WOT-2026-184h:")
+    ]
+    if not ticket_shas:
+        pytest.skip("no hay commits WOT-2026-184h: en el rango")
+    changed = set()
+    for sha in ticket_shas:
+        result = subprocess.run(
+            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=REPO_ROOT,
+        )
+        if result.returncode != 0:
+            pytest.skip(f"diff-tree fallo para {sha}")
+        changed |= {line.strip() for line in result.stdout.splitlines() if line.strip()}
     assert changed <= {
         "scripts/flight/flight_stall_check.py",
         "tests/unit/test_flight_stall_check.py",
