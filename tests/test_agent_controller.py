@@ -1053,7 +1053,7 @@ class TestTicketProseIntegration:
         exit_code = agent_controller._handle_validate(json_output=True, no_heal=True)
 
         assert exit_code == 0
-        assert calls["scope"] == 1
+        assert calls == {"scope": 1}
 
     def test_seed_neutral_requires_ready_plan_when_log_is_ready_047z(self):
         """A blocked plan must not be neutral when the log is ready."""
