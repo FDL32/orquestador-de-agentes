@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -153,6 +154,53 @@ def test_sentinel_unification_047z_recognizes_unknown_and_keeps_mixed_case(
             encoding="utf-8",
         )
         assert cbc._read_active_ticket(root) == (None, None), value
+
+
+def test_047z_production_import_path_works_outside_pytest() -> None:
+    """The production script and module import must work without pytest's path setup."""
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+
+    script_result = subprocess.run(
+        [sys.executable, "scripts/check_backlog_contract.py", "--help"],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert script_result.returncode == 0, script_result.stderr
+
+    import_result = subprocess.run(
+        [sys.executable, "-c", "import scripts.check_backlog_contract"],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert import_result.returncode == 0, import_result.stderr
+
+
+def test_047z_import_does_not_leak_agent_onto_syspath() -> None:
+    """Loading state_validation by file path must not mutate sys.path with .agent."""
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    probe = (
+        "import sys, json; from pathlib import Path; "
+        "before=set(sys.path); import scripts.check_backlog_contract; "
+        "after=set(sys.path); added=sorted(after-before); "
+        "agent_dirs=[p for p in added if Path(p).name=='.agent']; "
+        "print(json.dumps({'agent_dirs': agent_dirs}))"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["agent_dirs"] == []
 
 
 def test_un_ticket_real_ausente_del_backlog_sigue_siendo_fantasma(
@@ -3025,7 +3073,7 @@ def test_archived_row_is_not_a_lost_id(tmp_path: Path) -> None:
         check=True,
     )
 
-    # Step 3: HEAD performs the MOVE — remove row from backlog, keep archive.
+    # Step 3: HEAD performs the MOVE -- remove row from backlog, keep archive.
     (collab / "backlog.md").write_text(_HEADER + "\n", encoding="utf-8")
 
     errors = cbc.validate_lost_ids(tmp_path)

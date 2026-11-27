@@ -27,6 +27,7 @@ After: exit 0 when the contract holds; exit non-zero with a diagnostic per
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 import re
 import subprocess
@@ -46,13 +47,29 @@ from pathlib import Path
 # hardcode a list so this gate never drifts from the machine it audits.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import state_validation
-from bus.state_machine import NON_TERMINAL_STATES, TicketState
+_STATE_VALIDATION_PATH = (
+    Path(__file__).resolve().parent.parent / ".agent" / "state_validation.py"
+)
+if not _STATE_VALIDATION_PATH.is_file():
+    raise ImportError(
+        f"no se pudo cargar state_validation desde {_STATE_VALIDATION_PATH}"
+    )
+_state_validation_spec = importlib.util.spec_from_file_location(
+    "_state_validation_for_backlog_contract", _STATE_VALIDATION_PATH
+)
+if _state_validation_spec is None or _state_validation_spec.loader is None:
+    raise ImportError(
+        f"no se pudo cargar state_validation desde {_STATE_VALIDATION_PATH}"
+    )
+state_validation = importlib.util.module_from_spec(_state_validation_spec)
+sys.modules["_state_validation_for_backlog_contract"] = state_validation
+_state_validation_spec.loader.exec_module(state_validation)
+from bus.state_machine import NON_TERMINAL_STATES, TicketState  # noqa: E402
 
 # WOT-2026-048g: import the deliverable_type regex from the landing guard to
 # avoid reimplementing the WOT-2026-040s correction (logical-row search).
-from scripts.check_backlog_commits_landed import _DELIVERABLE_TYPE_RE
-from scripts.prefix_resolver import resolve_ticket_alternation
+from scripts.check_backlog_commits_landed import _DELIVERABLE_TYPE_RE  # noqa: E402
+from scripts.prefix_resolver import resolve_ticket_alternation  # noqa: E402
 
 
 # WOT-2026-012a closed vocabulary for the LIVE queue. Terminal states
