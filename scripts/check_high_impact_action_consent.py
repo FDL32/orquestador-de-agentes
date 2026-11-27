@@ -72,11 +72,11 @@ After: exit 0 si el artefacto no ordena ninguna de las 4 categorias, o si las
 
 Nota de nombre de fichero (WOT-2026-043n): se evita deliberadamente la cadena
 "auth" en el nombre de este modulo -- `.agent/hooks/guard_paths.py` tiene un
-patron `r"auth"` SIN ANCLAR que bloquea CUALQUIER ruta que la contenga como
-substring (incluida "autorizacion"), no solo credenciales/oauth. Es la misma
+patron de ruta anclado a segmentos que bloquea credenciales/auth y oauth, no
+substrings de nombres no sensibles (incluida "autorizacion"). Es la misma
 clase de sobre-match ya corregida para `\.git` (ver memoria
-`guard-dotgit-substring-overmatch`); este modulo no la corrige (fuera de
-alcance de este ticket) pero evita tropezar con ella.
+`guard-dotgit-substring-overmatch`); este modulo no renombra su propio fichero
+para evitar tropezar con la regla de nombre.
 """
 
 from __future__ import annotations

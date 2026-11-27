@@ -28,7 +28,7 @@ PROTECTED_PATH_PATTERNS = (
     r"api[_-]key",
     r"password",
     r"bearer",
-    r"auth",
+    r"(^|/)(?:auth|oauth)(?:[._-][^/]*|)(/|$)",
 )
 
 PROTECTED_FILENAMES = {

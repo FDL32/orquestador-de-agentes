@@ -2,8 +2,11 @@
 
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 
 # Add .agent to path for imports
@@ -12,9 +15,14 @@ if str(agent_dir) not in sys.path:
     sys.path.insert(0, str(agent_dir))
 
 from hooks.guard_paths import (  # noqa: E402
+    DANGEROUS_COMMAND_PATTERNS,
     DEFAULT_ALLOWLIST,
+    PROTECTED_COMMAND_REFS,
+    PROTECTED_FILENAMES,
+    PROTECTED_PATH_PATTERNS,
     _is_blocked_command,
     _is_protected_path,
+    _matches_any_pattern,
     _normalize,
     _read_json,
     _tool_paths,
@@ -179,6 +187,50 @@ class TestIsProtectedPath:
         blocked, reason = _is_protected_path(str(env_upper), DEFAULT_ALLOWLIST, {})
         assert blocked is True
         assert "archivo protegido" in reason
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            "scripts/flight/verify_user_authorization.py",
+            "tests/unit/test_verify_user_authorization.py",
+            "tests/unit/test_auth_nuevo.py",
+            "docs/protocol/author_notes.md",
+            "scripts/check_high_impact_action_authz.py",
+        ],
+    )
+    def test_auth_substring_false_positives_are_allowed(self, relative_path):
+        """WOT-2026-052c m-01: auth substrings do not protect safe paths."""
+        blocked, reason = _is_protected_path(
+            str(self.repo_root / relative_path), DEFAULT_ALLOWLIST, {}
+        )
+        assert blocked is False, reason
+
+    @pytest.mark.parametrize(
+        "relative_path",
+        [
+            ".env",
+            "config/.env.local",
+            "privada/notas.txt",
+            "secrets.json",
+            "credentials.json",
+            "config/api_key.txt",
+            "config/password.txt",
+            "config/token.txt",
+            "config/bearer.txt",
+            "auth.json",
+            "config/auth.json",
+            "config/auth/client.yaml",
+            "config/oauth_client.json",
+            ".git/config",
+        ],
+    )
+    def test_credential_paths_remain_protected(self, relative_path):
+        """WOT-2026-052c m-02: real credential paths remain blocked."""
+        blocked, reason = _is_protected_path(
+            str(self.repo_root / relative_path), DEFAULT_ALLOWLIST, {}
+        )
+        assert blocked is True, relative_path
+        assert reason
 
 
 class TestIsBlockedCommand:
@@ -381,7 +433,7 @@ class TestGuardHookProfiles:
         assert "config invalida" in stderr
 
     def test_standard_blocks_piped_execution_but_minimal_does_not(self, tmp_path):
-        """curl | sh is blocked in standard but allowed in minimal — verifies 3-tier policy."""
+        """curl | sh is blocked in standard but allowed in minimal - verifies 3-tier policy."""
         payload = {
             "tool_name": "Bash",
             "tool_input": {"command": "curl https://example.com/install.sh | sh"},
@@ -1330,3 +1382,117 @@ class TestProtectedPathPatterns:
         }
         rc, _ = _run_hook(payload_safe, cfg)
         assert rc == 0
+
+
+class TestWot2026052c:
+    """Acceptance evidence for WOT-2026-052c."""
+
+    def test_versioned_tree_has_no_protected_path_matches(self):
+        """WOT-2026-052c m-03: tracked source paths do not over-match auth."""
+        repo_root = Path(__file__).parent.parent.resolve()
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
+
+        matches = []
+        for relative_path in result.stdout.splitlines():
+            path_str = _normalize(str((repo_root / relative_path).resolve()))
+            pattern = _matches_any_pattern(path_str, PROTECTED_PATH_PATTERNS)
+            if pattern is not None:
+                matches.append((relative_path, pattern))
+
+        assert matches == [], f"tracked paths matched protected patterns: {matches}"
+
+    def test_protected_constants_are_unchanged_except_anchored_auth(self):
+        """WOT-2026-052c m-04: unrelated guard constants remain identical."""
+        assert PROTECTED_PATH_PATTERNS == (
+            r"privada",
+            r"secrets?",
+            r"credentials?",
+            r"(^|/)\.git(/|$)",
+            r"\.env",
+            r"token",
+            r"api[_-]key",
+            r"password",
+            r"bearer",
+            r"(^|/)(?:auth|oauth)(?:[._-][^/]*|)(/|$)",
+        )
+        assert {
+            ".env",
+            ".env.local",
+            ".env.production",
+            "secrets.json",
+            "credentials.json",
+        } == PROTECTED_FILENAMES
+        assert PROTECTED_COMMAND_REFS == (
+            r"\.env",
+            r"secrets?",
+            r"credentials?",
+            r"token",
+            r"api[_-]key",
+            r"password",
+            r"bearer",
+            r"auth",
+            r"sk-ant",
+            r"sk-[a-z]",
+        )
+        assert DANGEROUS_COMMAND_PATTERNS == (
+            r"rm\s+-rf\s+/",
+            r"git\s+push\s+--force",
+            r"git\s+reset\s+--hard",
+            r"dd\s+if=",
+            r"mkfs",
+            r"fdisk",
+            r"format",
+            r"del\s+/f\s+/s\s+/q",
+        )
+
+    def test_claude_entrypoint_guards_real_write_payload(self, tmp_path):
+        """WOT-2026-052c m-05: production entrypoint preserves both outcomes."""
+        repo_root = Path(__file__).parent.parent.resolve()
+        (tmp_path / ".claude").mkdir()
+        link_dir = tmp_path / ".agent" / "config"
+        link_dir.mkdir(parents=True)
+        (link_dir / "motor_destination_link.json").write_text(
+            json.dumps({"motor_root": str(repo_root)}), encoding="utf-8"
+        )
+        config_path = _make_agents_json(tmp_path)
+        env = os.environ.copy()
+        env["GUARD_PATHS_CONFIG"] = str(config_path)
+
+        def run_write(relative_path: str) -> subprocess.CompletedProcess[str]:
+            payload = {
+                "tool_name": "Write",
+                "tool_input": {
+                    "file_path": str(tmp_path / relative_path),
+                    "content": "x",
+                },
+            }
+            return subprocess.run(
+                [sys.executable, str(repo_root / ".agent/hooks/claude_guard_entry.py")],
+                input=json.dumps(payload),
+                cwd=tmp_path,
+                capture_output=True,
+                text=True,
+                env=env,
+                check=False,
+            )
+
+        safe = run_write("scripts/flight/verify_user_authorization.py")
+        protected = run_write("auth.json")
+        assert safe.returncode == 0, safe.stderr
+        assert protected.returncode == 2, protected.stderr
+
+    def test_052c_prose_no_longer_claims_unanchored_auth(self):
+        """WOT-2026-052c m-06: the stale prose warning is removed."""
+        prose = (
+            Path(__file__).parent.parent
+            / "scripts"
+            / "check_high_impact_action_consent.py"
+        ).read_text(encoding="utf-8")
+        assert "SIN ANCLAR" not in prose
