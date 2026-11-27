@@ -246,6 +246,15 @@ def verify_unchanged(
             f"({len(pre.status.splitlines())} -> {len(post.status.splitlines())} "
             "entrada(s))"
         )
+        changed_status_lines = sorted(
+            set(pre.status.splitlines()) ^ set(post.status.splitlines()),
+            key=lambda line: line[3:] if len(line) > 3 else line,
+        )
+        diffs.extend(f"  {line}" for line in changed_status_lines[:20])
+        if len(changed_status_lines) > 20:
+            diffs.append(
+                f"  ... {len(changed_status_lines) - 20} entrada(s) restante(s)"
+            )
     if post.head_reflog_len != pre.head_reflog_len:
         diffs.append(
             f"  reflog de HEAD: {pre.head_reflog_len} -> {post.head_reflog_len} "

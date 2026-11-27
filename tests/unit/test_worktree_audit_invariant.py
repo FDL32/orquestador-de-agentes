@@ -20,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "scripts"))
 
@@ -479,6 +481,143 @@ def _commit_file(repo: Path, name: str, content: str) -> None:
     (repo / name).write_text(content, encoding="utf-8")
     _git(repo, "add", "-A")
     _git(repo, "commit", "-m", f"Add {name}")
+
+
+def test_a1_status_delta_lists_changed_routes_sorted_by_path(tmp_path: Path) -> None:
+    """(a-01) Symmetric status-line delta is listed alphabetically by route."""
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    _commit_file(repo, "zeta.txt", "original\n")
+    _commit_file(repo, "alpha.txt", "original\n")
+
+    (repo / "zeta.txt").write_text("modified\n", encoding="utf-8")
+    (repo / "alpha.txt").write_text("modified\n", encoding="utf-8")
+    pre = capture_state(repo)
+    _git(repo, "add", "-A")
+
+    with pytest.raises(AuditInvariantViolationError) as exc_info:
+        verify_unchanged(repo, pre)
+
+    message = str(exc_info.value)
+    assert " M alpha.txt" in message
+    assert "M  alpha.txt" in message
+    assert " M zeta.txt" in message
+    assert "M  zeta.txt" in message
+    assert message.index("alpha.txt") < message.index("zeta.txt")
+
+
+def test_a3_status_delta_lists_20_and_counts_remaining_routes(tmp_path: Path) -> None:
+    """(a-03) More than 20 routes are capped and the remainder is counted."""
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    for index in range(21):
+        _commit_file(repo, f"route-{index:02}.txt", "original\n")
+
+    pre = capture_state(repo)
+    for index in range(21):
+        (repo / f"route-{index:02}.txt").write_text("modified\n", encoding="utf-8")
+
+    with pytest.raises(AuditInvariantViolationError) as exc_info:
+        verify_unchanged(repo, pre)
+
+    message = str(exc_info.value)
+    for index in range(20):
+        assert f" M route-{index:02}.txt" in message
+    assert " M route-20.txt" not in message
+    assert "1 entrada(s) restante(s)" in message
+
+
+def test_a3_status_delta_with_exactly_20_routes_has_no_remainder(
+    tmp_path: Path,
+) -> None:
+    """(a-03) Exactly 20 routes do not produce a remainder line."""
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    for index in range(20):
+        _commit_file(repo, f"route-{index:02}.txt", "original\n")
+
+    pre = capture_state(repo)
+    for index in range(20):
+        (repo / f"route-{index:02}.txt").write_text("modified\n", encoding="utf-8")
+
+    with pytest.raises(AuditInvariantViolationError) as exc_info:
+        verify_unchanged(repo, pre)
+
+    message = str(exc_info.value)
+    for index in range(20):
+        assert f" M route-{index:02}.txt" in message
+    assert "restante(s)" not in message
+
+
+def test_a4_head_only_delta_does_not_list_status_routes(tmp_path: Path) -> None:
+    """(a-04) A HEAD-only invalidation has no status route list."""
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    pre = capture_state(repo)
+    _commit_file(repo, "head-only.txt", "content\n")
+
+    with pytest.raises(AuditInvariantViolationError) as exc_info:
+        verify_unchanged(repo, pre)
+
+    message = str(exc_info.value)
+    assert "HEAD:" in message
+    assert "status --porcelain cambio" not in message
+    assert "head-only.txt" not in message
+    assert not any(".txt" in line for line in message.splitlines())
+
+
+def test_a4_reflog_only_delta_does_not_list_status_routes(tmp_path: Path) -> None:
+    """(a-04) A reflog-only invalidation has no status route list."""
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    (repo / "reflog-only.txt").write_text("content\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    pre = capture_state(repo)
+    _git(repo, "stash", "push", "-m", "reflog-only")
+    _git(repo, "stash", "pop")
+
+    with pytest.raises(AuditInvariantViolationError) as exc_info:
+        verify_unchanged(repo, pre)
+
+    message = str(exc_info.value)
+    assert "reflog de HEAD:" in message
+    assert "status --porcelain cambio" not in message
+    assert "reflog-only.txt" not in message
+
+
+def test_a5_ignored_route_is_absent_from_status_delta_list(tmp_path: Path) -> None:
+    """(a-05) A route covered by ignore_paths is not listed."""
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    _commit_file(repo, "ignored.txt", "original\n")
+    _commit_file(repo, "visible.txt", "original\n")
+    ignore_paths = frozenset(["ignored.txt"])
+    pre = capture_state(repo, ignore_paths=ignore_paths)
+    (repo / "ignored.txt").write_text("modified\n", encoding="utf-8")
+    (repo / "visible.txt").write_text("modified\n", encoding="utf-8")
+
+    with pytest.raises(AuditInvariantViolationError) as exc_info:
+        verify_unchanged(repo, pre, ignore_paths=ignore_paths)
+
+    message = str(exc_info.value)
+    assert " M visible.txt" in message
+    assert "ignored.txt" not in message
+
+
+def test_a6_rename_route_is_listed_once_with_both_paths(tmp_path: Path) -> None:
+    """(a-06) A reconstructed rename is one symmetric status line."""
+    repo = tmp_path / "repo"
+    init_git_repo(repo)
+    _commit_file(repo, "original.txt", "content\n")
+    pre = capture_state(repo)
+    _git(repo, "mv", "original.txt", "renamed.txt")
+
+    with pytest.raises(AuditInvariantViolationError) as exc_info:
+        verify_unchanged(repo, pre)
+
+    message = str(exc_info.value)
+    assert "R  original.txt -> renamed.txt" in message
+    assert message.count("R  original.txt -> renamed.txt") == 1
 
 
 def test_b7_rename_status_byte_identical_without_ignore_paths(tmp_path: Path) -> None:
