@@ -227,12 +227,56 @@ def test_wot_2026_231f_partial_head_uses_merge_base_and_stops_at_head(
     after = "WOT-2026-231i"
     commit_alta(repo, row(after), "alta posterior a Y")
 
-    assert cba.main(["--git-root", str(repo), "--head", y]) == 1
+    assert cba.main(["--git-root", str(repo), "--head", y, "--json"]) == 1
     output = capsys.readouterr().out
+    report = json.loads(output)
     assert f"rango auditado: {base[:12]}..{y[:12]}" in output
     assert before in output
     assert after not in output
     assert cba.VER_PRIMARY_SOURCE_NO_CONFORME in output
+    assert any(
+        finding["veredicto"] == cba.LENTES_TR_CONFORME for finding in report["findings"]
+    )
+
+
+def test_wot_2026_231f_explicit_range_applies_c14_to_tr_ficha(
+    monkeypatch, tmp_path, capsys
+):
+    """Un rango explícito aplica c-14 real a una ficha redactada por TR."""
+    repo = init_repo(tmp_path)
+    cutoff = git(repo, "rev-parse", "HEAD").strip()
+    monkeypatch.setattr(cba, "LENSES_CUTOFF_SHA", cutoff)
+    monkeypatch.setattr(cba, "PRIMARY_SOURCE_CUTOFF_SHA", cutoff)
+    ticket = "WOT-2026-231j"
+    ficha = (
+        "redactada_por: tr\n"
+        "triador_modelo: kilo|nan/gemma4\n"
+        "lente_1: kilo|nan/gemma4|APPROVE\n"
+        "lente_2: claude|sonnet-5|APPROVE\n"
+        "## Files Likely Touched\n"
+        "- AGENTS.md\n"
+    )
+    commit = commit_alta_with_ficha(
+        repo, row(ticket), "alta TR con c-14 inválido", ticket, ficha
+    )
+
+    code = cba.main(
+        [
+            "--git-root",
+            str(repo),
+            "--base",
+            cutoff,
+            "--head",
+            commit,
+            "--json",
+        ]
+    )
+    report = json.loads(capsys.readouterr().out)
+    assert code == 1
+    assert any(
+        finding["veredicto"] == cba.LENTES_TR_NO_CONFORME
+        for finding in report["findings"]
+    )
 
 
 def test_wot_2026_231f_unresolvable_partial_range_is_measurement_failure(
