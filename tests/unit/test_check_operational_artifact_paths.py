@@ -20,6 +20,7 @@ Cobertura (una idea por test):
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -37,6 +38,12 @@ _SPEC.loader.exec_module(coap)
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(text.encode("utf-8"))
+
+
+def _git_init(root: Path) -> None:
+    subprocess.run(
+        ["git", "init", str(root)], check=True, capture_output=True, text=True
+    )
 
 
 # ---------------------------------------------------------------- T-SCOPE
@@ -404,3 +411,87 @@ def test_integrity_of_production_baseline():
     assert not decreced, (
         f"{len(decreced)} claves originales decrecieron entre v1 y v2: {decreced[:10]}"
     )
+
+
+def test_git_ignored_file_is_not_audited_nor_counted(tmp_path: Path):
+    _git_init(tmp_path)
+    ignored = tmp_path / "orchestrator_pipeline" / "reports" / "ignored.md"
+    kept = tmp_path / "orchestrator_pipeline" / "reports" / "kept.md"
+    _write(tmp_path / ".gitignore", "orchestrator_pipeline/reports/ignored.md\n")
+    _write(ignored, "root: <MOTOR_ROOT>\n")
+    _write(kept, "root: <MOTOR_ROOT>\n")
+
+    files, counts = coap.scan(tmp_path)
+
+    assert ignored not in files
+    assert kept in files
+    assert "orchestrator_pipeline/reports/ignored.md" not in counts
+    assert counts["orchestrator_pipeline/reports/kept.md"] == 1
+
+
+def test_unversioned_non_ignored_file_still_fails_gate(tmp_path: Path):
+    _git_init(tmp_path)
+    path = tmp_path / "orchestrator_pipeline" / "reports" / "untracked.md"
+    _write(path, "root: <MOTOR_ROOT>\n")
+
+    code, out = coap.audit(tmp_path, baseline={})
+
+    assert code == 1
+    assert "orchestrator_pipeline/reports/untracked.md" in "\n".join(out)
+
+
+def test_versioned_file_matching_ignore_pattern_still_audited(tmp_path: Path):
+    _git_init(tmp_path)
+    path = tmp_path / "orchestrator_pipeline" / "reports" / "tracked.md"
+    _write(path, "root: <MOTOR_ROOT>\n")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "-f", str(path)], check=True)
+    _write(tmp_path / ".gitignore", "orchestrator_pipeline/reports/\n")
+
+    files, _counts = coap.scan(tmp_path)
+
+    assert path in files
+
+
+def test_scan_outside_git_repo_audits_all_files(tmp_path: Path):
+    first = tmp_path / "orchestrator_pipeline" / "reports" / "one.md"
+    second = tmp_path / "orchestrator_pipeline" / "reports" / "two.md"
+    _write(first, "root: <MOTOR_ROOT>\n")
+    _write(second, "root: <DESTINO_ROOT>\n")
+
+    files, counts = coap.scan(tmp_path)
+
+    assert files == [first, second]
+    assert counts == {
+        "orchestrator_pipeline/reports/one.md": 1,
+        "orchestrator_pipeline/reports/two.md": 1,
+    }
+
+
+def test_scan_without_git_binary_audits_all_files(tmp_path: Path, monkeypatch):
+    _git_init(tmp_path)
+    path = tmp_path / "orchestrator_pipeline" / "reports" / "one.md"
+    _write(path, "root: <MOTOR_ROOT>\n")
+
+    def missing_git(*_args, **_kwargs):
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(subprocess, "run", missing_git)
+
+    files, counts = coap.scan(tmp_path)
+
+    assert files == [path]
+    assert counts == {"orchestrator_pipeline/reports/one.md": 1}
+
+
+def test_drop_git_ignored_preserves_relative_posix_paths(tmp_path: Path):
+    _git_init(tmp_path)
+    ignored = tmp_path / "orchestrator_pipeline" / "reports" / "ignored.md"
+    kept = tmp_path / "orchestrator_pipeline" / "reports" / "kept.md"
+    _write(tmp_path / ".gitignore", "orchestrator_pipeline/reports/ignored.md\n")
+    _write(ignored, "ignored\n")
+    _write(kept, "kept\n")
+
+    result = coap._drop_git_ignored(tmp_path, [ignored, kept])
+
+    assert result == [kept]
+    assert all(isinstance(path, Path) for path in result)
