@@ -2,7 +2,10 @@
 
 Before: ``archive_index`` is the sole input and points to a JSONL archive index.
 During: read the index and reconcile each family through ``p7_common`` without
-    creating, changing, or deleting any file.
+    creating, changing, or deleting any file. A RETIRADO_LOCAL row that already
+    has its WOT-2026-175d pair (a sibling ARCHIVADO row and a sibling RETIRADO
+    row with that ``migration``, both matching its ``family`` and ``zip``) is
+    silent; a row without that pair still raises l6-indice-retirado-local.
 After: return ``(rc, findings)`` for the CLI face or only findings for heartbeat.
 """
 
@@ -60,6 +63,31 @@ def _families(root: Path, rows: list[dict[str, Any]]) -> set[str]:
     return result
 
 
+def _has_migrated_pair(rows: list[dict[str, Any]], row: dict[str, Any]) -> bool:
+    """Return True iff ``row`` (a RETIRADO_LOCAL) has its WOT-2026-175d pair.
+
+    The canonical schema requires BOTH a sibling ARCHIVADO row and a sibling
+    RETIRADO row carrying ``migration == "WOT-2026-175d"``, matched by the
+    same ``family`` and ``zip``; either alone still leaves the AVISO.
+    """
+    family = row.get("family")
+    zip_value = row.get("zip")
+    has_archived = any(
+        other.get("status") == "ARCHIVADO"
+        and other.get("family") == family
+        and other.get("zip") == zip_value
+        for other in rows
+    )
+    has_retired = any(
+        other.get("status") == "RETIRADO"
+        and other.get("migration") == "WOT-2026-175d"
+        and other.get("family") == family
+        and other.get("zip") == zip_value
+        for other in rows
+    )
+    return has_archived and has_retired
+
+
 def _retired_names(root: Path, family: str, rows: list[dict[str, Any]]) -> set[str]:
     """Return family-relative paths belonging to RETIRADO_LOCAL rows."""
     family_root = (root / family).resolve()
@@ -109,7 +137,7 @@ def run_check_l6(archive_index) -> tuple[int, list[tuple[str, str, str]]]:
             f"Fila RETIRADO_LOCAL: {row.get('family', '<sin-familia>')}",
         )
         for row in rows
-        if row.get("status") == "RETIRADO_LOCAL"
+        if row.get("status") == "RETIRADO_LOCAL" and not _has_migrated_pair(rows, row)
     )
     for family in sorted(_families(root, rows)):
         retired = _retired_names(root, family, rows)

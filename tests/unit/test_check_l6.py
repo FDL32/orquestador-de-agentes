@@ -346,3 +346,43 @@ def test_m07_archive_index_sintetico_emite_aviso(tmp_path, monkeypatch):
     assert not broke and any(
         key == "l6-fila-sin-fichero" for key, _level, _text in found
     )
+
+
+def test_f02_retirado_local_with_migrated_pair_is_silent(tmp_path):
+    """Before: one RETIRADO_LOCAL row has its WOT-2026-175d ARCHIVADO+RETIRADO
+       pair (same family/zip) in the same index; another has neither.
+    During: run the checker over the full index.
+    After: only the unpaired row raises l6-indice-retirado-local (1 AVISO)."""
+    paired = _row("paired", "RETIRADO_LOCAL", family="fam_paired")
+    archived = dict(paired, status="ARCHIVADO")
+    retired = dict(paired, status="RETIRADO", migration="WOT-2026-175d")
+    unpaired = _row("unpaired", "RETIRADO_LOCAL", family="fam_unpaired")
+    index = _write_index(
+        tmp_path, [paired, archived, retired, unpaired], family="fam_paired"
+    )
+    (index.parent / "fam_unpaired").mkdir(parents=True, exist_ok=True)
+    for family, name in (("fam_paired", "paired"), ("fam_unpaired", "unpaired")):
+        (index.parent / family / f"{name}.zip").write_bytes(b"zip")
+        (index.parent / family / f"{name}.json").write_bytes(b"manifest")
+
+    _, findings = l6.run_check_l6(index)
+
+    warnings = [item for item in findings if item[0] == "l6-indice-retirado-local"]
+    assert len(warnings) == 1
+    assert "fam_unpaired" in warnings[0][2]
+
+
+def test_f02_retirado_local_with_only_half_pair_still_warns(tmp_path):
+    """Before: a RETIRADO_LOCAL row has only its ARCHIVADO sibling, no RETIRADO
+       with migration WOT-2026-175d.
+    During: run the checker.
+    After: the AVISO still fires; half a pair does not silence it."""
+    row = _row("half", "RETIRADO_LOCAL")
+    archived_only = dict(row, status="ARCHIVADO")
+    index = _write_index(tmp_path, [row, archived_only])
+    (index.parent / "fam" / "half.zip").write_bytes(b"zip")
+    (index.parent / "fam" / "half.json").write_bytes(b"manifest")
+
+    _, findings = l6.run_check_l6(index)
+
+    assert sum(item[0] == "l6-indice-retirado-local" for item in findings) == 1

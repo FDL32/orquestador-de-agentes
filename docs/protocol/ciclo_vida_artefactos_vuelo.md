@@ -2,7 +2,7 @@
 
 - Estado: RATIFICADO para el ciclo y sus limites por el usuario (messageId 6c621921-6e49-4b77-b685-e7599e5ab0e6, principio; messageId c253b945-642b-4eb4-8380-a5ae14137093, limites y raiz), web, 2026-11-09. Este estado rige frente a las anclas de rotacion que aun dicen propuesta o pendiente: las anclas son una interface comprobable que no se edita sin autorizacion nueva.
 - Canon de entrada: fila P37 de `.agent/rules/common/vuelo_pilares.md`. La fila P37 apunta a este documento, a `docs/protocol/rotacion_disco_vuelo.md` y a `scripts/flight/p7_retire.py`.
-- Esta documentacion describe el estado ratificado del ciclo. La formula antigua que condicionaba la norma a que faltase una herramienta P7 ya no rige: `p7_retire.py` existe. Sigue abierto el comprobador L-6 y su cableado.
+- Esta documentacion describe el estado ratificado del ciclo. La formula antigua que condicionaba la norma a que faltase una herramienta P7 ya no rige: `p7_retire.py` existe. El comprobador L-6 (`scripts/flight/check_l6.py`) y su cableado en `flight_stall_check.py` (detector `l6`, flag opcional `--archive-index`) quedaron resueltos por WOT-2026-175e; el latido real todavia no pasa `--archive-index` (deuda operativa separada, no de esta documentacion).
 
 ## 1. Raices vigentes y como buscar
 
@@ -25,7 +25,15 @@ La Fase 1 se ejecuta exclusivamente sobre copias desechables de los indices; no 
 
 Para cada fila `RETIRADO_LOCAL`, la herramienta conserva la fila original y genera dos filas nuevas: una `ARCHIVADO` y una `RETIRADO`. Las copias conservan todos los campos de la fila de origen, incluidos hashes, rutas, fechas y metadatos del escritor. La fila `RETIRADO` añade `migration: WOT-2026-175d`, `removed` y el `list_sha256` derivado del manifiesto. Para lotes de clones añade `clone_names`, ordenado y derivado del primer componente de cada `rel`. Las filas `ARCHIVADO` ya existentes en `index_kilo.jsonl` también pueden importarse al índice único y recibir su transición `RETIRADO`, sin duplicar una transición previa. La identidad por contenido y transición impide duplicados al repetir la ejecucion. Esto cubre tanto `index.jsonl` como `index_kilo.jsonl`, incluidos lotes con varios clones.
 
-La salida se escribe bajo un lock hermano del indice, mediante fichero temporal sibling, `flush`, `fsync` y `os.replace`; si la escritura falla, el indice anterior queda intacto. La herramienta rechaza una migracion in situ y rutas `D:`. No modifica `scripts/flight/p7_common.py` ni `scripts/flight/p7_retire.py`: el reconciliador sigue leyendo las filas `ARCHIVADO` generadas, mientras la evidencia historica `RETIRADO_LOCAL` permanece disponible para auditoria.
+La salida se escribe bajo un lock hermano del indice, mediante fichero temporal sibling, `flush`, `fsync` y `os.replace`; si la escritura falla, el indice anterior queda intacto. La herramienta rechaza una migracion in situ y rutas `D:` en este modo. No modifica `scripts/flight/p7_common.py` ni `scripts/flight/p7_retire.py`: el reconciliador sigue leyendo las filas `ARCHIVADO` generadas, mientras la evidencia historica `RETIRADO_LOCAL` permanece disponible para auditoria.
+
+### Correccion de esquema y migracion de la raiz real (WOT-2026-175f)
+
+Dos correcciones al esquema anterior, medidas sobre la raiz real:
+
+- **Origen vivo (f-01):** si el campo `origin` de una fila legada resuelve (absoluto tal cual, relativo contra el directorio del indice) a una ruta que todavia existe en disco, la migracion genera solo la fila `ARCHIVADO` y NO anade la fila `RETIRADO`: nada se retiro realmente mientras el origen vive. Si el origen no existe, se mantiene el comportamiento de antes (genera el par completo). Esto aplica tanto a filas `RETIRADO_LOCAL` como a filas `ARCHIVADO` ya existentes.
+- **Esquema canonico L-6 (f-02):** el comprobador (`scripts/flight/check_l6.py`) silencia `l6-indice-retirado-local` para una fila `RETIRADO_LOCAL` unicamente cuando el MISMO indice contiene su PAR completo: una fila `ARCHIVADO` y una fila `RETIRADO` con `migration: WOT-2026-175d`, ambas con el mismo `family` y `zip` que la fila legada. Una fila `RETIRADO_LOCAL` sin ese par -- incluida la que la regla de origen vivo deja sin su `RETIRADO`, por disenio -- sigue emitiendo el AVISO: es una inconsistencia real que el esquema no oculta.
+- **Modo `--real-root` (f-03):** ademas del modo de copias desechables, `migrate_archive_index.py` acepta `--real-root` para migrar en el sitio el indice de una raiz real montada (`D:` incluido; es el UNICO camino que la acepta). Exige `--approval-message-id` (el messageId de aprobacion del usuario) y `--backup-dir` (una carpeta fuera de la raiz, verificada por ruta resuelta y normcase) para poder escribir; sin `--apply` es dry-run puro, sin lock ni backup. Al aplicar, toma el MISMO lock que usa `p7_retire.py` (`archive_root/.p7.lock`, via `p7_common.acquire_lock`/`release_lock`), relee el indice bajo ese lock y aborta sin escribir si su sha256 cambio desde la lectura inicial; si no cambio, copia los bytes leidos (sha256 incluido) a `--backup-dir` y escribe de forma atomica preservando byte a byte cada linea preexistente del indice (sin reordenar sus claves), anadiendo solo las filas nuevas. Una segunda ejecucion sobre la raiz ya migrada no anade filas ni reescribe el fichero.
 
 ## 2. Ciclo, herramienta y estado de los limites
 
@@ -67,7 +75,7 @@ Cada familia contiene zip y manifiesto atomicos. El zip se relee y sus nombres y
 | L-3 | Indice humano y maquina obligatorios, huerfano rojo y caducidad solo como propuesta P7 con hash; no autoriza retirada. | comparar zips, `INDEX.md`, indices JSONL y fechas |
 | L-4 | Solo comprimido con manifiesto y hash. Para lotes ZIP_STORED se enmienda el adjetivo operativo de comprimido: siguen siendo lotes zip verificables y su sobrecoste queda medido. | `zipfile` y sha256 del zip, manifiesto y origen |
 | L-5 | Categorias sensibles requieren escaneo y autorizacion expresa antes de replica. | revisar categoria, autorizacion y registro |
-| L-6 | Comprobador de solo lectura con rc, aun no cableado. | ejecutar el comprobador cuando exista y registrar rc |
+| L-6 | Comprobador de solo lectura con rc (`scripts/flight/check_l6.py`), cableado en `flight_stall_check.py` tras el esquema canonico de WOT-2026-175f; el latido real aun no pasa `--archive-index`. | ejecutar el comprobador cuando exista y registrar rc |
 | L-7 | Fallo cerrado: si la raiz D: no existe o no es carpeta, parar y no buscar sustituto en C:. | `p7_retire.py` devuelve rc 4 (lineas 366-367) |
 | L-8 | Copia local verificada y subida confirmada son estados distintos. | comparar hash local y evidencia del cliente |
 
@@ -164,8 +172,8 @@ La comprobacion la hace el comparador de este documento, codigo distinto del que
 ## 6. Deudas y contacto
 
 - Archivador propio versionado: WOT-2026-175b, resuelto por `scripts/flight/archive_tree.py`; la deuda restante es la operacion real con aprobacion posterior.
-- Comprobador L-6 y su cableado: sin ticket: motivo: el STOP de degeneracion exige una herramienta propia.
-- Migracion de filas `RETIRADO_LOCAL` sin ensanchar `reconcile_index`: WOT-2026-175d.
+- Comprobador L-6, su cableado y el esquema canonico que evita el falso AVISO de una fila ya migrada: resueltos por WOT-2026-175e y WOT-2026-175f. Deuda restante: el latido real de la coordinadora todavia no pasa `--archive-index` (enmienda operativa separada, fuera de alcance de WOT-2026-175f por decision de su ficha).
+- Migracion de filas `RETIRADO_LOCAL` sin ensanchar `reconcile_index`: resuelta por WOT-2026-175d (copias desechables) y WOT-2026-175f (origen vivo, esquema canonico L-6 y modo `--real-root` para la raiz real). La ejecucion real contra `D:/flight_archive` sigue pendiente de aprobacion expresa del usuario.
 - Purga por caducidad: WOT-2026-175c.
 - Herramienta de sesiones, `.venv` y `co24_pna`: sin ticket: motivo: el STOP de degeneracion exige herramienta propia y no forman parte de este deliverable.
 

@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
-from scripts.flight.migrate_archive_index import migrate_index
+from scripts.flight import migrate_archive_index, p7_common
+from scripts.flight.migrate_archive_index import migrate_index, migrate_real_root
 
 
 def _write_index(path: Path, rows: list[dict[str, object]]) -> None:
@@ -273,3 +275,274 @@ def test_both_machine_indexes_and_clone_batch_are_supported(
         "RETIRADO",
     ]
     assert rows[1]["clone_names"] == rows[2]["clone_names"] == row["clone_names"]
+
+
+def test_origin_presence_controls_retired_generation(tmp_path: Path) -> None:
+    """Before: one row's origin still exists on disk and another's does not.
+    During: migrate both to a disposable target.
+    After: only the absent-origin row gets a RETIRADO transition; the
+           present-origin row keeps only its ARCHIVADO counterpart.
+    """
+    source = tmp_path / "index.jsonl"
+    target = tmp_path / "out" / "index.jsonl"
+    present = _legacy_row()
+    present["family"] = "present_family"
+    present["zip"] = "present_family.zip"
+    present["manifest"] = "present_family.manifest.json"
+    present["origin"] = "copies/origin/present_family"
+    absent = _legacy_row()
+    absent["family"] = "absent_family"
+    absent["zip"] = "absent_family.zip"
+    absent["manifest"] = "absent_family.manifest.json"
+    absent["origin"] = "copies/origin/absent_family"
+    _prepare_fixture(source, [present, absent])
+    (source.parent / present["origin"]).mkdir(parents=True)
+
+    result = migrate_index(source, target, apply=True)
+    rows = [
+        json.loads(line) for line in target.read_text(encoding="utf-8").splitlines()
+    ]
+
+    retired_families = {row["family"] for row in rows if row["status"] == "RETIRADO"}
+    archived_families = {row["family"] for row in rows if row["status"] == "ARCHIVADO"}
+    assert retired_families == {"absent_family"}
+    assert archived_families == {"present_family", "absent_family"}
+    assert result.added_rows == 3
+
+
+def _prepare_real_root_fixture(index: Path, rows: list[dict[str, object]]) -> None:
+    """Before: ``rows`` reference artifacts to place beside a real-root index.
+    During: write verified zip/manifest evidence and the index itself.
+    After: ``migrate_real_root`` can self-migrate without external access.
+    """
+    _prepare_fixture(index, rows)
+
+
+def test_f03_1_dry_run_by_default_has_no_side_effects(tmp_path: Path) -> None:
+    """Before: a real-root index has one unmigrated legacy row.
+    During: call migrate_real_root without --apply.
+    After: no bytes change, no lock, and no backup directory are created."""
+    index = tmp_path / "root" / "index.jsonl"
+    _prepare_real_root_fixture(index, [_legacy_row()])
+    before = index.read_bytes()
+    backup_dir = tmp_path / "backup"
+
+    result = migrate_real_root(index, backup_dir=backup_dir)
+
+    assert result.would_write is True
+    assert result.written is False
+    assert index.read_bytes() == before
+    assert not backup_dir.exists()
+    assert not (index.parent / ".p7.lock").exists()
+
+
+def test_f03_2_apply_without_approval_is_rejected(tmp_path: Path) -> None:
+    """Before: --apply is requested with no approval messageId.
+    During: call migrate_real_root(apply=True) without approval_message_id.
+    After: it raises before touching the index, lock, or backup."""
+    index = tmp_path / "root" / "index.jsonl"
+    _prepare_real_root_fixture(index, [_legacy_row()])
+    before = index.read_bytes()
+
+    with pytest.raises(ValueError, match="approval"):
+        migrate_real_root(index, apply=True, backup_dir=tmp_path / "backup")
+
+    assert index.read_bytes() == before
+    assert not (index.parent / ".p7.lock").exists()
+    assert not (tmp_path / "backup").exists()
+
+
+def test_f03_3_apply_takes_the_shared_p7_lock(tmp_path: Path) -> None:
+    """Before: the archive_root/.p7.lock is already held by this process.
+    During: call migrate_real_root(apply=True) with valid approval.
+    After: it fails with the same ArchiveError p7_retire would raise,
+           proving it contends on that exact shared lock path."""
+    index = tmp_path / "root" / "index.jsonl"
+    _prepare_real_root_fixture(index, [_legacy_row()])
+    lock = index.parent / ".p7.lock"
+    lock.write_text(
+        json.dumps({"pid": os.getpid(), "cwd": str(tmp_path), "created": 0.0}),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(p7_common.ArchiveError, match="retenido"):
+        migrate_real_root(
+            index,
+            apply=True,
+            approval_message_id="messageId-test",
+            backup_dir=tmp_path / "backup",
+        )
+
+    lock.unlink()
+
+
+def test_f03_4_backup_dir_inside_root_is_rejected(tmp_path: Path) -> None:
+    """Before: --backup-dir resolves under the real root itself.
+    During: call migrate_real_root(apply=True) with that backup-dir.
+    After: it rejects before acquiring the lock or writing anything."""
+    index = tmp_path / "root" / "index.jsonl"
+    _prepare_real_root_fixture(index, [_legacy_row()])
+    before = index.read_bytes()
+
+    with pytest.raises(ValueError, match="outside"):
+        migrate_real_root(
+            index,
+            apply=True,
+            approval_message_id="messageId-test",
+            backup_dir=index.parent / "backup_inside",
+        )
+
+    assert index.read_bytes() == before
+    assert not (index.parent / ".p7.lock").exists()
+
+
+def test_f03_4b_backup_copy_with_sha256_lands_outside_root(tmp_path: Path) -> None:
+    """Before: a real-root index is about to be migrated with --apply.
+    During: run migrate_real_root successfully.
+    After: a verbatim pre-write copy and its sha256 exist in backup-dir."""
+    index = tmp_path / "root" / "index.jsonl"
+    _prepare_real_root_fixture(index, [_legacy_row()])
+    before = index.read_bytes()
+    backup_dir = tmp_path / "backup"
+
+    result = migrate_real_root(
+        index,
+        apply=True,
+        approval_message_id="messageId-test",
+        backup_dir=backup_dir,
+    )
+
+    assert result.written is True
+    digest = hashlib.sha256(before).hexdigest()
+    backup_file = backup_dir / f"index.jsonl.{digest}.bak"
+    sha_file = backup_dir / f"index.jsonl.{digest}.sha256"
+    assert backup_file.read_bytes() == before
+    assert sha_file.read_text(encoding="utf-8").strip() == digest
+
+
+def test_f03_5_atomic_replace_failure_preserves_real_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Before: os.replace is forced to fail during the real-root write.
+    During: call migrate_real_root(apply=True).
+    After: the real index keeps its prior bytes and no temp file survives."""
+    index = tmp_path / "root" / "index.jsonl"
+    _prepare_real_root_fixture(index, [_legacy_row()])
+    before = index.read_bytes()
+
+    def fail_replace(_source: object, _destination: object) -> None:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr("scripts.flight.migrate_archive_index.os.replace", fail_replace)
+
+    with pytest.raises(ValueError, match="atomically write"):
+        migrate_real_root(
+            index,
+            apply=True,
+            approval_message_id="messageId-test",
+            backup_dir=tmp_path / "backup",
+        )
+
+    assert index.read_bytes() == before
+    assert not list(index.parent.glob(f".{index.name}.*.tmp"))
+
+
+def test_f03_6_aborts_without_writing_if_index_changed_under_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Before: the index is read once, then mutates before the lock-time read.
+    During: call migrate_real_root(apply=True).
+    After: it aborts without writing and without creating a backup."""
+    index = tmp_path / "root" / "index.jsonl"
+    _prepare_real_root_fixture(index, [_legacy_row()])
+    before = index.read_bytes()
+    original_read = migrate_archive_index._read_real_root_bytes
+    calls = {"n": 0}
+
+    def fake_read(path: Path) -> bytes:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            return before + b'{"status":"NOISE"}\n'
+        return original_read(path)
+
+    monkeypatch.setattr(migrate_archive_index, "_read_real_root_bytes", fake_read)
+    backup_dir = tmp_path / "backup"
+
+    with pytest.raises(ValueError, match="changed"):
+        migrate_real_root(
+            index,
+            apply=True,
+            approval_message_id="messageId-test",
+            backup_dir=backup_dir,
+        )
+
+    assert index.read_bytes() == before
+    assert not backup_dir.exists()
+    assert not (index.parent / ".p7.lock").exists()
+
+
+def test_f05_real_root_preserves_unsorted_legacy_bytes_verbatim(
+    tmp_path: Path,
+) -> None:
+    """Before: the legacy line's keys are NOT in sort_keys=True order.
+    During: migrate_real_root appends new rows with --apply.
+    After: the original line's bytes are unchanged, byte for byte."""
+    index = tmp_path / "root" / "index.jsonl"
+    index.parent.mkdir(parents=True)
+    legacy = _legacy_row()
+    zip_path = index.parent / str(legacy["zip"])
+    manifest_path = index.parent / str(legacy["manifest"])
+    payload = b"fixture-zip"
+    zip_path.write_bytes(payload)
+    manifest_path.write_text(
+        json.dumps([{"rel": "clone-a/README.md", "sha256": "c" * 64}]),
+        encoding="utf-8",
+    )
+    legacy["zip_sha256"] = hashlib.sha256(payload).hexdigest()
+    legacy["manifest_sha256"] = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    unsorted_line = json.dumps(legacy, sort_keys=False, ensure_ascii=False) + "\n"
+    index.write_text(unsorted_line, encoding="utf-8")
+    before = index.read_bytes()
+    assert before != (json.dumps(legacy, sort_keys=True) + "\n").encode("utf-8")
+
+    result = migrate_real_root(
+        index,
+        apply=True,
+        approval_message_id="messageId-test",
+        backup_dir=tmp_path / "backup",
+    )
+
+    after = index.read_bytes()
+    assert result.written is True
+    assert after[: len(before)] == before
+
+
+def test_f06_real_root_second_apply_adds_nothing_and_does_not_rewrite(
+    tmp_path: Path,
+) -> None:
+    """Before: a real-root index was already migrated once with --apply.
+    During: run migrate_real_root(apply=True) a second time.
+    After: 0 rows are added and the index's bytes stay identical."""
+    index = tmp_path / "root" / "index.jsonl"
+    _prepare_real_root_fixture(index, [_legacy_row()])
+    backup_dir = tmp_path / "backup"
+
+    first = migrate_real_root(
+        index,
+        apply=True,
+        approval_message_id="messageId-test-1",
+        backup_dir=backup_dir,
+    )
+    bytes_after_first = index.read_bytes()
+
+    second = migrate_real_root(
+        index,
+        apply=True,
+        approval_message_id="messageId-test-2",
+        backup_dir=backup_dir,
+    )
+
+    assert first.added_rows == 2
+    assert second.added_rows == 0
+    assert second.written is False
+    assert index.read_bytes() == bytes_after_first
