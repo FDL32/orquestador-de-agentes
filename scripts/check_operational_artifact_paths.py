@@ -107,7 +107,30 @@ def _iter_files(root: Path) -> list[Path]:
             for p in sorted(d.rglob("*"))
             if p.is_file() and p.suffix.lower() not in _SKIP_SUFFIXES
         )
-    return out
+    return _drop_git_ignored(root, out)
+
+
+def _drop_git_ignored(root: Path, files: list[Path]) -> list[Path]:
+    """Descarta de *files* los que git ignora bajo *root*; fallo ABIERTO."""
+    import subprocess
+
+    if not files:
+        return files
+    rels = [f.relative_to(root).as_posix() for f in files]
+    try:
+        proc = subprocess.run(  # noqa: S603
+            ["git", "-C", str(root), "check-ignore", "-z", "--stdin"],  # noqa: S607
+            input="\x00".join(rels).encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
+    except OSError:
+        return files
+    if proc.returncode not in (0, 1):
+        return files
+    ignored = set(proc.stdout.decode("utf-8", errors="replace").split("\x00"))
+    ignored.discard("")
+    return [f for f, rel in zip(files, rels, strict=False) if rel not in ignored]
 
 
 def scan(root: Path) -> tuple[list[Path], dict[str, int]]:
