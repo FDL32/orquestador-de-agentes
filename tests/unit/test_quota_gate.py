@@ -466,9 +466,86 @@ def test_quota_gate_m03_bloquea_dimension_sesiones_o_subagentes_ausente():
     for dimension in ("sesiones", "subagentes"):
         candidate = json.loads(json.dumps(payload))
         del candidate["dimensions"][dimension]
-        result = quota_gate.evaluate(roster, candidate, "target-instance")
+        result = quota_gate.evaluate(
+            roster, candidate, "target-instance", increase_concurrency=True
+        )
         assert result["rc"] == 9
         assert dimension in result["motivo"]
+
+
+def test_quota_gate_dimensiones_solo_bloquean_con_aumento_y_solo_target():
+    """Default launches keep BASE behavior; concurrency checks inspect only target account."""
+    roster = roster_for()
+    roster["sessions"] = {
+        "implantacion-1": {"type": "implantacion"},
+    }
+    payload = payload_for(
+        {"cuenta": "target", "block_pct": 10},
+        {"cuenta": "supervisor", "block_pct": 10},
+    )
+    payload["dimensions"] = {
+        "sesiones": {
+            "estado": "NO_MEDIDO",
+            "causas": ["sesion_sin_cuenta"],
+        },
+        "subagentes": {
+            "estado": "NO_MEDIDO",
+            "causas": ["subagente_cuenta_no_resoluble"],
+        },
+    }
+    payload["sesiones"] = [
+        {"sesion": "target-session", "cuenta": "target", "calidad_medida": "OK"},
+        {"sesion": "other-session", "cuenta": None, "calidad_medida": "NO_MEDIDO"},
+    ]
+    payload["subagentes"] = [
+        {
+            "subagente": "target-session:builder",
+            "sesion": "target-session",
+            "cuenta": "target",
+            "calidad_medida": "OK",
+        },
+        {
+            "subagente": "other-session:builder",
+            "sesion": "other-session",
+            "cuenta": None,
+            "calidad_medida": "NO_MEDIDO",
+        },
+    ]
+
+    ordinary = quota_gate.evaluate(roster, payload, "target-instance")
+    increase = quota_gate.evaluate(
+        roster,
+        payload,
+        "target-instance",
+        increase_concurrency=True,
+    )
+    assert ordinary["rc"] == 0
+    assert increase["rc"] == 0
+
+    payload["sesiones"][0]["cuenta"] = None
+    payload["subagentes"][0]["cuenta"] = None
+    rejected = quota_gate.evaluate(
+        roster,
+        payload,
+        "target-instance",
+        increase_concurrency=True,
+    )
+    assert rejected["rc"] == 9
+    assert "sesiones" in rejected["motivo"] or "subagentes" in rejected["motivo"]
+
+
+def test_quota_gate_cli_declara_flag_explicito_de_aumento():
+    """Expose the concurrency check as an opt-in parser flag."""
+    parsed = quota_gate._parser().parse_args(
+        [
+            "--target-instance",
+            "target-instance",
+            "--flight-dir",
+            "flight",
+            "--aumento-concurrencia",
+        ]
+    )
+    assert parsed.aumento_concurrencia is True
 
 
 def test_quota_gate_m04_payload_legacy_sin_censo_nuevo_sigue_siendocompatible():

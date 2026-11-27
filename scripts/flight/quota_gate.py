@@ -3,12 +3,15 @@
 
 Uso:
     python scripts/flight/quota_gate.py --target-instance <providerInstanceId> --flight-dir <VUELO>
-    Options: --supervision-policy strict|deferred, --strict-map, --supervisor-instance <id>
+    Options: --supervision-policy strict|deferred, --strict-map, --supervisor-instance <id>,
+        --aumento-concurrencia
 
 Before: a flight directory contains a UTF-8 JSON ``flight_roster.json`` with
     quota thresholds and an account provider map.
 During: resolve the destination, run quota_tick.py in a fresh subprocess, and
-    evaluate destination and supervision accounts fail-closed.
+    evaluate destination and supervision accounts fail-closed. The optional
+    ``--aumento-concurrencia`` mode additionally checks only the target account's
+    session/subagent attribution; ordinary launches preserve the account-only BASE behavior.
 After: print one human-readable gate line and a filtered schema-v2 JSON payload,
     returning 0, 3, 4, 5, or 9 according to the measured result.
 """
@@ -262,13 +265,14 @@ def _is_numeric_pct(value):
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _dimension_reason(roster, payload):
-    """Return a fail-closed reason for a declared session/subagent dimension.
+def _dimension_reason(roster, payload, target_account):
+    """Return a fail-closed reason for the target account's dimensions.
 
     Before: ``roster`` and ``payload`` are parsed objects from one quota tick.
-    During: require both new dimensions only when the roster declares session types, then inspect
-        their status, list shape, and entry quality without accepting partial measurements.
-    After: return a dimension-specific reason or ``None`` for a complete compatible payload.
+    During: require both new dimensions only when the roster declares session types, then filter
+        each dimension to ``target_account`` before checking quality; failures for other accounts
+        do not block this target.
+    After: return a target-specific dimension reason or ``None`` for a complete attribution.
     """
     declared = roster.get("sessions")
     if not declared:
@@ -283,25 +287,29 @@ def _dimension_reason(roster, payload):
         detail = dimensions.get(name)
         if not isinstance(detail, dict):
             return f"{name}: dimension ausente"
-        if detail.get("estado") != "OK":
-            causes = detail.get("causas")
-            suffix = (
-                ", ".join(str(cause) for cause in causes)
-                if isinstance(causes, list)
-                else "sin causa"
-            )
-            return f"{name}: {detail.get('estado', 'NO_MEDIDO')} ({suffix})"
         entries = payload.get(name)
         if not isinstance(entries, list) or not entries:
             return f"{name}: sin medicion"
-        bad_entries = [
+        target_entries = [
             entry
             for entry in entries
-            if not isinstance(entry, dict)
-            or entry.get("calidad_medida") not in ("OK", "RESERVA")
+            if isinstance(entry, dict) and entry.get("cuenta") == target_account
+        ]
+        if not target_entries:
+            return f"{name}: cuenta {target_account} sin atribucion"
+        bad_entries = [
+            entry
+            for entry in target_entries
+            if entry.get("calidad_medida") not in ("OK", "RESERVA")
         ]
         if bad_entries:
-            return f"{name}: entrada NO_MEDIDO"
+            causes = list(
+                dict.fromkeys(
+                    str(entry["causa"]) for entry in bad_entries if entry.get("causa")
+                )
+            )
+            suffix = ", ".join(causes) if causes else "entrada NO_MEDIDO"
+            return f"{name}: cuenta {target_account} NO_MEDIDO ({suffix})"
     return None
 
 
@@ -312,30 +320,16 @@ def evaluate(  # noqa: C901
     supervision_policy=SUPERVISION_STRICT,
     strict_map=False,
     supervisor_instance=None,
+    increase_concurrency=False,
 ):
     """Evaluate destination quota, map quality, and optional supervision.
 
     Before: ``roster`` and ``payload`` are parsed JSON objects for one flight.
-    During: resolve destination, apply thresholds and map reserve semantics, then
-        combine strict supervision using severity order 0 < 3 < 4 < 5 < 9.
+    During: resolve destination, optionally validate only its dimensional attribution when
+        ``increase_concurrency`` is true, then apply thresholds and map reserve semantics.
+        Ordinary calls keep the account-only BASE behavior.
     After: return a result dictionary containing rc, reason, account, and gate metadata.
     """
-    dimension_reason = _dimension_reason(roster, payload)
-    if dimension_reason:
-        return {
-            "rc": 9,
-            "motivo": dimension_reason,
-            "cuenta": None,
-            "mapa_no_verificado": False,
-            "strict_map": strict_map,
-            "supervision_policy": supervision_policy,
-            "supervision": {
-                "cuenta": None,
-                "block_pct": None,
-                "calidad_medida": None,
-                "rc": 9,
-            },
-        }
     try:
         account, via_map = resolve_target(roster, target_instance)
     except NoMedidoError as exc:
@@ -353,6 +347,23 @@ def evaluate(  # noqa: C901
                 "rc": 9,
             },
         }
+    if increase_concurrency:
+        dimension_reason = _dimension_reason(roster, payload, account)
+        if dimension_reason:
+            return {
+                "rc": 9,
+                "motivo": dimension_reason,
+                "cuenta": None,
+                "mapa_no_verificado": False,
+                "strict_map": strict_map,
+                "supervision_policy": supervision_policy,
+                "supervision": {
+                    "cuenta": account,
+                    "block_pct": None,
+                    "calidad_medida": "NO_MEDIDO",
+                    "rc": 9,
+                },
+            }
     quota, policy = _policy(roster)
     try:
         target = pick_account(payload, account)
@@ -472,6 +483,11 @@ def _parser():
     )
     parser.add_argument("--strict-map", action="store_true")
     parser.add_argument("--supervisor-instance", default=None)
+    parser.add_argument(
+        "--aumento-concurrencia",
+        action="store_true",
+        help="valida atribucion de sesion/subagente solo para el destino",
+    )
     return parser
 
 
@@ -515,6 +531,7 @@ def main(argv=None):
             args.supervision_policy,
             args.strict_map,
             args.supervisor_instance,
+            args.aumento_concurrencia,
         )
         if result["cuenta"] is None:
             print(f"QUOTA_GATE NO_MEDIDO {result['motivo']}")

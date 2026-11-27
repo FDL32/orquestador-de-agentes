@@ -25,10 +25,11 @@ After: UNA linea ``QUOTA <ESTADO> (soft S/hard H) | <cuenta> <ventana> <pct>% | 
 Schema JSON v2 congelado: ``QUOTA_JSON_SCHEMA``; cada cuenta lleva ``cuenta``,
 ``en_censo``, ``estado_operativo``, ``calidad_medida``, ``block_pct``,
 ``ventana_peor`` y ``ventanas``; ``codex`` lleva exactamente
-``primary_pct``, ``weekly_pct``, ``resets`` y ``medido``. ``rc_info`` copia el
-rc y ``fallbacks`` declara los defaults. ``sesiones`` y ``subagentes`` anaden el detalle de
-atribucion y ``dimensions`` declara su estado y causas. Un registro v1 de tick_trace omite los
-campos de cola y por tanto ``cola_despachable`` se interpreta como no declarado.
+``primary_pct``, ``weekly_pct``, ``resets`` y ``medido``. ``rc_info`` copia exclusivamente el
+rc de cuentas y ``fallbacks`` declara los defaults: un hueco dimensional no degrada la severidad
+de cuenta ni la linea ``QUOTA``. ``sesiones`` y ``subagentes`` anaden el detalle de atribucion y
+``dimensions`` declara su estado y causas de forma visible. Un registro v1 de tick_trace omite
+los campos de cola y por tanto ``cola_despachable`` se interpreta como no declarado.
 """
 
 import argparse
@@ -800,13 +801,11 @@ def _tick(a):
     accounts = _accounts(a.monitor or env.get(MONITOR_ENV))
     census = _census(policy)
     worst, parts, bad = _measure(accounts, census)
-    sessions, subagents, dimensions, dimension_parts, dimensions_bad = _dimensions(
+    sessions, subagents, dimensions, _dimension_parts, _dimensions_bad = _dimensions(
         accounts,
         flight_dir,
         policy,
     )
-    parts.extend(dimension_parts)
-    bad = bad or dimensions_bad
     agotar = {
         nombre
         for nombre, valor in policy.items()

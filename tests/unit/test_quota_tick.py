@@ -6,11 +6,14 @@ permite apuntar a una copia mutada). Nada ejecuta PowerShell ni la sonda reales 
 """
 
 import importlib.util
+import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import types
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import pytest
@@ -20,14 +23,20 @@ QT_PATH = Path(
     os.environ.get("QUOTA_TICK_UNDER_TEST")
     or Path(__file__).resolve().parents[2] / "scripts" / "flight" / "quota_tick.py"
 )
+ROOT = QT_PATH.parents[2]
+REAL_SUBPROCESS_RUN = subprocess.run
 WINDOWS = os.name == "nt"
 
 
-def _load(name="quota_tick_ut"):
-    spec = importlib.util.spec_from_file_location(name, QT_PATH)
+def _load_path(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+def _load(name="quota_tick_ut"):
+    return _load_path(name, QT_PATH)
 
 
 def acct(pct, stale=False, window="weekly"):
@@ -718,6 +727,81 @@ def _real_dimension_fixture(rig):
     return registry
 
 
+def _real_historical_fixture(rig):
+    """Copy the measured flight roster and session store without normalizing them.
+
+    Before: the repository checkout has a temporary flight directory and the destination
+        workspace contains the read-only historical flight snapshot.
+    During: copy both real JSON files verbatim and synthesize only healthy monitor output
+        for the accounts already present in the roster provider map.
+    After: return the untouched roster and registry objects used by the assertions.
+    """
+    source = Path(
+        os.environ.get(
+            "WOT_2026_153C_REAL_FLIGHT_DIR",
+            r"C:\Users\fdl\Proyectos_Python\orquestador_de_agentes_workspace\.agent\runtime\flight\vuelo-20261026b",
+        )
+    )
+    roster_path = source / "flight_roster.json"
+    registry_path = source / "session_registry.json"
+    assert roster_path.is_file() and registry_path.is_file()
+    shutil.copyfile(roster_path, rig.dir / "flight_roster.json")
+    shutil.copyfile(registry_path, rig.dir / "session_registry.json")
+    roster = json.loads(roster_path.read_text(encoding="utf-8"))
+    registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    provider_map = roster["quota"]["account_policy"]["provider_map"]
+    rig.monitor_out = json.dumps(
+        {"accounts": {name: acct(10) for name in set(provider_map.values())}}
+    )
+    return roster, registry
+
+
+def test_quota_tick_real_historico_no_contamina_rc_info_de_cuenta(rig):
+    """Keep account severity equal to the account-only BASE with real historical gaps."""
+    _roster, registry = _real_historical_fixture(rig)
+    assert len(registry["sessions"]) >= 600
+    rc, encoded = rig.tick("--json")
+    payload = json.loads(encoded)
+
+    base_source = REAL_SUBPROCESS_RUN(
+        ["git", "show", "d877ca23:scripts/flight/quota_tick.py"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+    base_path = rig.dir / "quota_tick_base.py"
+    base_path.write_text(base_source, encoding="utf-8")
+    base = _load_path("quota_tick_base", base_path)
+    base.subprocess.run = rig._run
+    base_stdout = io.StringIO()
+    with redirect_stdout(base_stdout):
+        base_rc = base.main(
+            [
+                "--flight-dir",
+                str(rig.dir),
+                "--monitor",
+                rig.monitor_path,
+                "--probe",
+                rig.probe_path,
+                "--json",
+            ]
+        )
+    base_payload = json.loads(base_stdout.getvalue())
+
+    assert rc == base_rc == 0
+    assert payload["rc_info"] == base_payload["rc_info"] == base_rc
+    assert payload["dimensions"]["sesiones"]["estado"] == "NO_MEDIDO"
+    assert payload["dimensions"]["subagentes"]["estado"] == "NO_MEDIDO"
+    causes = {
+        entry.get("causa")
+        for entry in payload["sesiones"] + payload["subagentes"]
+        if entry.get("causa")
+    }
+    assert "sesion_sin_cuenta" in causes
+    assert "subagente_cuenta_no_resoluble" in causes
+
+
 def test_quota_tick_m01_mide_cuenta_sesion_y_subagente_con_forma_real(rig):
     """Measure the three identities from the real roster and registry shapes."""
     _real_dimension_fixture(rig)
@@ -795,8 +879,8 @@ def test_quota_tick_m02_no_medido_con_causa_para_ausencia_extra_o_relacion_ilegi
     payload = json.loads(encoded)
     all_entries = payload["sesiones"] + payload["subagentes"]
 
-    assert rc == 9
-    assert payload["rc_info"] == 9
+    assert rc == 0
+    assert payload["rc_info"] == 0
     assert any(entry.get("causa") == cause for entry in all_entries)
     expected_session_state = (
         "OK" if mutation in ("broken_subagent", "unmapped_subagent") else "NO_MEDIDO"
@@ -831,7 +915,7 @@ def test_quota_tick_m05_mutantes_de_censo_son_detectables_y_restore_vuelve_a_ver
         json.dumps({"sessions": []}), encoding="utf-8"
     )
     rc, encoded = rig.tick("--json")
-    assert rc == 9 and "NO_MEDIDO" in encoded
+    assert rc == 0 and "NO_MEDIDO" in encoded
     (rig.dir / "session_registry.json").write_text(
         json.dumps(original_registry), encoding="utf-8"
     )
@@ -843,7 +927,7 @@ def test_quota_tick_m05_mutantes_de_censo_son_detectables_y_restore_vuelve_a_ver
         json.dumps(mutated), encoding="utf-8"
     )
     rc, encoded = rig.tick("--json")
-    assert rc == 9 and "NO_MEDIDO" in encoded
+    assert rc == 0 and "NO_MEDIDO" in encoded
     (rig.dir / "session_registry.json").write_text(
         json.dumps(original_registry), encoding="utf-8"
     )
