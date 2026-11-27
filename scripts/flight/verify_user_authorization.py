@@ -39,10 +39,14 @@ import re
 import sqlite3
 import subprocess
 import sys
+import tempfile
+import threading
+import time
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from typing import ClassVar
 from urllib.parse import quote
 
 
@@ -1411,9 +1415,23 @@ class PushAuthorityLedger:
         "anchorMessageId",
     )
     ATTEMPT_FIELDS = ("repo", "ref", "remoteSha")
+    _ledger_thread_locks: ClassVar[dict[str, threading.RLock]] = {}
+    _ledger_thread_locks_guard = threading.Lock()
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        lock_timeout: float = 5.0,
+        lock_poll_interval: float = 0.01,
+        replace_retry_timeout: float = 1.0,
+        replace_retry_interval: float = 0.01,
+    ) -> None:
         self.path = Path(path)
+        self.lock_timeout = lock_timeout
+        self.lock_poll_interval = lock_poll_interval
+        self.replace_retry_timeout = replace_retry_timeout
+        self.replace_retry_interval = replace_retry_interval
 
     @classmethod
     def default(cls, project_root: str | Path) -> PushAuthorityLedger:
@@ -1423,6 +1441,101 @@ class PushAuthorityLedger:
     @property
     def lock_dir(self) -> Path:
         return self.path.parent / (self.path.name + ".locks")
+
+    @property
+    def ledger_lock_path(self) -> Path:
+        """Lock hermano que serializa el fichero completo del ledger."""
+        return self.path.with_name(self.path.name + ".lock")
+
+    @classmethod
+    def _thread_lock_for(cls, path: Path) -> threading.RLock:
+        """Devuelve el lock intra-proceso compartido por la ruta del ledger."""
+        key = str(path.resolve())
+        with cls._ledger_thread_locks_guard:
+            lock = cls._ledger_thread_locks.get(key)
+            if lock is None:
+                lock = threading.RLock()
+                cls._ledger_thread_locks[key] = lock
+            return lock
+
+    @staticmethod
+    def _try_lock_handle(handle) -> None:
+        """Intenta bloquear un byte fijo del descriptor en la plataforma activa."""
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            return
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    @staticmethod
+    def _unlock_handle(handle) -> None:
+        """Libera el mismo byte fijo usado por _try_lock_handle."""
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            return
+        import fcntl
+
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+    @contextlib.contextmanager
+    def _ledger_serialization(self):
+        """Serializa lectura-modificacion-escritura-reemplazo por fichero.
+
+        Before: el ledger puede ser usado por varios hilos o procesos y el
+            timeout es un valor finito inyectable mediante lock_timeout.
+        During: combina un RLock intra-proceso con un lock del sistema sobre
+            un fichero hermano, anclando Windows en el offset cero.
+        After: el bloque queda protegido o eleva ledger-lock-timeout sin tocar
+            el ledger; cualquier fallo de apertura queda nombrado.
+        """
+        thread_lock = self._thread_lock_for(self.path)
+        timeout = max(float(self.lock_timeout), 0.0)
+        started = time.monotonic()
+        if not thread_lock.acquire(timeout=timeout):
+            raise InfraError("ledger-lock-timeout", str(self.ledger_lock_path))
+        handle = None
+        locked = False
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            handle = self.ledger_lock_path.open("a+b")
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\\0")
+                handle.flush()
+            deadline = started + timeout
+            last_error = None
+            while True:
+                try:
+                    self._try_lock_handle(handle)
+                    locked = True
+                    break
+                except OSError as exc:
+                    last_error = exc
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    detail = str(last_error or self.ledger_lock_path)
+                    raise InfraError("ledger-lock-timeout", detail)
+                time.sleep(min(max(self.lock_poll_interval, 0.0), remaining))
+            yield
+        except InfraError:
+            raise
+        except OSError as exc:
+            raise InfraError("ledger-lock-failed", str(exc)) from exc
+        finally:
+            if locked and handle is not None:
+                with contextlib.suppress(OSError):
+                    self._unlock_handle(handle)
+            if handle is not None:
+                with contextlib.suppress(OSError):
+                    handle.close()
+            thread_lock.release()
 
     @staticmethod
     def _key(message_id: str) -> str:
@@ -1442,7 +1555,7 @@ class PushAuthorityLedger:
     def _attempt_lock_path(self, message_id: str) -> Path:
         return self.lock_dir / ("attempt-" + self._key(message_id) + ".lock")
 
-    def _records(self, message_id: str) -> list[dict]:
+    def _records_unlocked(self, message_id: str) -> list[dict]:
         if not self.path.exists():
             return []
         records = []
@@ -1465,6 +1578,13 @@ class PushAuthorityLedger:
             raise InfraError("ledger-unreadable", str(exc)) from exc
         return records
 
+    def _records(self, message_id: str) -> list[dict]:
+        """Lee registros bajo la misma serializacion que protege los escritores."""
+        if not self.path.exists():
+            return []
+        with self._ledger_serialization():
+            return self._records_unlocked(message_id)
+
     def is_consumed(self, message_id: str) -> bool:
         """True si el messageId ya fue consumido.
 
@@ -1472,52 +1592,64 @@ class PushAuthorityLedger:
         huerfano: el consumo se considero hecho); una linea sin lock tambien
         cuenta. En ambos casos el motivo `consumed` lo explica en self-service.
         """
-        if self._lock_path(message_id).exists():
-            return True
-        records = self._records(message_id)
-        key = self._key(message_id)
-        for record in records:
-            if record.get("messageIdSha256") == key and record.get("state") in {
-                None,
-                "CONSUMIDO",
-            }:
+        if not self.path.exists():
+            return self._lock_path(message_id).exists()
+        with self._ledger_serialization():
+            if self._lock_path(message_id).exists():
                 return True
-            if record.get("state") == "CONSUMIDO":
-                return True
-        return False
+            records = self._records_unlocked(message_id)
+            key = self._key(message_id)
+            return any(
+                (
+                    record.get("messageIdSha256") == key
+                    and record.get("state") in {None, "CONSUMIDO"}
+                )
+                or record.get("state") == "CONSUMIDO"
+                for record in records
+            )
 
     def _has_conflict(self, message_id: str) -> bool:
-        return any(
-            record.get("state") == "P_CONFLICTO" for record in self._records(message_id)
-        )
+        """Consulta conflictos sin reentrar en el lock cuando el ledger existe."""
+        if not self.path.exists():
+            return False
+        with self._ledger_serialization():
+            return any(
+                record.get("state") == "P_CONFLICTO"
+                for record in self._records_unlocked(message_id)
+            )
 
     def has_retryable_attempt(self, context: PushContext) -> bool:
         """Return whether this exact push context has an unlocked INTENTO."""
         if not self.path.exists():
             return False
-        try:
-            with self.path.open("r", encoding="utf-8") as handle:
-                for raw in handle:
-                    if not raw.strip():
-                        continue
-                    record = json.loads(raw)
-                    if not isinstance(record, dict) or record.get("state") != "INTENTO":
-                        continue
-                    if (
-                        record.get("repo") == context.repo
-                        and record.get("ref") == f"refs/heads/{context.branch}"
-                        and record.get("fullSha") == context.full_sha
-                        and record.get("remoteSha") == context.remote_sha
-                        and not self._attempt_lock_path(
-                            str(record.get("messageId"))
-                        ).exists()
-                    ):
-                        return True
-        except (OSError, TypeError, ValueError) as exc:
-            raise InfraError("ledger-unreadable", str(exc)) from exc
+        with self._ledger_serialization():
+            try:
+                with self.path.open("r", encoding="utf-8") as handle:
+                    for raw in handle:
+                        if not raw.strip():
+                            continue
+                        record = json.loads(raw)
+                        if (
+                            not isinstance(record, dict)
+                            or record.get("state") != "INTENTO"
+                        ):
+                            continue
+                        if (
+                            record.get("repo") == context.repo
+                            and record.get("ref") == f"refs/heads/{context.branch}"
+                            and record.get("fullSha") == context.full_sha
+                            and record.get("remoteSha") == context.remote_sha
+                            and not self._attempt_lock_path(
+                                str(record.get("messageId"))
+                            ).exists()
+                        ):
+                            return True
+            except (OSError, TypeError, ValueError) as exc:
+                raise InfraError("ledger-unreadable", str(exc)) from exc
         return False
 
-    def _append(self, payload: dict) -> None:
+    def _append_unlocked(self, payload: dict) -> None:
+        """Añade una fila suponiendo que el lock del ledger ya está tomado."""
         try:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8", newline="\n") as handle:
@@ -1525,52 +1657,115 @@ class PushAuthorityLedger:
         except OSError as exc:
             raise InfraError("ledger-append-failed", str(exc)) from exc
 
-    def _rewrite_attempt_state(self, record: dict, state: str, observed: str) -> None:
-        """Update the single reservation row atomically while retaining one row."""
-        if not self.path.exists():
-            self._append({**record, "state": state, "observedRemoteSha": observed})
-            return
-        try:
-            lines = self.path.read_text(encoding="utf-8").splitlines()
-            target = self._attempt_key(record)
-            replaced = False
-            updated = []
-            for raw in lines:
-                if not raw.strip():
-                    continue
-                try:
-                    current = json.loads(raw)
-                except (TypeError, ValueError):
-                    updated.append(raw)
-                    continue
-                if (
-                    isinstance(current, dict)
-                    and current.get("attemptKey") == target
-                    and current.get("messageId") == record["messageId"]
-                ):
-                    current = {**current, "state": state, "observedRemoteSha": observed}
-                    replaced = True
-                updated.append(json.dumps(current, ensure_ascii=False))
-            if not replaced:
-                updated.append(
-                    json.dumps(
-                        {
-                            **record,
-                            "messageIdSha256": self._key(str(record["messageId"])),
-                            "attemptKey": target,
-                            "state": state,
-                            "observedRemoteSha": observed,
-                        },
-                        ensure_ascii=False,
-                    )
-                )
-            temporary = self.path.with_name(self.path.name + ".tmp")
-            temporary.write_text(
-                "\n".join(updated) + "\n", encoding="utf-8", newline="\n"
+    def _append(self, payload: dict) -> None:
+        """Añade una fila bajo la serializacion del fichero completo."""
+        with self._ledger_serialization():
+            self._append_unlocked(payload)
+
+    def _replace_with_retry(self, temporary: Path) -> None:
+        """Reemplaza el ledger con reintento acotado para lectores Windows."""
+        deadline = time.monotonic() + max(float(self.replace_retry_timeout), 0.0)
+        while True:
+            try:
+                os.replace(temporary, self.path)
+                return
+            except OSError as exc:  # noqa: PERF203
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise InfraError("ledger-replace-timeout", str(exc)) from exc
+                time.sleep(min(max(self.replace_retry_interval, 0.0), remaining))
+
+    def _rewrite_lines(
+        self, raw_lines: list[bytes], record: dict, state: str, observed: str
+    ) -> tuple[list[bytes], bool]:
+        """Modifica sólo la fila objetivo y conserva los bytes de las demás."""
+        target = self._attempt_key(record)
+        replaced = False
+        updated: list[bytes] = []
+        for raw in raw_lines:
+            if raw.endswith(b"\r\n"):
+                body, ending = raw[:-2], b"\r\n"
+            elif raw.endswith((b"\n", b"\r")):
+                body, ending = raw[:-1], raw[-1:]
+            else:
+                body, ending = raw, b""
+            if not body.strip():
+                updated.append(raw)
+                continue
+            try:
+                current = json.loads(body)
+            except (TypeError, UnicodeError, ValueError):
+                updated.append(raw)
+                continue
+            if not (
+                isinstance(current, dict)
+                and current.get("attemptKey") == target
+                and current.get("messageId") == record["messageId"]
+            ):
+                updated.append(raw)
+                continue
+            current = {**current, "state": state, "observedRemoteSha": observed}
+            replaced = True
+            updated.append(
+                json.dumps(current, ensure_ascii=False).encode("utf-8") + ending
             )
-            os.replace(temporary, self.path)
+        return updated, replaced
+
+    def _rewrite_attempt_state(self, record: dict, state: str, observed: str) -> None:
+        """Reescribe una reserva preservando bytes ajenos bajo un lock de fichero.
+
+        Before: record identifica una reserva y el remoto observado ya fue
+            clasificado como CONSUMIDO, INTENTO o P_CONFLICTO.
+        During: toma el lock completo, modifica sólo la línea objetivo, crea
+            un temporal único y reintenta os.replace durante un plazo acotado.
+        After: conserva cada línea ajena byte a byte o eleva una causa
+            nombrada sin publicar un reemplazo parcial.
+        """
+        temporary: Path | None = None
+        try:
+            with self._ledger_serialization():
+                if not self.path.exists():
+                    self._append_unlocked(
+                        {**record, "state": state, "observedRemoteSha": observed}
+                    )
+                    return
+                updated, replaced = self._rewrite_lines(
+                    self.path.read_bytes().splitlines(keepends=True),
+                    record,
+                    state,
+                    observed,
+                )
+                if not replaced:
+                    updated.append(
+                        json.dumps(
+                            {
+                                **record,
+                                "messageIdSha256": self._key(str(record["messageId"])),
+                                "attemptKey": self._attempt_key(record),
+                                "state": state,
+                                "observedRemoteSha": observed,
+                            },
+                            ensure_ascii=False,
+                        ).encode("utf-8")
+                        + b"\n"
+                    )
+                descriptor, temporary_name = tempfile.mkstemp(
+                    prefix=self.path.name + ".",
+                    suffix=".tmp",
+                    dir=str(self.path.parent),
+                )
+                temporary = Path(temporary_name)
+                with os.fdopen(descriptor, "wb") as handle:
+                    handle.write(b"".join(updated))
+                    handle.flush()
+                self._replace_with_retry(temporary)
+                temporary = None
         except OSError as exc:
             raise InfraError("ledger-append-failed", str(exc)) from exc
+        finally:
+            if temporary is not None:
+                with contextlib.suppress(OSError):
+                    temporary.unlink()
 
     def reserve_attempt(self, record: dict) -> bool:
         """Reserva un intento ligado a repo/ref/SHA local y SHA remoto.
@@ -1686,14 +1881,11 @@ class PushAuthorityLedger:
         finally:
             os.close(descriptor)
         try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            line = json.dumps(payload, ensure_ascii=False) + "\n"
-            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line)
-        except OSError as exc:
+            self._append(payload)
+        except InfraError:
             with contextlib.suppress(OSError):
                 lock_path.unlink()
-            raise InfraError("ledger-append-failed", str(exc)) from exc
+            raise
         return True
 
 
