@@ -2,7 +2,8 @@
 
 Before: an external mounted archive root, an origin, and a hashed approved list.
 During: dry-run by default; apply-archive creates verified zip evidence, while
-apply-retire revalidates that evidence before unlinking only eligible files.
+apply-retire revalidates that evidence before unlinking only eligible files;
+retire-sin-archivo removes approved copies that derive from a live base.
 After: every operation is indexed outside the retired origin, or fails closed.
 """
 
@@ -321,6 +322,51 @@ def _apply_retire(
     return 0
 
 
+def _apply_retire_sin_archivo(
+    args: argparse.Namespace,
+    entries: list[dict[str, object]],
+    origin: Path,
+    index: Path,
+    md: Path,
+) -> int:
+    """Before: ``entries`` is an approved derived-copy list with provenance.
+    During: validate every entry, skip tracked files, and unlink only after all
+        preconditions pass; append one audit row without copying content.
+    After: return 0 with the complete transition represented in the root index.
+    """
+    p7_common.verify_retire_sin_archivo_entries(entries, origin)
+    tracked = p7_common.git_tracked_files(origin)
+    tracked_keys = {os.path.normcase(name) for name in tracked}
+    removed = []
+    for path, entry in zip(_paths(entries, origin), entries, strict=True):
+        key = os.path.normcase(path.relative_to(origin).as_posix())
+        ticket = entry.get("ticket", entry.get("ronda"))
+        status = "SALTADA_VERSIONADA" if key in tracked_keys else "RETIRADA"
+        if status == "RETIRADA":
+            path.unlink()
+        removed.append(
+            {
+                "path": str(path),
+                "size": entry["size"],
+                "sha256": entry["sha256"],
+                "procedencia": entry["procedencia"],
+                "ticket": ticket,
+                "status": status,
+            }
+        )
+    _append_record(
+        index,
+        {
+            "status": "RETIRADO_SIN_ARCHIVO",
+            "family": args.family,
+            "list_sha256": args.list_sha256,
+            "entries": removed,
+        },
+    )
+    _markdown_index(md, p7_common.load_jsonl_index(index))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: C901
     """Before: parse an explicit archive root and approved list.
     During: hold an external lock and execute the selected P7 transition.
@@ -343,15 +389,29 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--apply-archive", action="store_true")
     parser.add_argument("--apply-retire", action="store_true")
+    parser.add_argument("--apply-retire-sin-archivo", action="store_true")
+    parser.add_argument("--clase")
     parser.add_argument("--json", action="store_true")
     try:
         args = parser.parse_args(argv)
     except SystemExit as exc:
         return 2 if exc.code else 0
+    if args.clase is not None and args.clase != "copia_derivada_base_viva":
+        return 2
+    if args.apply_retire_sin_archivo and (
+        args.clase != "copia_derivada_base_viva"
+        or args.apply_archive
+        or args.apply_retire
+        or args.dry_run
+    ):
+        return 2
     if (
         (args.apply_archive and args.apply_retire)
         or (args.apply_archive and args.dry_run)
         or (args.apply_retire and args.dry_run)
+        or (args.apply_retire_sin_archivo and args.dry_run)
+        or (args.apply_archive and args.apply_retire_sin_archivo)
+        or (args.apply_retire and args.apply_retire_sin_archivo)
     ):
         return 2
     if _paths_overlap(args.archive_root, args.origin):
@@ -378,21 +438,37 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
                 rc = _apply_archive(args, entries, args.origin, index, md)
             elif args.apply_retire:
                 rc = _apply_retire(args, entries, args.origin, index, md)
+            elif args.apply_retire_sin_archivo:
+                rc = _apply_retire_sin_archivo(args, entries, args.origin, index, md)
+            elif args.clase == "copia_derivada_base_viva":
+                p7_common.verify_retire_sin_archivo_entries(entries, args.origin)
+                rc = 0
             else:
                 rc = 0
             _check_shared_index(args.archive_root, args.family, index)
-            if args.json:
+            if args.json or (
+                args.clase == "copia_derivada_base_viva"
+                and not args.apply_retire_sin_archivo
+            ):
                 print(
                     json.dumps(
                         {
                             "status": "DRY_RUN"
-                            if not (args.apply_archive or args.apply_retire)
+                            if not (
+                                args.apply_archive
+                                or args.apply_retire
+                                or args.apply_retire_sin_archivo
+                            )
                             else "OK",
-                            "candidates": p7_common.classify_candidates(
-                                entries,
-                                now=datetime.now(timezone.utc).timestamp(),
-                                ttl_dias=args.ttl_dias,
-                                min_age_segundos=p7_common.MIN_AGE_SECONDS,
+                            "candidates": (
+                                entries
+                                if args.clase == "copia_derivada_base_viva"
+                                else p7_common.classify_candidates(
+                                    entries,
+                                    now=datetime.now(timezone.utc).timestamp(),
+                                    ttl_dias=args.ttl_dias,
+                                    min_age_segundos=p7_common.MIN_AGE_SECONDS,
+                                )
                             ),
                         }
                     )

@@ -236,6 +236,21 @@ en una lista aprobada.
 Frase literal de la clausula: REGISTRO diario de espacio libre (medicion viva). El diseno nombra el fichero C:/Users/fdl/flight_coordination/disk_free_log.csv (columnas ts_local, free_gb, used_gb, total_gb, by; iniciado el 2026-11-09 17:25 por CO-62) como registro de linea base; propone como DUENO de la automatizacion diaria (P26) a la coordinadora vigente del vuelo dentro de su latido diario, PENDIENTE de decision del usuario; y aclara que la linea base de 14 registros SOLO condiciona decisiones por tasa de crecimiento, NUNCA las retiradas por lista aprobada (N6/E8/O6). [externa]
 
 
+## Retirada sin archivo de copias derivadas de una base viva
+
+La clase ratificada D-A (messageId `8fd1e710-f365-4fc7-8479-0944d869c5cd`)
+permite retirar una copia derivada únicamente cuando cada entrada de la lista
+aprobada declara su procedencia absoluta y el ticket o ronda que la produjo.
+El modo de aplicación es `--apply-retire-sin-archivo` junto con
+`--clase copia_derivada_base_viva`; el modo sin flag de aplicación es dry-run
+por defecto y valida y lista toda la lista sin borrar ni escribir una fila.
+Antes del primer borrado se revalidan hash de lista, tamaño, mtime, hash,
+procedencia, ticket o ronda y ausencia de manejadores abiertos para todas las
+entradas. Los ficheros versionados se registran como `SALTADA_VERSIONADA`.
+La aplicación escribe una única fila `RETIRADO_SIN_ARCHIVO` en el índice de la
+raíz montada, con los datos de cada entrada, sin copiar contenido a un zip ni
+a un manifiesto.
+
 ## Decisiones pendientes del usuario
 
 1. Raiz del archivo y sus condiciones para D:, Internxt, jsonl, mensajes, hash y subida confirmada.

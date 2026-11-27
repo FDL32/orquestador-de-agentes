@@ -445,6 +445,64 @@ def verify_list_entries(entries: Iterable[dict[str, Any]], base: Path) -> None:
             raise ArchiveError(f"hash de entrada no coincide: {rel}")
 
 
+def verify_retire_sin_archivo_entries(  # noqa: C901
+    entries: Iterable[dict[str, Any]], base: Path
+) -> None:
+    """Before: ``entries`` is the approved snapshot for a live-derived copy.
+    During: validate every file's size, mtime, digest, provenance, ticket, and
+        open-handle state before any caller is allowed to remove a file.
+    After: return only when the complete list is safe to retire without a copy.
+    """
+    base = Path(base)
+    for entry in entries:
+        rel = str(entry.get("rel", entry.get("path", entry.get("name", ""))))
+        assert_no_link_ancestors(base, rel)
+        path = base / rel
+        try:
+            if is_reparse_or_link(path) or not path.is_file():
+                raise ArchiveError(f"entrada aprobada ausente o enlace: {rel}")
+            info = path.stat()
+        except OSError as exc:
+            raise ArchiveError(f"no se pudo comprobar {rel}: {exc}") from exc
+        if "size" not in entry or info.st_size != int(entry["size"]):
+            raise ArchiveError(f"tamano discrepante: {rel}")
+        if "mtime" not in entry or info.st_mtime != float(entry["mtime"]):
+            raise ArchiveError(f"mtime discrepante: {rel}")
+        if sha256_file(path) != str(entry.get("sha256", "")):
+            raise ArchiveError(f"hash de entrada no coincide: {rel}")
+
+        provenance_value = entry.get("procedencia")
+        if not isinstance(provenance_value, str) or not provenance_value.strip():
+            raise ArchiveError(f"procedencia obligatoria ausente: {rel}")
+        provenance = Path(provenance_value)
+        if not provenance.is_absolute() or not provenance.exists():
+            raise ArchiveError(f"procedencia inexistente o no absoluta: {rel}")
+        try:
+            if path.resolve() == provenance.resolve():
+                raise ArchiveError(f"entrada y procedencia coinciden: {rel}")
+        except OSError as exc:
+            raise ArchiveError(f"no se pudo resolver procedencia: {rel}") from exc
+
+        ticket = entry.get("ticket", entry.get("ronda"))
+        if not isinstance(ticket, str) or not ticket.strip():
+            raise ArchiveError(f"ticket o ronda obligatorio ausente: {rel}")
+        assert_file_not_open(path)
+
+
+def assert_file_not_open(path: Path) -> None:
+    """Before: ``path`` is an existing regular file about to be retired.
+    During: probe Windows delete-sharing with the measured same-path replace.
+    After: return only when the probe succeeds; every exception fails closed.
+    """
+    try:
+        path = Path(path)
+        if not path.is_file() or is_reparse_or_link(path):
+            raise OSError(f"fichero no regular: {path}")
+        os.replace(path, path)
+    except Exception as exc:
+        raise ArchiveError(f"fichero abierto o no comprobable: {path}") from exc
+
+
 def assert_no_link_ancestors(base: Path, rel: str) -> None:
     """Before: ``rel`` is a relative approved path below ``base``.
     During: inspect each directory component without resolving links.

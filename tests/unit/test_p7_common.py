@@ -141,6 +141,18 @@ def test_cuadre_normaliza_rutas_y_filtra_familia(tmp_path: Path) -> None:
     assert p7_common.reconcile_index(tmp_path, rows, "A") == []
 
 
+def test_cuadre_ignora_retirado_sin_archivo(tmp_path: Path) -> None:
+    rows = [
+        {
+            "status": "RETIRADO_SIN_ARCHIVO",
+            "family": "A",
+            "list_sha256": "a" * 64,
+            "entries": [],
+        }
+    ]
+    assert p7_common.reconcile_index(tmp_path, rows, "A") == []
+
+
 def test_lista_aprobada_hash_y_entrada(tmp_path: Path) -> None:
     payload = tmp_path / "item.txt"
     payload.write_text("approved", encoding="utf-8")
@@ -229,6 +241,52 @@ def test_archive_script_imports_from_neutral_cwd(tmp_path: Path) -> None:
     )
     assert result.returncode == 0, result.stderr
     assert "denominador: 1" in result.stdout
+
+
+def test_p7_loaders_funcionan_en_python_aislado_desde_cwd_externo(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    common_path = repo_root / "scripts" / "flight" / "p7_common.py"
+    retire_path = repo_root / "scripts" / "flight" / "p7_retire.py"
+    script_path = tmp_path / "isolated_loader.py"
+    outside_dir = tmp_path / "outside"
+    outside_dir.mkdir()
+    script_path.write_text(
+        """
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+import sys
+
+
+def load(name: str, path: Path):
+    spec = spec_from_file_location(name, path)
+    module = module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+common = load("p7_common_by_path", Path(sys.argv[1]))
+retire = load("p7_retire_by_path", Path(sys.argv[2]))
+raise SystemExit(retire.main(["--help"]))
+""".lstrip(),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            str(script_path),
+            str(common_path),
+            str(retire_path),
+        ],
+        cwd=str(outside_dir),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode in (0, 2), result.stderr
+    assert "Traceback" not in result.stderr
 
 
 def test_archive_arranques_reusa_p7_common_sin_retirada_duplicada() -> None:

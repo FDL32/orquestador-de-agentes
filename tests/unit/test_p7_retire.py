@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
 import time
 import zipfile
 from pathlib import Path
@@ -75,6 +76,56 @@ def _args_family(
     return args
 
 
+def _write_list(path: Path, entries: list[dict[str, object]]) -> str:
+    path.write_text(
+        "\n".join(json.dumps(item, sort_keys=True) for item in entries) + "\n",
+        encoding="utf-8",
+    )
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _sin_archivo_fixture(
+    tmp_path: Path,
+) -> tuple[Path, Path, list[dict[str, object]], str, Path, list[Path]]:
+    origin = tmp_path / "origin"
+    origin.mkdir(parents=True)
+    provenance = tmp_path / "live-base"
+    provenance.write_text("live base", encoding="utf-8")
+    paths = [origin / "derived-a.txt", origin / "derived-b.txt"]
+    paths[0].write_text("derived a", encoding="utf-8")
+    paths[1].write_text("derived b", encoding="utf-8")
+    _git(origin, "init", "-q")
+    entries = [
+        {
+            "rel": path.name,
+            "size": path.stat().st_size,
+            "mtime": path.stat().st_mtime,
+            "sha256": p7_common.sha256_file(path),
+            "procedencia": str(provenance.resolve()),
+            "ticket": "WOT-2026-240b",
+        }
+        for path in paths
+    ]
+    approved = tmp_path / "approved-sin-archivo.jsonl"
+    digest = _write_list(approved, entries)
+    return origin, tmp_path / "archive", entries, digest, approved, paths
+
+
+def _sin_archivo_args(
+    origin: Path,
+    archive: Path,
+    digest: str,
+    approved: Path,
+    *extra: str,
+) -> list[str]:
+    return [
+        *_args(origin, archive, digest, approved),
+        "--clase",
+        "copia_derivada_base_viva",
+        *extra,
+    ]
+
+
 def test_lista_aprobada(tmp_path: Path) -> None:
     origin, archive, _, digest, approved = _fixture(tmp_path)
     archive.mkdir()
@@ -91,6 +142,253 @@ def test_lista_aprobada(tmp_path: Path) -> None:
     approved.write_bytes(original)
     assert p7_retire.main(_args(origin, archive, digest, approved)) == 0
     assert origin.joinpath("old.md").exists()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ("--apply-retire-sin-archivo",),
+        ("--apply-retire-sin-archivo", "--clase", "otra"),
+        ("--apply-retire-sin-archivo", "--apply-archive"),
+        ("--apply-retire-sin-archivo", "--apply-retire"),
+        ("--apply-retire-sin-archivo", "--dry-run"),
+    ],
+)
+def test_retire_sin_archivo_exige_clase_y_es_excluyente(
+    tmp_path: Path, extra: tuple[str, ...]
+) -> None:
+    origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    archive.mkdir()
+    assert p7_retire.main(_args(origin, archive, digest, approved, *extra)) == 2
+    assert all(path.exists() for path in paths)
+
+
+def test_retire_sin_archivo_borra_sin_zip_y_registra_una_fila(
+    tmp_path: Path,
+) -> None:
+    origin, archive, entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    archive.mkdir()
+    assert (
+        p7_retire.main(
+            _sin_archivo_args(
+                origin,
+                archive,
+                digest,
+                approved,
+                "--apply-retire-sin-archivo",
+            )
+        )
+        == 0
+    )
+    assert all(not path.exists() for path in paths)
+    assert list(archive.rglob("*.zip")) == []
+    assert list(archive.rglob("*.manifest.json")) == []
+    rows = p7_common.load_jsonl_index(archive / "index.jsonl")
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["status"] == "RETIRADO_SIN_ARCHIVO"
+    assert row["list_sha256"] == digest
+    assert row["entries"] == [
+        {
+            "path": str(path),
+            "size": entry["size"],
+            "sha256": entry["sha256"],
+            "procedencia": entry["procedencia"],
+            "ticket": entry["ticket"],
+            "status": "RETIRADA",
+        }
+        for path, entry in zip(paths, entries, strict=True)
+    ]
+
+
+def test_retire_sin_archivo_salta_versionados_con_el_mismo_criterio(
+    tmp_path: Path,
+) -> None:
+    origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    _git(origin, "config", "user.email", "test@example.com")
+    _git(origin, "config", "user.name", "test")
+    _git(origin, "add", paths[0].name)
+    _git(origin, "commit", "-q", "-m", "fixture")
+    archive.mkdir()
+    assert (
+        p7_retire.main(
+            _sin_archivo_args(
+                origin,
+                archive,
+                digest,
+                approved,
+                "--apply-retire-sin-archivo",
+            )
+        )
+        == 0
+    )
+    assert paths[0].exists()
+    assert not paths[1].exists()
+    rows = p7_common.load_jsonl_index(archive / "index.jsonl")
+    assert [item["status"] for item in rows[0]["entries"]] == [
+        "SALTADA_VERSIONADA",
+        "RETIRADA",
+    ]
+
+
+@pytest.mark.parametrize("defect", ["procedencia", "ticket", "missing", "same"])
+def test_retire_sin_archivo_rechaza_procedencia_y_ticket_sin_borrar(
+    tmp_path: Path, defect: str
+) -> None:
+    origin, archive, entries, _digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    broken = dict(entries[0])
+    if defect == "procedencia":
+        del broken["procedencia"]
+    elif defect == "ticket":
+        del broken["ticket"]
+    elif defect == "missing":
+        broken["procedencia"] = str((tmp_path / "missing-base").resolve())
+    else:
+        broken["procedencia"] = str(paths[0].resolve())
+    entries[0] = broken
+    digest = _write_list(approved, entries)
+    archive.mkdir()
+    assert (
+        p7_retire.main(
+            _sin_archivo_args(
+                origin,
+                archive,
+                digest,
+                approved,
+                "--apply-retire-sin-archivo",
+            )
+        )
+        == 1
+    )
+    assert all(path.exists() for path in paths)
+
+
+@pytest.mark.parametrize("change", ["size", "mtime", "sha256", "list-sha256"])
+def test_retire_sin_archivo_recomprueba_todo_antes_de_borrar(
+    tmp_path: Path, change: str
+) -> None:
+    origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    if change == "size":
+        paths[0].write_bytes(paths[0].read_bytes() + b"!")
+    elif change == "mtime":
+        stamp = paths[0].stat().st_mtime + 30
+        os.utime(paths[0], (stamp, stamp))
+    elif change == "sha256":
+        paths[0].write_bytes(b"changed a")
+    else:
+        digest = "0" * 64
+    archive.mkdir()
+    assert (
+        p7_retire.main(
+            _sin_archivo_args(
+                origin,
+                archive,
+                digest,
+                approved,
+                "--apply-retire-sin-archivo",
+            )
+        )
+        == 1
+    )
+    assert all(path.exists() for path in paths)
+
+
+def test_retire_sin_archivo_fichero_abierto_aborta_sin_borrar(
+    tmp_path: Path,
+) -> None:
+    if os.name != "nt":
+        pytest.skip("la sonda de fichero abierto usa Windows real")
+    origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import ctypes, sys; "
+                "h=ctypes.windll.kernel32.CreateFileW(sys.argv[1], 0x80000000, "
+                "1, None, 3, 0x80, None); "
+                "assert h != -1; print('READY', flush=True); input(); "
+                "ctypes.windll.kernel32.CloseHandle(h)"
+            ),
+            str(paths[0]),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "READY"
+        archive.mkdir()
+        assert (
+            p7_retire.main(
+                _sin_archivo_args(
+                    origin,
+                    archive,
+                    digest,
+                    approved,
+                    "--apply-retire-sin-archivo",
+                )
+            )
+            == 1
+        )
+        assert all(path.exists() for path in paths)
+    finally:
+        if holder.stdin is not None:
+            holder.stdin.write("\n")
+            holder.stdin.flush()
+        holder.wait(timeout=10)
+
+
+def test_retire_sin_archivo_dry_run_por_defecto_valida_y_lista(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    archive.mkdir()
+    assert p7_retire.main(_sin_archivo_args(origin, archive, digest, approved)) == 0
+    assert all(path.exists() for path in paths)
+    assert not (archive / "index.jsonl").exists()
+    output = capsys.readouterr().out
+    assert "derived-a.txt" in output
+    assert "derived-b.txt" in output
+
+
+def test_retire_sin_archivo_sin_lista_aprobada_aborta(tmp_path: Path) -> None:
+    origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    archive.mkdir()
+    approved.unlink()
+    assert (
+        p7_retire.main(
+            _sin_archivo_args(
+                origin,
+                archive,
+                digest,
+                approved,
+                "--apply-retire-sin-archivo",
+            )
+        )
+        == 1
+    )
+    assert all(path.exists() for path in paths)
+
+
+def test_indice_ignora_fila_retirado_sin_archivo(tmp_path: Path) -> None:
+    archive = tmp_path / "archive"
+    archive.mkdir()
+    index = archive / "index.jsonl"
+    p7_common.write_jsonl_index_atomic(
+        index,
+        [
+            {
+                "status": "RETIRADO_SIN_ARCHIVO",
+                "family": "arranques",
+                "list_sha256": "a" * 64,
+                "entries": [],
+            }
+        ],
+    )
+    assert p7_retire._check_shared_index(archive, "arranques", index) is None
 
 
 def test_recomprobacion_entrada(tmp_path: Path) -> None:
