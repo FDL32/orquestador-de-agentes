@@ -299,6 +299,11 @@ def test_retire_sin_archivo_fichero_abierto_aborta_sin_borrar(
     if os.name != "nt":
         pytest.skip("la sonda de fichero abierto usa Windows real")
     origin, archive, _entries, digest, approved, paths = _sin_archivo_fixture(tmp_path)
+    # Bloquea la ULTIMA entrada, no la primera: si la sonda de fichero abierto
+    # se omitiera, el borrado procesaria paths[0] con exito antes de topar con
+    # el bloqueo en paths[-1], dejando un borrado parcial que SI delataria al
+    # mutante (en vez de depender, por casualidad de orden, del propio
+    # os.unlink nativo fallando ya en la primera entrada).
     holder = subprocess.Popen(
         [
             sys.executable,
@@ -310,7 +315,7 @@ def test_retire_sin_archivo_fichero_abierto_aborta_sin_borrar(
                 "assert h != -1; print('READY', flush=True); input(); "
                 "ctypes.windll.kernel32.CloseHandle(h)"
             ),
-            str(paths[0]),
+            str(paths[-1]),
         ],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
