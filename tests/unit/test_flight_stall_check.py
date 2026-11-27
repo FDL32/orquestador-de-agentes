@@ -3379,6 +3379,53 @@ def test_huerfano_aviso_puro_sin_pending_ni_full_access(box):
     )
 
 
+def test_huerfano_pending_approvals_esquema_cambiado_no_ciega(box):
+    """Before: the pending-approval projection is absent. During: tick. After: orphan detection remains AVISO."""
+    import sqlite3
+
+    db = _orphan_store(box, [_orphan_row(box)])
+    connection = sqlite3.connect(db)
+    connection.execute("DROP TABLE projection_pending_approvals")
+    connection.commit()
+    connection.close()
+
+    result = box.tick()
+    summary = _orphan_summary(result)
+    orphan_events = [
+        (key, level)
+        for key, level, _owner in result.events
+        if key.startswith("huerfano-")
+    ]
+    assert result.rc == 1
+    assert len(orphan_events) == 1
+    assert orphan_events[0][1] == "AVISO"
+    assert "huerfano_ciego" not in summary
+    assert summary["huerfano_pending_esquema_cambiado"] is True
+
+
+def test_huerfano_pending_approvals_esquema_cambiado_no_escala_urgente(box):
+    """Before: an auto orphan loses the pending signal. During: tick. After: it stays AVISO."""
+    import sqlite3
+
+    db = _orphan_store(box, [_orphan_row(box, mode="auto")], pending=True)
+    connection = sqlite3.connect(db)
+    connection.execute("DROP TABLE projection_pending_approvals")
+    connection.commit()
+    connection.close()
+
+    result = box.tick()
+    summary = _orphan_summary(result)
+    orphan_events = [
+        (key, level)
+        for key, level, _owner in result.events
+        if key.startswith("huerfano-")
+    ]
+    assert result.rc == 1
+    assert len(orphan_events) == 1
+    assert orphan_events[0][1] == "AVISO"
+    assert summary["huerfano_pending_esquema_cambiado"] is True
+
+
 def test_huerfano_sin_estado_en_stall_state(box):
     """Before: compare two clean boxes. During: run with and without an orphan. After: detector adds no state key."""
     baseline = box.tick()

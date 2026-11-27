@@ -1571,7 +1571,8 @@ def check_huerfano(out, st):  # noqa: C901 - explicit fail-closed branches are c
         payload/date contract, classify the UTC window, and calculate stable SHA-1 alert keys.
         The cap applies only to emitted findings while ``huerfano_activos`` retains every live key.
     After: return AVISO/URGENTE findings, expose active keys and counters, or return an observable
-        fail-closed finding with ``out["huerfano_ciego"]``; never mutate ``st``.
+        fail-closed finding with ``out["huerfano_ciego"]``; mark a missing pending-approval
+        projection as ``out["huerfano_pending_esquema_cambiado"]``; never mutate ``st``.
     """
     del st
     if CFG.registry is None:
@@ -1591,6 +1592,16 @@ def check_huerfano(out, st):  # noqa: C901 - explicit fail-closed branches are c
                 "SELECT thread_id, runtime_mode, created_at, deleted_at, payload_json "
                 "FROM orchestration_v2_projection_threads WHERE deleted_at IS NULL"
             ).fetchall()
+        except sqlite3.OperationalError as exc:
+            return _huerfano_blind(
+                out,
+                "store-corrupt"
+                if "no such table" in str(exc).lower()
+                else "store-unavailable",
+            )
+        except sqlite3.DatabaseError:
+            return _huerfano_blind(out, "store-corrupt")
+        try:
             pending = (
                 connection.execute(
                     "SELECT 1 FROM projection_pending_approvals WHERE resolved_at IS NULL "
@@ -1600,12 +1611,11 @@ def check_huerfano(out, st):  # noqa: C901 - explicit fail-closed branches are c
                 is not None
             )
         except sqlite3.OperationalError as exc:
-            return _huerfano_blind(
-                out,
-                "store-corrupt"
-                if "no such table" in str(exc).lower()
-                else "store-unavailable",
-            )
+            if "no such table" in str(exc).lower():
+                pending = False
+                out["huerfano_pending_esquema_cambiado"] = True
+            else:
+                return _huerfano_blind(out, "store-unavailable")
         except sqlite3.DatabaseError:
             return _huerfano_blind(out, "store-corrupt")
     finally:
