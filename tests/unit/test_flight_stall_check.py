@@ -5708,6 +5708,9 @@ def test_wot184h_m05_declared_launch_requires_unique_live_and_confirmed_run(box)
             "IM", "IM-184", sessions, settled, connection, set()
         )
         assert not box.m.is_declared_launch(
+            "IM", "IM-184", sessions, settled, connection, {"IM-184"}
+        )
+        assert not box.m.is_declared_launch(
             "TR", "IM-184", sessions, settled, connection, {"IM-184"}
         )
         dead = [dict(sessions[0], status="COMPLETED")]
@@ -5724,8 +5727,16 @@ def test_wot184h_m05_declared_launch_requires_unique_live_and_confirmed_run(box)
         connection.close()
 
 
+def test_wot184h_m07_nonzero_dispatchable_silences_p8():
+    """m-07: any IM or TR dispatchable prevents P8-SIN-TR."""
+    mod = _load()
+
+    assert not mod.p8_sin_tr(1, 0, dispatchable_im=1, dispatchable_tr=0)
+    assert not mod.p8_sin_tr(1, 0, dispatchable_im=0, dispatchable_tr=1)
+
+
 def test_wot184h_m07_mutation_controls_cover_p8_predicate_reader_t3_and_launch(box):
-    """m-07: four source mutations are red and restoration is green."""
+    """m-07: five source mutations are red and restoration is green."""
     source = FSC_PATH.read_text(encoding="utf-8")
     cases = (
         (
@@ -5747,6 +5758,11 @@ def test_wot184h_m07_mutation_controls_cover_p8_predicate_reader_t3_and_launch(b
             'return session.get("threadId") in _confirmed_run_ids(connection)',
             "return False",
             'assert module.is_declared_launch("IM", "IM-1", sessions, lambda _: False, Conn(), set())',
+        ),
+        (
+            "and dispatchable_im == 0",
+            "and True",
+            "assert not module.p8_sin_tr(1, 0, dispatchable_im=1, dispatchable_tr=0)",
         ),
     )
     loader = """
@@ -5842,7 +5858,7 @@ spec.loader.exec_module(module)
             check=False,
         )
         assert green.returncode == 0, f"mutant {index}: {green.stderr}"
-    assert red >= 4
+    assert red >= 5
 
 
 def test_wot184h_m08_p8_diff_scope_is_exactly_flt():
