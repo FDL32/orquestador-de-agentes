@@ -177,7 +177,7 @@ def _validate_role(role):
     )
 
 
-def _is_before_cutoff(started):
+def _before_cutoff(started):
     """Determina si una fecha textual conserva la exencion pre-corte.
 
     Before: ``started`` puede ser cualquier valor del registry.
@@ -208,7 +208,7 @@ def _check_cierre_no_canonico(role, status, started):
     normalized_status = status.strip().casefold() if isinstance(status, str) else ""
     if (
         role in ("implantacion", "triaje")
-        and not _is_before_cutoff(started)
+        and not _before_cutoff(started)
         and normalized_status.startswith(NON_CANONICAL_CLOSURE_PREFIXES)
     ):
         raise RegistryError(
@@ -789,7 +789,7 @@ def _validate_cell_requirements(  # noqa: C901 - cell, lens and T3 gates are one
     status = str(item.get("status", "")).strip().casefold()
     started = item.get("started")
     # CO-69 ronda 8: un `started` no textual no concede la exencion de fecha.
-    before_cutoff = _is_before_cutoff(started)
+    before_cutoff = _before_cutoff(started)
     if role_requires_lenses and status.startswith("asentada") and not before_cutoff:
         lenses = item.get("lentes")
         if (
