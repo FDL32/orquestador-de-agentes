@@ -779,6 +779,13 @@ def test_m02_cherry_pick_non_ff_writes_receipt_by_integrated_head(tmp_path):
     assert set(receipt["blobs"]) == expected_paths
     assert it.receipt_problem(w.destino, head_after) is None
 
+    receipts_before = sorted((w.destino / it.RECEIPTS_REL).glob("*.json"))
+    ff_rc, ff_lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+    assert ff_rc == 1
+    assert "no es un ff" in ff_lines[0]
+    assert _git(w.motor, "rev-parse", "HEAD") == head_after
+    assert sorted((w.destino / it.RECEIPTS_REL).glob("*.json")) == receipts_before
+
 
 def test_m03_cherry_pick_conflict_aborts_without_head_or_receipt(tmp_path):
     w = _non_ff_world(
@@ -843,6 +850,35 @@ def test_m04_cherry_pick_rejects_different_blobs_and_restores_head(tmp_path):
     assert _git(w.motor, "rev-parse", "HEAD") == head_before
     assert _git(w.motor, "status", "--porcelain") == ""
     assert not (w.destino / it.RECEIPTS_REL).exists()
+
+    clean_root = tmp_path / "clean"
+    clean_root.mkdir()
+    clean_world = _non_ff_world(
+        clean_root,
+        source_content=(
+            "linea 1\nlinea 2\nlinea 3\nlinea 4\nlinea 5\n"
+            "linea 6\nlinea 7\nlinea 8\nlinea 9\nlinea 10\n"
+        ),
+        candidate_change=(
+            "docs/fuente.md",
+            (
+                "linea 1\ncandidato\nlinea 3\nlinea 4\nlinea 5\n"
+                "linea 6\nlinea 7\nlinea 8\nlinea 9\nlinea 10\n"
+            ),
+            f"{TICKET}: cambio de candidato",
+        ),
+        flight_change=("flight.txt", "vuelo\n", "avance en otra ruta"),
+    )
+    clean_rc, clean_lines = it.integrate(
+        TICKET, "candidate", clean_world.destino, clean_world.motor, cherry_pick=True
+    )
+    assert clean_rc == 0, clean_lines
+    clean_head = _git(clean_world.motor, "rev-parse", "HEAD")
+    clean_receipt = it.receipt_path(clean_world.destino, clean_head)
+    assert clean_receipt.is_file()
+    assert (
+        json.loads(clean_receipt.read_text(encoding="utf-8"))["mode"] == "cherry-pick"
+    )
 
 
 def test_m05_cherry_pick_audits_before_applying_and_blocks_without_evidence(tmp_path):
