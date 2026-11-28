@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 import pytest
-from scripts.flight.measure_tick_cost import main
+from scripts.flight.measure_tick_cost import _inventory, main
 
 
 def _write_jsonl(
@@ -743,3 +743,20 @@ def test_cache_fria_separa_llamada_de_pulso_anterior(tmp_path: Path) -> None:
     cold = result["cache_fria"]["pulsos"][0]
     assert cold["segundos_desde_pulso_anterior"] == 120
     assert cold["segundos_desde_llamada_anterior"] == 60
+
+
+def test_m06_inventory_counts_launch_and_lowercase_legacy_ids(tmp_path: Path) -> None:
+    """Before: create references using launch, lowercase legacy, and uppercase ids.
+
+    During: inventory the heartbeat references through the production helper.
+
+    After: launch and lowercase legacy references count, while uppercase does not.
+    """
+    launch = "mcp:launch:" + "a" * 64
+    text = f"CO-1 ({launch})\nCO-2 (mcp:a1b2-c3)\nCO-3 (mcp:ABCDEF12)\n"
+    path = tmp_path / "latido.md"
+    path.write_text(text, encoding="utf-8")
+
+    inventory = _inventory(path)
+
+    assert inventory["referencias"] == {"total": 2, "unicas": 2}

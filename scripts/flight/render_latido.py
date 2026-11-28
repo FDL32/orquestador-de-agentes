@@ -111,6 +111,28 @@ except Exception as _role_key_exc:
         raise RosterRoleKeyError("roster_role_key.py no disponible") from _error
 
 
+_thread_id_load_error: Exception | None = None
+try:
+    _thread_id_path = Path(__file__).resolve().with_name("thread_id.py").resolve()
+    _thread_id_name = "_flt_thread_id_" + str(_thread_id_path).replace(
+        "\\", "_"
+    ).replace(":", "_")
+    _thread_id_spec = importlib.util.spec_from_file_location(
+        _thread_id_name, _thread_id_path
+    )
+    if _thread_id_spec is None or _thread_id_spec.loader is None:
+        raise ImportError("no se pudo cargar thread_id.py")
+    _thread_id_module = importlib.util.module_from_spec(_thread_id_spec)
+    try:
+        _thread_id_spec.loader.exec_module(_thread_id_module)
+        THREAD_ID_PATTERN = _thread_id_module.THREAD_ID_PATTERN
+        THREAD_ID_TOKEN_PATTERN = _thread_id_module.THREAD_ID_TOKEN_PATTERN
+    except Exception:
+        raise
+except Exception as _thread_id_exc:
+    _thread_id_load_error = _thread_id_exc
+
+
 _CASCADE_START = "la cascada es "
 _CASCADE_END = " LATIDO DE PROGRESO"
 # Before: a predecessor cascade may contain an unbounded historical chain.
@@ -281,12 +303,14 @@ def _derive_predecessor(
     text: str, cascade_start: int, cascade_end: int
 ) -> dict[str, Any]:
     own_match = re.search(
-        r"Eres (CO-\d+), sesion coordinadora ACTIVA.*?tu hilo es (mcp:[0-9A-Za-z-]+),",
+        r"Eres (CO-\d+), sesion coordinadora ACTIVA.*?tu hilo es ("
+        + THREAD_ID_TOKEN_PATTERN
+        + r"),",
         text,
         re.DOTALL,
     )
     supervisor_match = re.search(
-        r"Tu supervisora es (CO-\d+) \((mcp:[0-9A-Za-z-]+)", text
+        r"Tu supervisora es (CO-\d+) \((" + THREAD_ID_TOKEN_PATTERN + r")", text
     )
     step9_match = re.search(r"(?m)^9\. Contexto propio:.*$", text)
     if own_match is None or supervisor_match is None or step9_match is None:
@@ -297,7 +321,8 @@ def _derive_predecessor(
     if go_match is None:
         raise ValueError("go_index_predecesor no derivable del paso 9")
     cascade_match = re.match(
-        r"(CO-\d+) \((mcp:[0-9A-Za-z-]+)\)", text[cascade_start:cascade_end]
+        r"(CO-\d+) \((" + THREAD_ID_TOKEN_PATTERN + r")\)",
+        text[cascade_start:cascade_end],
     )
     if cascade_match is None:
         raise ValueError("primer elemento de cascada no derivable")
@@ -329,6 +354,8 @@ def _roster_values(  # noqa: C901
     roster: dict[str, Any],
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str], list[str]]:
     errors: list[str] = []
+    if _thread_id_load_error is not None:
+        errors.append(f"thread_id.py no disponible: {_thread_id_load_error}")
     if not isinstance(roster, dict):
         return {}, {}, {}, ["campo de roster no consumido: roster debe ser dict"]
     if set(roster) != {"active_roles", "cadena_contexto"}:
@@ -386,7 +413,7 @@ def _roster_values(  # noqa: C901
                 "no tiene la forma esperada"
             )
         if isinstance(value.get("threadId"), str) and not re.fullmatch(
-            r"mcp:[0-9a-f-]+", value["threadId"]
+            THREAD_ID_PATTERN, value["threadId"]
         ):
             errors.append(
                 f"campo de roster no consumido: threadId en {location} "
@@ -565,7 +592,7 @@ def _bound_cascade_text(cascade_text: str) -> str:
     the new context entry; remove the dangling separator at the cut.
     After: return an unchanged short cascade or a cleanly bounded cascade.
     """
-    entries = list(re.finditer(r"CO-\d+ \(mcp:[0-9A-Za-z-]+", cascade_text))
+    entries = list(re.finditer(r"CO-\d+ \(" + THREAD_ID_TOKEN_PATTERN, cascade_text))
     predecessor_limit = _CASCADE_MAX_ENTRIES - 1
     if len(entries) <= predecessor_limit:
         return cascade_text
@@ -715,9 +742,9 @@ def render_latido(  # noqa: C901
         judgement_text = text
         for start, end in sorted(judgement_spans.values(), reverse=True):
             judgement_text = judgement_text[:start] + judgement_text[end:]
-        all_ids = set(re.findall(r"mcp:[0-9A-Za-z-]+", judgement_text))
+        all_ids = set(re.findall(THREAD_ID_TOKEN_PATTERN, judgement_text))
         frozen_ids = set(
-            re.findall(r"mcp:[0-9A-Za-z-]+", text[cascade_start:cascade_end])
+            re.findall(THREAD_ID_TOKEN_PATTERN, text[cascade_start:cascade_end])
         )
         predecessor_identity_ids = {derived["own_id"], derived["supervisor_id"]}
         roster_ids = {own["threadId"], supervisor["threadId"], context["threadId"]}
@@ -845,7 +872,7 @@ def render_latido(  # noqa: C901
                 rendered, [f"hueco de JUICIO no rellenado: {name}" for name in missing]
             )
         foreign_rendered_ids = sorted(
-            set(re.findall(r"mcp:[0-9A-Za-z-]+", rendered)) - roster_ids - frozen_ids
+            set(re.findall(THREAD_ID_TOKEN_PATTERN, rendered)) - roster_ids - frozen_ids
         )
         if foreign_rendered_ids:
             return 2, _failure(

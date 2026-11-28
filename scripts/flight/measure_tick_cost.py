@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import importlib.util
 import json
 import os
 import re
@@ -22,6 +23,23 @@ import statistics
 import sys
 from pathlib import Path
 from typing import Any
+
+
+_thread_id_path = Path(__file__).resolve().with_name("thread_id.py").resolve()
+_thread_id_name = "_flt_measure_thread_id_" + str(_thread_id_path).replace(
+    "\\", "_"
+).replace(":", "_")
+_thread_id_spec = importlib.util.spec_from_file_location(
+    _thread_id_name, _thread_id_path
+)
+if _thread_id_spec is None or _thread_id_spec.loader is None:
+    raise ImportError("no se pudo cargar thread_id.py")
+_thread_id_module = importlib.util.module_from_spec(_thread_id_spec)
+try:
+    _thread_id_spec.loader.exec_module(_thread_id_module)
+    THREAD_ID_PATTERN = _thread_id_module.THREAD_ID_PATTERN
+except Exception as exc:
+    raise ImportError(f"no se pudo cargar thread_id.py: {exc}") from exc
 
 
 PULSE_RE = re.compile(r"^\s*LATIDO (?:SUPERVISION )?CO-(\d+)\b")
@@ -603,7 +621,7 @@ def _inventory(path: Path) -> dict[str, Any]:
     for start, end in historical:
         for index in range(start, end):
             occupied[index] = True
-    refs = list(re.finditer(r"CO-\d+ \(mcp:[0-9a-fA-F-]+\)", text))
+    refs = list(re.finditer(r"CO-\d+ \(" + THREAD_ID_PATTERN + r"\)", text))
     protocols = list(re.finditer(r"PROTOCOLO_POSTCOMPACTACION_CO-\d+\.md", text))
     ref_spans: list[tuple[int, int]] = []
     protocol_spans: list[tuple[int, int]] = []

@@ -2628,3 +2628,69 @@ def test_m05_hay_una_remision_conjunta_a_fuentes_vivas(tmp_path: Path) -> None:
         assert remissions == 1 and context_count == 1, (
             f"m-05[{label}]: remisiones={remissions} cadena_contexto={context_count}"
         )
+
+
+def test_m01_m02_launch_thread_ids_are_accepted_and_not_truncated(
+    tmp_path: Path,
+) -> None:
+    """Before: use a roster with production-shaped launch thread identifiers.
+
+    During: render the existing valid predecessor with the three launch ids.
+
+    After: rendering succeeds and every new identity remains complete in output.
+    """
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    ids = {
+        "orquestador": "mcp:launch:" + "a" * 64,
+        "supervisor": "mcp:launch:" + "b" * 64,
+        "contexto": "mcp:launch:" + "b" * 64,
+    }
+    roster["active_roles"]["orquestador"]["threadId"] = ids["orquestador"]
+    roster["active_roles"]["supervisor"]["threadId"] = ids["supervisor"]
+    roster["cadena_contexto"][0]["threadId"] = ids["contexto"]
+    predecessor = tmp_path / PREDECESSOR.name
+    predecessor.write_text(
+        PREDECESSOR.read_text(encoding="utf-8")
+        .replace("mcp:00000000-0000-4000-8000-000000000002", ids["orquestador"])
+        .replace("mcp:00000000-0000-4000-8000-000000000032", ids["supervisor"])
+        .replace("mcp:00000000-0000-4000-8000-000000000017", ids["orquestador"]),
+        encoding="utf-8",
+    )
+
+    judgements = {
+        key: value.replace(
+            "mcp:00000000-0000-4000-8000-000000000017", ids["orquestador"]
+        )
+        for key, value in _juicios_sucesor().items()
+    }
+    rc, output = render_latido(predecessor, roster, 2, judgements)
+
+    assert rc == 0, output
+    assert "no tiene la forma esperada" not in output
+    assert all(thread_id in output for thread_id in ids.values())
+    assert 'mcp:launch,"' not in output
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "mcp:launch:" + "a" * 63,
+        "mcp:launch:" + "A" * 64,
+        "mcp:launch:" + "a" * 63 + "g",
+        "launch:" + "a" * 64,
+    ],
+)
+def test_m04_launch_thread_id_invalid_forms_are_rejected(value: str) -> None:
+    """Before: replace one roster thread identifier with a malformed value.
+
+    During: validate the roster through the renderer.
+
+    After: the renderer returns rc 2 with the named shape error.
+    """
+    roster = json.loads(ROSTER.read_text(encoding="utf-8"))
+    roster["active_roles"]["orquestador"]["threadId"] = value
+
+    rc, output = render_latido(PREDECESSOR, roster, 2, _juicios_sucesor())
+
+    assert rc == 2
+    assert "no tiene la forma esperada" in output

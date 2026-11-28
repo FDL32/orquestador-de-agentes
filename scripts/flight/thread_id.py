@@ -17,6 +17,8 @@ from __future__ import annotations
 # enforced prefix; the writer, the guard, and the helper import and call
 # this function instead of duplicating the startswith call.
 MCP_PREFIX: str = "mcp:"
+THREAD_ID_PATTERN: str = MCP_PREFIX + r"(?:launch:[0-9a-f]{64}|[0-9a-f-]+)"
+THREAD_ID_TOKEN_PATTERN: str = MCP_PREFIX + r"(?:launch:[0-9a-f]{64}|[0-9A-Za-z-]+)"
 
 
 def has_mcp_prefix(thread_id: str) -> bool:
