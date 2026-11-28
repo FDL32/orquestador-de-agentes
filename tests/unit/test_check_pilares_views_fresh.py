@@ -19,6 +19,7 @@ import scripts.flight.check_pilares_views_fresh as views_fresh
 from scripts.flight.check_pilares_views_fresh import (
     _cells,
     _load_rows,
+    activity_anchor_index,
     generate_views_and_indices,
     resolve_alias,
     run_pilares_views_fresh_check,
@@ -34,6 +35,137 @@ VIEW_FILES = {"CO": "vista_CO.md", "IM": "vista_IM.md", "TR": "vista_TR.md"}
 MESSAGE_INDEX_FILE = "indice_messageid.md"
 SOURCE_INDEX_FILE = "indice_fuente_larga.md"
 ALIAS_INDEX_FILE = "alias_ids.md"
+
+
+def _activity_line(
+    identifier: str = "A-01",
+    name: str = "derivar el latido",
+    state: str = "TIPIFICADA",
+    owner: str = "aqui",
+    debt: str = "ninguna",
+) -> str:
+    """Build an activity marker without embedding its prefix in this source."""
+    return (
+        "<"
+        + "!-- ACTIVIDAD: "
+        + (f"{identifier} | {name} | {state} | dueno={owner} | deuda={debt} -->")
+    )
+
+
+def _write_activity_tree(root: Path, *lines: str) -> Path:
+    """Create a minimal activity universe for anchor contract tests."""
+    docs = root / ".agent" / "rules" / "common"
+    docs.mkdir(parents=True)
+    target = docs / "activity.md"
+    target.write_text("\n".join(lines) + "\n", encoding="utf-8", newline="\n")
+    return target
+
+
+def test_activity_anchor_index_resolves_local_owner_and_contract_shape(
+    tmp_path: Path,
+) -> None:
+    """m-06: local anchors expose the declared interface and resolved owner."""
+    target = _write_activity_tree(tmp_path, _activity_line())
+
+    result = activity_anchor_index(tmp_path)
+
+    assert result == {
+        "A-01": {
+            "nombre": "derivar el latido",
+            "estado": "TIPIFICADA",
+            "dueno": ".agent/rules/common/activity.md:2",
+            "deuda": "ninguna",
+            "fuente": ".agent/rules/common/activity.md:1",
+        }
+    }
+    assert target.exists()
+
+
+def test_activity_anchor_index_rejects_duplicate_ids_with_rule_and_location(
+    tmp_path: Path,
+) -> None:
+    """m-02: duplicate identifiers fail with R1 and route:line."""
+    _write_activity_tree(tmp_path, _activity_line(), _activity_line())
+
+    with pytest.raises(ValueError, match=r"R1.*activity\.md:2"):
+        activity_anchor_index(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("line", "rule"),
+    [
+        (_activity_line(state="BROKEN"), "R2"),
+        (_activity_line(debt="WOT-2026-231n"), "R4"),
+        (_activity_line(state="PARCIAL", debt="ninguna"), "R4"),
+        (_activity_line(state="PARCIAL", owner="ninguno", debt="pendiente"), "R5"),
+        (_activity_line(owner="missing.md:1"), "R3"),
+        (_activity_line(identifier="A-1"), "R1"),
+        ("<" + "!-- ACTIVIDAD: malformed -->", "GRAMATICA"),
+    ],
+)
+def test_activity_anchor_index_reports_each_shape_rule(
+    tmp_path: Path, line: str, rule: str
+) -> None:
+    """m-02: each malformed shape reports its rule and route:line."""
+    _write_activity_tree(tmp_path, line)
+
+    with pytest.raises(ValueError, match=rf"{rule}.*activity\.md:1"):
+        activity_anchor_index(tmp_path)
+
+
+def test_activity_anchor_index_accepts_remote_owner_and_rejects_r6(
+    tmp_path: Path,
+) -> None:
+    """m-02/R3/R6: remote owners resolve and outside anchors fail closed."""
+    target = _write_activity_tree(
+        tmp_path, _activity_line(owner=".agent/rules/common/remote.md:2")
+    )
+    (target.parent / "remote.md").write_text(
+        "header\nprocedure\n", encoding="utf-8", newline="\n"
+    )
+    assert (
+        activity_anchor_index(tmp_path)["A-01"]["dueno"]
+        == ".agent/rules/common/remote.md:2"
+    )
+
+    outside = tmp_path / "outside.md"
+    outside.write_text(
+        _activity_line(identifier="A-02", state="NO_TIPIFICADA", debt="pendiente")
+        + "\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    with pytest.raises(ValueError, match=r"R6.*outside\.md:1"):
+        activity_anchor_index(tmp_path)
+
+
+def test_activity_map_is_generated_and_part_of_freshness_contract(
+    tmp_path: Path,
+) -> None:
+    """m-01/m-03/m-05: one five-cell row is generated and checked fresh."""
+    canon, output, _ = _generate(tmp_path)
+    _write_activity_tree(tmp_path, _activity_line())
+
+    result = generate_views_and_indices(canon_path=canon, output_dir=output)
+    map_path = output / "ACTIVITY_MAP.md"
+    content = map_path.read_text(encoding="utf-8")
+
+    assert "la etiqueta la declara el ancla; la semantica no se comprueba" in content
+    assert (
+        "| A-01 | derivar el latido | .agent/rules/common/activity.md:2 | TIPIFICADA | ninguna |"
+        in content
+    )
+    row = next(line for line in content.splitlines() if line.startswith("| A-"))
+    assert len(row.split("|")[1:-1]) == 5
+    assert result["files"]["ACTIVITY_MAP.md"]
+    assert verify_views_fresh(canon_path=canon, output_dir=output) is True
+
+    map_path.write_text(
+        content.replace("derivar el latido", "latido editado"),
+        encoding="utf-8",
+        newline="\n",
+    )
+    assert verify_views_fresh(canon_path=canon, output_dir=output) is False
 
 
 def _write_fixture_tree(root: Path) -> tuple[Path, Path]:

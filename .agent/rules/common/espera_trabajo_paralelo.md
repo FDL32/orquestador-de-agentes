@@ -80,6 +80,7 @@ implantador corre pytest. No hay excepcion por `--wait-lock`: termina en rc 75 y
 focales entre lotes. En paralelo solo va trabajo sin pytest. La implantacion con codigo arranca
 al terminar la suite.
 
+<!-- ACTIVIDAD: A-12 | integrar un IM y verificar | PARCIAL | dueno=aqui | deuda=pendiente -->
 R4. Traer sigue esta cadena real: (1) rebasar con `git rebase <base>`. La orden
 `git rebase --ff-only` NO existe (medido 2026-11-14 y re-medido 2026-11-15, con git 2.53 y
 el error "unknown option ff-only"). (2) Desde el worktree del vuelo, ejecutar `git merge --ff-only
@@ -119,6 +120,7 @@ C10. Nombres: se usa el prefijo prep/, no flight/ ni implantador/; queda a verif
 ticket posterior a esta norma que `integrate_ticket.py`, el latido y el roster no hagan glob
 sobre prep/.
 C11. Push: se aplica R4(4); prep/ no se publica nunca.
+<!-- ACTIVIDAD: A-18 | ctx_acumulado y marcado del objetivo | PARCIAL | dueno=aqui | deuda=pendiente -->
 C12. Contexto de la coordinadora: las lecturas pesadas van a subagentes de solo lectura con
 resumen acotado. Se mide con `ctx_acumulado.py`, el del latido, en la carpeta de operaciones
 del vuelo y fuera del repo; el punto 5 ya declara `ctx_usage.py` fuera del repo para sesiones

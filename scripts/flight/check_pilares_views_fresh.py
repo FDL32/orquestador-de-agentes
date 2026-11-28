@@ -15,6 +15,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,274 @@ _INDEX_FILES = ("indice_messageid.md", "indice_fuente_larga.md", "alias_ids.md")
 _UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 )
+_ACTIVITY_PREFIX = "<!-- ACTIVIDAD:"
+_ACTIVITY_RE = re.compile(
+    r"^<!-- ACTIVIDAD: ([^|]+) \| ([^|]+) \| ([^|]+) \| "
+    r"dueno=([^|]+) \| deuda=([^|]+) -->$"
+)
+_ACTIVITY_UNIVERSE_PATTERNS = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CONSTITUTION.md",
+    "INTERACTION_MODES.md",
+    ".claude/rules/**/*.md",
+    ".agent/rules/common/**/*.md",
+    "prompts/**/*.md",
+    "skills/**/SKILL.md",
+    "docs/protocol/**/*.md",
+)
+
+
+def _posix_relative(path: Path, root: Path) -> str:
+    """Return a root-relative path with the canonical slash separator."""
+    return path.resolve().relative_to(root.resolve()).as_posix()
+
+
+def _git_tracked_files(root: Path) -> tuple[str, list[str]]:
+    """Return tracked paths and the enumeration mode, failing closed on git errors."""
+    try:
+        probe = subprocess.run(  # noqa: S603
+            ["git", "-C", str(root), "rev-parse", "--show-toplevel"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+    except OSError as exc:
+        raise ValueError(f"git universe probe failed: {exc}") from exc
+    if probe.returncode == 0:
+        git_root = Path(probe.stdout.strip()).resolve()
+        if git_root != root.resolve():
+            return "filesystem", [
+                _posix_relative(path, root)
+                for path in root.rglob("*")
+                if path.is_file() and ".git" not in path.parts
+            ]
+        try:
+            listing = subprocess.run(  # noqa: S603
+                ["git", "-C", str(root), "ls-files", "-z"],  # noqa: S607
+                capture_output=True,
+                check=False,
+            )
+        except OSError as exc:
+            raise ValueError(f"git file enumeration failed: {exc}") from exc
+        if listing.returncode != 0:
+            raise ValueError("git ls-files failed")
+        return "git ls-files", [
+            item.decode("utf-8") for item in listing.stdout.split(b"\0") if item
+        ]
+    if probe.returncode != 128:
+        raise ValueError("git universe probe failed")
+    return "filesystem", [
+        _posix_relative(path, root)
+        for path in root.rglob("*")
+        if path.is_file() and ".git" not in path.parts
+    ]
+
+
+def _in_activity_universe(relative: str) -> bool:
+    """Return whether a relative path matches one of the declared patterns."""
+    if relative.startswith("prompts/vuelo_pilares_views/"):
+        return False
+    if relative in _ACTIVITY_UNIVERSE_PATTERNS[:4]:
+        return True
+    if relative.startswith(".claude/rules/") and relative.endswith(".md"):
+        return True
+    if relative.startswith(".agent/rules/common/") and relative.endswith(".md"):
+        return True
+    if relative.startswith("prompts/") and relative.endswith(".md"):
+        return True
+    if relative.startswith("skills/") and relative.endswith("/SKILL.md"):
+        return True
+    return relative.startswith("docs/protocol/") and relative.endswith(".md")
+
+
+def _activity_universe(root: Path) -> tuple[str, list[str], list[str]]:
+    """Enumerate the declared universe and all scanned files for R6."""
+    mode, all_files = _git_tracked_files(root)
+    universe = sorted(path for path in all_files if _in_activity_universe(path))
+    return mode, universe, sorted(all_files)
+
+
+def _activity_error(
+    rule: str, relative: str, line_number: int, detail: str
+) -> ValueError:
+    """Create a stable rule error naming the violated route and line."""
+    return ValueError(f"{rule} at {relative}:{line_number}: {detail}")
+
+
+def activity_anchor_index(root: Path) -> dict[str, dict[str, str]]:  # noqa: C901
+    """Index and validate activity anchors in the declared document universe.
+
+    Before: ``root`` contains the versioned canon and its procedural documents.
+    During: enumerate the root, validate R1-R6 and resolve local owners to the
+    line immediately following each anchor.
+    After: return one stable record per ``A-NN`` or raise ``ValueError`` naming
+    the rule and ``route:line``. The companion ACTIVITY_MAP stores source-file
+    hashes; this function intentionally returns only the public index contract.
+    """
+    project_root = Path(root).resolve()
+    mode, universe, scanned = _activity_universe(project_root)
+    universe_set = set(universe)
+    records: dict[str, dict[str, str]] = {}
+    for relative in scanned:
+        path = project_root / relative
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise ValueError(f"cannot read {relative}: {exc}") from exc
+        if b"\0" in raw:
+            continue
+        try:
+            lines = raw.decode("utf-8").splitlines()
+        except UnicodeDecodeError as exc:
+            raise ValueError(f"non-UTF-8 text in {relative}") from exc
+        in_universe = relative in universe_set
+        for line_number, line in enumerate(lines, start=1):
+            if not line.lstrip().startswith(_ACTIVITY_PREFIX):
+                continue
+            if not in_universe:
+                raise _activity_error(
+                    "R6", relative, line_number, "anchor outside universe"
+                )
+            match = _ACTIVITY_RE.fullmatch(line.strip())
+            if match is None:
+                raise _activity_error(
+                    "GRAMATICA", relative, line_number, "malformed activity anchor"
+                )
+            identifier, name, state, owner_reference, debt = match.groups()
+            identifier = identifier.strip()
+            name = name.strip()
+            state = state.strip()
+            owner_reference = owner_reference.strip()
+            debt = debt.strip()
+            if not re.fullmatch(r"A-\d{2}", identifier):
+                raise _activity_error(
+                    "R1", relative, line_number, "invalid activity id"
+                )
+            if identifier in records:
+                raise _activity_error(
+                    "R1", relative, line_number, "duplicate activity id"
+                )
+            if state not in {"TIPIFICADA", "PARCIAL", "NO_TIPIFICADA"}:
+                raise _activity_error(
+                    "R2", relative, line_number, "invalid activity state"
+                )
+            if debt not in {"pendiente", "ninguna"} and not re.fullmatch(
+                r"WOT-\d{4}-\d{3}[a-z]", debt
+            ):
+                raise _activity_error("R4", relative, line_number, "invalid deuda")
+            owner = owner_reference
+            if owner not in {"aqui", "ninguno"} and not re.fullmatch(
+                r"[^|:]+:\d+", owner
+            ):
+                raise _activity_error(
+                    "R3", relative, line_number, "invalid remote owner"
+                )
+            if state == "TIPIFICADA" and debt != "ninguna":
+                raise _activity_error(
+                    "R4", relative, line_number, "TIPIFICADA requires deuda=ninguna"
+                )
+            if state != "TIPIFICADA" and debt == "ninguna":
+                raise _activity_error(
+                    "R4",
+                    relative,
+                    line_number,
+                    "non-TIPIFICADA requires deuda!=ninguna",
+                )
+            if owner == "ninguno" and state != "NO_TIPIFICADA":
+                raise _activity_error(
+                    "R5", relative, line_number, "dueno=ninguno requires NO_TIPIFICADA"
+                )
+            if owner != "ninguno" and state == "NO_TIPIFICADA" and owner == "aqui":
+                raise _activity_error(
+                    "R5", relative, line_number, "NO_TIPIFICADA cannot use dueno=aqui"
+                )
+            if owner == "aqui":
+                resolved_owner = f"{relative}:{line_number + 1}"
+            elif owner == "ninguno":
+                resolved_owner = "ninguno"
+            else:
+                owner_path, owner_line_text = owner_reference.rsplit(":", 1)
+                owner_line = int(owner_line_text)
+                if owner_path not in universe_set:
+                    raise _activity_error(
+                        "R3", relative, line_number, "remote owner is outside universe"
+                    )
+                try:
+                    owner_lines = (
+                        (project_root / owner_path)
+                        .read_text(encoding="utf-8")
+                        .splitlines()
+                    )
+                except (OSError, UnicodeDecodeError) as exc:
+                    raise _activity_error(
+                        "R3", relative, line_number, "remote owner cannot be read"
+                    ) from exc
+                if owner_line < 1 or owner_line > len(owner_lines):
+                    raise _activity_error(
+                        "R3", relative, line_number, "remote owner line does not exist"
+                    )
+                resolved_owner = f"{owner_path}:{owner_line}"
+            records[identifier] = {
+                "nombre": name.strip(),
+                "estado": state,
+                "dueno": resolved_owner,
+                "deuda": debt,
+                "fuente": f"{relative}:{line_number}",
+            }
+    if mode not in {"git ls-files", "filesystem"}:
+        raise ValueError("unknown activity universe mode")
+    return records
+
+
+def _activity_records_and_sources(
+    root: Path,
+) -> tuple[str, list[str], dict[str, dict[str, str]], dict[str, str]]:
+    """Collect activity records plus hashes for files that contain anchors."""
+    mode, universe, _ = _activity_universe(root)
+    records = activity_anchor_index(root)
+    source_paths = sorted(
+        {record["fuente"].rsplit(":", 1)[0] for record in records.values()}
+    )
+    hashes = {
+        path: hashlib.sha256((root / path).read_bytes()).hexdigest()
+        for path in source_paths
+    }
+    return mode, universe, records, hashes
+
+
+def _render_activity_map(
+    mode: str,
+    universe: list[str],
+    records: dict[str, dict[str, str]],
+    source_hashes: dict[str, str],
+) -> str:
+    """Render the deterministic five-cell activity projection."""
+    lines = [
+        "<!-- ACTIVITY_MAP_GENERATOR: scripts/flight/check_pilares_views_fresh.py -->",
+        f"<!-- ACTIVITY_UNIVERSE: mode={mode}; files={len(universe)} -->",
+        "<!-- ACTIVITY_SOURCE_SHA256: one hash per file containing an anchor -->",
+    ]
+    lines.extend(
+        f"<!-- SOURCE_SHA256: {path} {digest} -->"
+        for path, digest in source_hashes.items()
+    )
+    lines.append(
+        "<!-- la etiqueta la declara el ancla; la semantica no se comprueba -->"
+    )
+    lines.extend(
+        [
+            "",
+            "| id | nombre | dueno resuelto | estado | deuda |",
+            "|---|---|---|---|---|",
+        ]
+    )
+    lines.extend(
+        f"| {identifier} | {record['nombre']} | {record['dueno']} | {record['estado']} | {record['deuda']} |"
+        for identifier, record in sorted(records.items())
+    )
+    return "\n".join(lines) + "\n"
 
 
 def _defaults(
@@ -262,7 +531,7 @@ def generate_views_and_indices(
     output_dir: Path | None = None,
     project_root: Path | None = None,
 ) -> dict[str, object]:
-    """Generate the three role views and their supporting indices."""
+    """Generate role views, supporting indices and the activity projection."""
     root, canon, output = _defaults(canon_path, output_dir, project_root)
     rows = _load_rows(canon)
     digest = hashlib.sha256(canon.read_bytes()).hexdigest()
@@ -300,6 +569,17 @@ def generate_views_and_indices(
         ),
     )
     generated["files"].update({name: digest for name in _INDEX_FILES})  # type: ignore[union-attr]
+    activity_mode, activity_universe, activity_records, source_hashes = (
+        _activity_records_and_sources(root)
+    )
+    activity_content = _render_activity_map(
+        activity_mode, activity_universe, activity_records, source_hashes
+    )
+    activity_path = output / "ACTIVITY_MAP.md"
+    _write(activity_path, activity_content)
+    generated["files"]["ACTIVITY_MAP.md"] = hashlib.sha256(  # type: ignore[index]
+        activity_content.encode("utf-8")
+    ).hexdigest()
     return generated
 
 
@@ -308,12 +588,12 @@ def verify_views_fresh(  # noqa: C901
     output_dir: Path | None = None,
     project_root: Path | None = None,
 ) -> bool:
-    """Return whether every generated view and index matches the canon."""
+    """Return whether every generated view, index and activity map is fresh."""
     try:
         root, canon, output = _defaults(canon_path, output_dir, project_root)
         rows = _load_rows(canon)
         digest = hashlib.sha256(canon.read_bytes()).hexdigest()
-        expected = {*_VIEW_FILES.values(), *_INDEX_FILES}
+        expected = {*_VIEW_FILES.values(), *_INDEX_FILES, "ACTIVITY_MAP.md"}
         if {path.name for path in output.glob("*.md")} != expected:
             return False
         for role, filename in _VIEW_FILES.items():
@@ -341,6 +621,16 @@ def verify_views_fresh(  # noqa: C901
         if not (output / "alias_ids.md").is_file():
             return False
         _read_index(output / "alias_ids.md")
+        activity_mode, activity_universe, activity_records, source_hashes = (
+            _activity_records_and_sources(root)
+        )
+        expected_activity = _render_activity_map(
+            activity_mode, activity_universe, activity_records, source_hashes
+        )
+        if (output / "ACTIVITY_MAP.md").read_text(
+            encoding="utf-8"
+        ) != expected_activity:
+            return False
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
         return False
     return True

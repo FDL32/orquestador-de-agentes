@@ -3,6 +3,8 @@
 Referencia canonica obligatoria para cualquier coordinadora (Claude, Codex, Gemini,
 OpenCode) al asumir el mando en un vuelo o tras un relevo. Garantiza disciplina
 uniforme, evitando la anidacion indebida de subagentes y ejecuciones sin lentes.
+Ante una actividad rutinaria, el primer paso de P32 es consultar
+`prompts/vuelo_pilares_views/ACTIVITY_MAP.md`.
 
 ## Paso 1: Verificacion de identidad y rol (identidad)
 
@@ -15,6 +17,7 @@ Antes de operar, la sesion confirma su identidad y rol contra el flight roster:
 
 ## Paso 2: Activacion del latido de 15 minutos (latido)
 
+<!-- ACTIVIDAD: A-01 | derivar el latido | TIPIFICADA | dueno=aqui | deuda=ninguna -->
 Tras tomar posesion (Fase B), definir objetivo y primera accion, y activar el latido:
 - **Contenido del prompt (WOT-2026-232b, 2026-11-25):** el contenido del latido se
   deriva de `prompts/vuelo_pilares_templates/LATIDO_PLANTILLA.md`, nunca se redacta
@@ -72,3 +75,25 @@ Cumplimiento estricto de los protocolos P33/P34 de revision y triaje adversarial
   `rotate_coordinator_real.py` / script de relevo del vuelo en repo_destino).
 - Consultar `docs/protocol/flight_supervision.md` para el protocolo formal.
 - Mantener la directriz de backend vigente establecida para el vuelo.
+
+<!-- ANCLAS_REMOTAS_TRANSITORIAS: las mueve el lote P4 que libere cada dueno. -->
+<!-- ACTIVIDAD: A-02 | programar y deshabilitar el latido | NO_TIPIFICADA | dueno=ninguno | deuda=pendiente -->
+<!-- ACTIVIDAD: A-03 | paquete de relevo ARRANQUE + HANDOFF | TIPIFICADA | dueno=prompts/vuelo_pilares_templates/ARRANQUE_PLANTILLA.md:1 | deuda=ninguna -->
+<!-- ACTIVIDAD: A-04 | fases A/B, ACK y roster | TIPIFICADA | dueno=docs/protocol/flight_supervision.md:93 | deuda=ninguna -->
+<!-- ACTIVIDAD: A-05 | traspaso R6 | NO_TIPIFICADA | dueno=ninguno | deuda=pendiente -->
+<!-- ACTIVIDAD: A-06 | asiento, alta y nota en registry | PARCIAL | dueno=.agent/rules/common/t3_lanzamiento_hilos_vuelo.md:3 | deuda=pendiente -->
+<!-- ACTIVIDAD: A-07 | settle P24 | PARCIAL | dueno=prompts/t3_role_session_relief.md:523 | deuda=pendiente -->
+<!-- ACTIVIDAD: A-08 | lanzar un IM | PARCIAL | dueno=.agent/rules/common/t3_lanzamiento_hilos_vuelo.md:3 | deuda=pendiente -->
+<!-- ACTIVIDAD: A-09 | lanzar un TR | PARCIAL | dueno=.agent/rules/common/t3_lanzamiento_hilos_vuelo.md:3 | deuda=pendiente -->
+<!-- ACTIVIDAD: A-10 | brief IM desde el borrador de un TR | NO_TIPIFICADA | dueno=ninguno | deuda=pendiente -->
+<!-- ACTIVIDAD: A-11 | verificar LISTO / LISTO_PARA_INTEGRAR | PARCIAL | dueno=prompts/t3_role_session_relief.md:497 | deuda=pendiente -->
+<!-- ACTIVIDAD: A-13 | alta de backlog con recibo | TIPIFICADA | dueno=prompts/backlog_admit.md:88 | deuda=ninguna -->
+<!-- ACTIVIDAD: A-14 | archivar fila y enmendar ficha | NO_TIPIFICADA | dueno=ninguno | deuda=pendiente -->
+<!-- ACTIVIDAD: A-15 | bucle de lentes P34, cierre, V1 | PARCIAL | dueno=prompts/ensemble_loop.md:40 | deuda=pendiente -->
+<!-- ACTIVIDAD: A-16 | cupo y cambio de cuenta D5 | PARCIAL | dueno=docs/protocol/ciclo_cuentas_madre_hija.md:3 | deuda=pendiente -->
+<!-- ACTIVIDAD: A-17 | vigilancia de hilos huerfanos | NO_TIPIFICADA | dueno=ninguno | deuda=pendiente -->
+<!-- ACTIVIDAD: A-19 | GO de relevo | TIPIFICADA | dueno=.agent/rules/common/avisos_parada_vuelo.md:223 | deuda=ninguna -->
+<!-- ACTIVIDAD: A-20 | mensajeria entre sesiones | TIPIFICADA | dueno=docs/protocol/flight_supervision.md:375 | deuda=ninguna -->
+<!-- ACTIVIDAD: A-21 | push, suite y congelacion | NO_TIPIFICADA | dueno=ninguno | deuda=pendiente -->
+<!-- ACTIVIDAD: A-22 | retirada de disco P7 | TIPIFICADA | dueno=docs/protocol/rotacion_disco_vuelo.md:72 | deuda=ninguna -->
+<!-- ACTIVIDAD: A-23 | tick_trace, stall y post_relevo | TIPIFICADA | dueno=prompts/vuelo_pilares_templates/LATIDO_PLANTILLA.md:53 | deuda=ninguna -->
