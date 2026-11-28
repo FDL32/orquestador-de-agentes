@@ -429,6 +429,38 @@ def test_gitleaks_ticket_range_ignores_inert_remote_and_branch_fields(tmp_path):
     assert gitleaks_calls[1][-1] == f"--log-opts={range_spec}"
 
 
+def test_ticket_window_gitleaks_gate_delegates_to_version_check(tmp_path):
+    """La ventana de ticket debe pasar por el chequeo de versión del gate común."""
+    root, _context = _gitleaks_context(tmp_path)
+    range_spec = "HEAD~1..HEAD"
+    git_calls = []
+    gitleaks_calls = []
+
+    def git_runner(args):
+        git_calls.append(list(args))
+        return 0, "1\n", ""
+
+    def gitleaks_runner(args):
+        gitleaks_calls.append(list(args))
+        if list(args) == ["version"]:
+            return 0, "8.30.0\n", ""
+        return 0, "", ""
+
+    decision = vua.ticket_window_gitleaks_gate(
+        root,
+        range_spec,
+        git_runner=git_runner,
+        gitleaks_runner=gitleaks_runner,
+    )
+
+    assert decision == vua.Decision(False, "gitleaks-version-mismatch")
+    assert git_calls == [
+        ["rev-list", "--count", range_spec],
+        ["rev-list", "--count", range_spec],
+    ]
+    assert gitleaks_calls == [["version"]]
+
+
 def test_gitleaks_detect_args_only_change_range_between_push_and_ticket(tmp_path):
     """M06: las opciones efectivas son idénticas salvo --log-opts."""
     _root, context = _gitleaks_context(tmp_path)
