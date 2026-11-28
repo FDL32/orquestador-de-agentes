@@ -749,6 +749,28 @@ def _real_historical_fixture(rig):
     shutil.copyfile(registry_path, rig.dir / "session_registry.json")
     roster = json.loads(roster_path.read_text(encoding="utf-8"))
     registry = json.loads(registry_path.read_text(encoding="utf-8"))
+    registry["sessions"].insert(
+        0,
+        {
+            "role": "triaje",
+            "slot": "triaje-1",
+            "status": "ACTIVA",
+            "celda_asignacion": {
+                "resolucion": {
+                    "puestos": {
+                        "tr.revisor": {
+                            "lanzamiento": {
+                                "backend_key": "SINTETICO_NO_EN_PROVIDER_MAP"
+                            }
+                        }
+                    }
+                }
+            },
+        },
+    )
+    (rig.dir / "session_registry.json").write_text(
+        json.dumps(registry), encoding="utf-8"
+    )
     provider_map = roster["quota"]["account_policy"]["provider_map"]
     rig.monitor_out = json.dumps(
         {"accounts": {name: acct(10) for name in set(provider_map.values())}}

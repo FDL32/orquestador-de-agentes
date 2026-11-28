@@ -40,6 +40,26 @@ from tests.unit.test_047g_fixture_format_excluded_path import (
 )
 
 
+def test_prepush_check_script_starts_from_foreign_cwd(tmp_path: Path) -> None:
+    """Run the real script cold from outside the repository.
+
+    Before: the subprocess has an isolated import path and a foreign cwd.
+    During: invoke the production script entry point with ``python -I``.
+    After: the help command starts successfully and prints usage information.
+    """
+    script = Path(__file__).resolve().parents[1] / "scripts" / "prepush_check.py"
+    result = subprocess.run(
+        [sys.executable, "-I", str(script), "--help"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "usage" in result.stdout.lower()
+
+
 class TestDeliveryHygieneCheck:
     """Tests for delivery_hygiene_check integration."""
 

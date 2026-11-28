@@ -97,8 +97,6 @@ from contextlib import suppress
 from pathlib import Path
 from typing import NamedTuple
 
-from scripts.flight import integrate_ticket as it
-
 
 try:  # Python 3.11+
     import tomllib
@@ -2622,6 +2620,8 @@ def _loop_accreditation_failures(
         from scripts.check_loop_execution import audit as _loop_audit
     except ImportError:
         from check_loop_execution import audit as _loop_audit  # type: ignore[no-redef]
+    from scripts.flight import integrate_ticket as it
+
     failures: list[dict] = []
     loop_map = per_commit_loop or {}
     phase_map = per_commit_phase or {}
