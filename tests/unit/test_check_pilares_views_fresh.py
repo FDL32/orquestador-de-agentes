@@ -65,7 +65,9 @@ def test_activity_anchor_index_resolves_local_owner_and_contract_shape(
     tmp_path: Path,
 ) -> None:
     """m-06: local anchors expose the declared interface and resolved owner."""
-    target = _write_activity_tree(tmp_path, _activity_line())
+    target = _write_activity_tree(
+        tmp_path, _activity_line(), "procedimiento real tras el ancla"
+    )
 
     result = activity_anchor_index(tmp_path)
 
@@ -139,12 +141,42 @@ def test_activity_anchor_index_accepts_remote_owner_and_rejects_r6(
         activity_anchor_index(tmp_path)
 
 
+def test_activity_anchor_index_rejects_no_tipificada_remote_owner(
+    tmp_path: Path,
+) -> None:
+    """m-02/R5: NO_TIPIFICADA activities cannot have a remote owner."""
+    target = _write_activity_tree(
+        tmp_path,
+        _activity_line(
+            state="NO_TIPIFICADA",
+            owner=".agent/rules/common/remote.md:2",
+            debt="pendiente",
+        ),
+    )
+    (target.parent / "remote.md").write_text(
+        "header\nprocedure\n", encoding="utf-8", newline="\n"
+    )
+
+    with pytest.raises(ValueError, match=r"R5.*activity\.md:1"):
+        activity_anchor_index(tmp_path)
+
+
+def test_activity_anchor_index_rejects_local_owner_on_last_line(
+    tmp_path: Path,
+) -> None:
+    """m-02/R3: local owners require a line after the activity anchor."""
+    _write_activity_tree(tmp_path, _activity_line())
+
+    with pytest.raises(ValueError, match=r"R3.*activity\.md:1"):
+        activity_anchor_index(tmp_path)
+
+
 def test_activity_map_is_generated_and_part_of_freshness_contract(
     tmp_path: Path,
 ) -> None:
     """m-01/m-03/m-05: one five-cell row is generated and checked fresh."""
     canon, output, _ = _generate(tmp_path)
-    _write_activity_tree(tmp_path, _activity_line())
+    _write_activity_tree(tmp_path, _activity_line(), "procedimiento real tras el ancla")
 
     result = generate_views_and_indices(canon_path=canon, output_dir=output)
     map_path = output / "ACTIVITY_MAP.md"

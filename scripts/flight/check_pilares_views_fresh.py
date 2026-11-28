@@ -204,11 +204,18 @@ def activity_anchor_index(root: Path) -> dict[str, dict[str, str]]:  # noqa: C90
                 raise _activity_error(
                     "R5", relative, line_number, "dueno=ninguno requires NO_TIPIFICADA"
                 )
-            if owner != "ninguno" and state == "NO_TIPIFICADA" and owner == "aqui":
+            if state == "NO_TIPIFICADA" and owner != "ninguno":
                 raise _activity_error(
-                    "R5", relative, line_number, "NO_TIPIFICADA cannot use dueno=aqui"
+                    "R5", relative, line_number, "NO_TIPIFICADA requires dueno=ninguno"
                 )
             if owner == "aqui":
+                if line_number + 1 > len(lines):
+                    raise _activity_error(
+                        "R3",
+                        relative,
+                        line_number,
+                        "dueno=aqui requires a following line",
+                    )
                 resolved_owner = f"{relative}:{line_number + 1}"
             elif owner == "ninguno":
                 resolved_owner = "ninguno"
