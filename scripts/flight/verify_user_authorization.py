@@ -2149,7 +2149,9 @@ def _gitleaks_config_path(project_root: Path) -> Path | None:
     return None
 
 
-def _gitleaks_detect_args(context: PushContext, config_path: Path) -> list[str]:
+def _gitleaks_detect_args(
+    context: PushContext, config_path: Path, *, range_spec: str | None = None
+) -> list[str]:
     """Construye los argumentos exactos del escaneo reproducible.
 
     Before: `context` contiene el remoto, la rama y el checkout, y
@@ -2157,6 +2159,9 @@ def _gitleaks_detect_args(context: PushContext, config_path: Path) -> list[str]:
     During: conserva el rango topologico y las opciones de privacidad del gate.
     After: devuelve argv sin valores detectados ni salida del binario.
     """
+    effective_range = (
+        f"{context.remote}/{context.branch}..HEAD" if range_spec is None else range_spec
+    )
     return [
         "detect",
         "--redact",
@@ -2166,24 +2171,31 @@ def _gitleaks_detect_args(context: PushContext, config_path: Path) -> list[str]:
         str(config_path),
         "--exit-code",
         "1",
-        f"--log-opts={context.remote}/{context.branch}..HEAD",
+        f"--log-opts={effective_range}",
     ]
 
 
-def _gitleaks_reproducible_command(context: PushContext, config_path: Path) -> str:
+def _gitleaks_reproducible_command(
+    context: PushContext, config_path: Path, *, range_spec: str | None = None
+) -> str:
     """Describe el comando de deteccion sin filtrar el contenido del hallazgo."""
-    return "gitleaks " + " ".join(_gitleaks_detect_args(context, config_path))
+    return "gitleaks " + " ".join(
+        _gitleaks_detect_args(context, config_path, range_spec=range_spec)
+    )
 
 
 def _gitleaks_range_is_valid(
     context: PushContext,
     git_runner: Callable[[Sequence[str]], tuple[int, str, str]],
+    *,
+    range_spec: str | None = None,
 ) -> bool:
     """Confirma que Git puede resolver y contar exactamente el rango."""
+    effective_range = (
+        f"{context.remote}/{context.branch}..HEAD" if range_spec is None else range_spec
+    )
     try:
-        rc, output, _error = git_runner(
-            ["rev-list", "--count", f"{context.remote}/{context.branch}..HEAD"]
-        )
+        rc, output, _error = git_runner(["rev-list", "--count", effective_range])
         return rc == 0 and int(output.strip()) >= 1
     except (OSError, ValueError):
         return False
@@ -2208,6 +2220,7 @@ def run_gitleaks_gate(
     *,
     gitleaks_runner: Callable[[Sequence[str]], tuple[int, str, str]] | None = None,
     git_runner: Callable[[Sequence[str]], tuple[int, str, str]] | None = None,
+    range_spec: str | None = None,
 ) -> Decision:
     """Ejecuta el gate reproducible de secretos antes de consumir autorizacion.
 
@@ -2225,7 +2238,7 @@ def run_gitleaks_gate(
     if context.commit_count < 1:
         return Decision(False, "gitleaks-empty-range")
     git_run = git_runner or _default_git_runner(context.project_root)
-    if not _gitleaks_range_is_valid(context, git_run):
+    if not _gitleaks_range_is_valid(context, git_run, range_spec=range_spec):
         return Decision(False, "gitleaks-range-invalid")
     config_path = _gitleaks_config_path(context.project_root)
     if config_path is None:
@@ -2244,7 +2257,7 @@ def run_gitleaks_gate(
 
     try:
         detect_rc, _detect_out, _detect_err = run(
-            _gitleaks_detect_args(context, config_path)
+            _gitleaks_detect_args(context, config_path, range_spec=range_spec)
         )
     except OSError:
         return Decision(False, "gitleaks-unavailable")
@@ -2255,9 +2268,67 @@ def run_gitleaks_gate(
             False,
             "gitleaks-findings",
             detail="comando reproducible: "
-            + _gitleaks_reproducible_command(context, config_path),
+            + _gitleaks_reproducible_command(
+                context, config_path, range_spec=range_spec
+            ),
         )
     return Decision(False, "gitleaks-failed")
+
+
+def ticket_window_gitleaks_gate(
+    motor_root: Path,
+    range_spec: str,
+    *,
+    gitleaks_runner: Callable[[Sequence[str]], tuple[int, str, str]] | None = None,
+    git_runner: Callable[[Sequence[str]], tuple[int, str, str]] | None = None,
+) -> Decision:
+    """Escanea la ventana ``HEAD..candidato`` sin activar la logica de push.
+
+    Before: ``motor_root`` es el repo donde viven la rama del vuelo y el
+        candidato; ``range_spec`` es un rango Git ya construido por el wrapper.
+    During: cuenta el rango con el mismo runner Git del gate y crea un
+        ``PushContext`` con campos de push inertes. Esos campos no se leen en
+        esta via porque ``range_spec`` sustituye la derivacion remota/rama y no
+        se ejecuta ninguna logica de push ni de ledger.
+    After: devuelve la Decision de ``run_gitleaks_gate`` sin mergear, escribir
+        recibos ni consumir autorizacion.
+    """
+    git_run = git_runner or _default_git_runner(motor_root)
+    try:
+        rc, output, _error = git_run(["rev-list", "--count", range_spec])
+        commit_count = int(output.strip())
+    except (OSError, ValueError):
+        return Decision(False, "gitleaks-range-invalid")
+    if rc != 0:
+        return Decision(False, "gitleaks-range-invalid")
+    if commit_count < 1:
+        return Decision(False, "gitleaks-empty-range")
+
+    inert = "no-aplica-ticket-window"
+    expected = ExpectedAuthorization.from_git_parts(
+        repo=inert,
+        remote=inert,
+        branch=inert,
+        sha12="000000000000",
+        commit_count=commit_count,
+    )
+    context = PushContext(
+        project_root=motor_root,
+        remote=inert,
+        branch=inert,
+        repo=inert,
+        full_sha="",
+        sha12="000000000000",
+        commit_count=commit_count,
+        remote_sha="",
+        expected=expected,
+    )
+    return run_gitleaks_gate(
+        context,
+        gitleaks_runner=gitleaks_runner,
+        git_runner=git_run,
+        range_spec=range_spec,
+    )
 
 
 def _repo_from_url(url: str) -> str:

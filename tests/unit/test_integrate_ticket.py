@@ -27,6 +27,7 @@ from scripts.closeout_steps import gates  # noqa: E402
 from scripts.flight import (  # noqa: E402
     integrate_ticket as it,
     review_level,
+    verify_user_authorization as vua,
 )
 from scripts.session_closeout import StepResult  # noqa: E402
 
@@ -35,6 +36,34 @@ TICKET = "WOT-2026-999z"
 WRAPPER = _MOTOR_ROOT / "scripts" / "flight" / "integrate_ticket.py"
 _TS_EMIT = "2026-10-11T10:00:00+00:00"
 _TS_ROUND = "2026-10-11T10:05:00+00:00"
+_AWS_SYNTHETIC_SECRET = (
+    "AKIAABCD1234EFGH5678\n"
+    + chr(45) * 5
+    + "BEGIN "
+    + "RSA PRIVATE KEY"
+    + chr(45) * 5
+    + "\nMIIEowIBAAKCAQEA"
+    + ("Zm9vYmFyMTIzNDU2Nzg5" * 3)
+    + "\n"
+    + chr(45) * 5
+    + "END "
+    + "RSA PRIVATE KEY"
+    + chr(45) * 5
+    + "\n"
+)
+
+
+@pytest.fixture(autouse=True)
+def _stub_ticket_gitleaks_for_legacy_tests(request, monkeypatch):
+    """Aísla los tests históricos del binario y de la configuración Gitleaks."""
+    if request.node.get_closest_marker("integration") is not None:
+        return
+    monkeypatch.setattr(
+        it,
+        "ticket_window_gitleaks_gate",
+        lambda *_args, **_kwargs: vua.Decision(True, "gitleaks-clean"),
+        raising=False,
+    )
 
 
 def _derive_evidence_backend_keys() -> tuple[str, str]:
@@ -162,6 +191,8 @@ def _world(
     evidence: bool = True,
     views: bool = True,
     stale_views: bool = False,
+    ticket_payload: str | None = None,
+    base_secret: str | None = None,
 ) -> World:
     """Motor (rama del vuelo) + worktree candidato con 2 commits del ticket + destino."""
     motor = tmp_path / "motor"
@@ -169,7 +200,10 @@ def _world(
     _git(motor, "init", "-q")
     _git(motor, "config", "user.email", "t@e.com")
     _git(motor, "config", "user.name", "T")
-    base = _commit(motor, "README.md", "# vuelo", "init")
+    initial = "# vuelo"
+    if base_secret is not None:
+        initial += f"\n{base_secret}"
+    base = _commit(motor, "README.md", initial, "init")
     (motor / "docs").mkdir(parents=True, exist_ok=True)
     _commit(motor, "docs/fuente.md", "# fuente\n", "docs fuente")
     canon_text = (
@@ -208,6 +242,8 @@ def _world(
     _git(motor, "worktree", "add", "-q", "-b", "candidate", str(cand))
     _commit(cand, "src/a.py", "x = 1", f"{TICKET}: paso 1")
     tip = _commit(cand, "src/b.py", "x = 2", f"{TICKET}: paso 2")
+    if ticket_payload is not None:
+        tip = _commit(cand, "src/secret.txt", ticket_payload, f"{TICKET}: payload")
     destino = tmp_path / "destino"
     (destino / ".agent" / "collaboration").mkdir(parents=True)
     (destino / ".agent" / "collaboration" / "work_plan.md").write_text(
@@ -229,6 +265,28 @@ def _world(
             [("nan_api", "deepseek-v4-flash"), ("kilo", "nan/glm5.3-flash")],
         )
     return World(motor, cand, destino, base, tip)
+
+
+def _write_default_gitleaks_config(motor: Path) -> None:
+    (motor / ".gitleaks.toml").write_text(
+        "[extend]\nuseDefault = true\n", encoding="utf-8"
+    )
+
+
+@pytest.fixture
+def _real_gitleaks():
+    """Exige el binario real Gitleaks 8.30.1; nunca salta silenciosamente."""
+    result = subprocess.run(
+        ["gitleaks", "version"], capture_output=True, text=True, check=False
+    )
+    assert result.returncode == 0, (
+        "este test depende del binario real Gitleaks 8.30.1; "
+        f"no se pudo ejecutar (rc={result.returncode}): {result.stderr}"
+    )
+    assert result.stdout.strip().removeprefix("v") == "8.30.1", (
+        "este test depende exactamente de Gitleaks 8.30.1; "
+        f"se obtuvo {result.stdout.strip()!r}"
+    )
 
 
 def _run(w: World, *extra: str, cwd: Path | None = None):
@@ -661,6 +719,77 @@ def test_integrate_ff_merges_the_audited_tip_and_writes_the_receipt(tmp_path):
     assert _git(w.motor, "status", "--porcelain") == ""
 
 
+@pytest.mark.integration
+def test_m01_real_gitleaks_ticket_finding_blocks_before_merge_and_redacts(
+    tmp_path, _real_gitleaks
+):
+    """M01/M05: requiere Gitleaks real 8.30.1 y no filtra el secreto sintético."""
+    w = _world(tmp_path, ticket_payload=_AWS_SYNTHETIC_SECRET)
+    _write_default_gitleaks_config(w.motor)
+
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+
+    assert rc == 1, lines
+    assert _git(w.motor, "rev-parse", "HEAD") == w.base
+    assert not (w.destino / it.RECEIPTS_REL).exists()
+    assert _AWS_SYNTHETIC_SECRET not in "\n".join(lines)
+
+
+@pytest.mark.integration
+def test_m02_real_gitleaks_clean_window_preserves_integration(tmp_path, _real_gitleaks):
+    """M02: requiere Gitleaks real 8.30.1 y conserva el flujo limpio."""
+    w = _world(tmp_path)
+    _write_default_gitleaks_config(w.motor)
+
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+
+    assert rc == 0, lines
+    assert _git(w.motor, "rev-parse", "HEAD") == w.tip
+    assert it.receipt_problem(w.destino, w.tip) is None
+
+
+@pytest.mark.integration
+def test_m03_real_gitleaks_secret_before_window_does_not_block(
+    tmp_path, _real_gitleaks
+):
+    """M03: requiere Gitleaks real 8.30.1 y excluye secretos anteriores a HEAD."""
+    w = _world(tmp_path, base_secret=_AWS_SYNTHETIC_SECRET)
+    _write_default_gitleaks_config(w.motor)
+
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+
+    assert rc == 0, lines
+    assert _git(w.motor, "rev-parse", "HEAD") == w.tip
+    assert it.receipt_problem(w.destino, w.tip) is None
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("failure", ["unavailable", "version", "config"])
+def test_m04_ticket_gitleaks_infrastructure_failures_are_rc2(
+    tmp_path, monkeypatch, failure
+):
+    """M04: cada fallo de infraestructura del gate bloquea sin ff ni recibo."""
+    w = _world(tmp_path)
+    _write_default_gitleaks_config(w.motor)
+
+    if failure == "config":
+        (w.motor / ".gitleaks.toml").write_text("title = [\n", encoding="utf-8")
+
+    def runner(args):
+        if failure == "unavailable":
+            raise FileNotFoundError("gitleaks")
+        if list(args) == ["version"]:
+            return 0, "8.30.0\n" if failure == "version" else "8.30.1\n", ""
+        raise AssertionError("Gitleaks no debe escanear con configuración inválida")
+
+    monkeypatch.setattr(vua, "_default_gitleaks_runner", lambda _root: runner)
+    rc, _lines = it.integrate(TICKET, "candidate", w.destino, w.motor)
+
+    assert rc == 2
+    assert _git(w.motor, "rev-parse", "HEAD") == w.base
+    assert not (w.destino / it.RECEIPTS_REL).exists()
+
+
 def test_audit_in_red_blocks_the_merge_and_leaves_no_receipt(tmp_path):
     """Control del positivo: el MISMO mundo sin evidencia no integra."""
     w = _world(tmp_path, evidence=False)
@@ -697,6 +826,7 @@ def test_self_integration_runs_the_wrapper_from_a_checkout_the_flight_does_not_h
     por RUTA desde fuera del vuelo, con cwd en el motor (sin --motor-root)."""
     w = _world(tmp_path)
     assert not (w.motor / "scripts" / "flight" / "integrate_ticket.py").exists()
+    _write_default_gitleaks_config(w.motor)
     r = _run(w)
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.splitlines()[0].startswith("OK integrate"), r.stdout

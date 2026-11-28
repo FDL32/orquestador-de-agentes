@@ -399,6 +399,52 @@ def test_gitleaks_gate_uses_context_remote_and_branch_not_origin_literal(tmp_pat
     assert gitleaks_calls[1][-1] == "--log-opts=upstream/feature..HEAD"
 
 
+def test_gitleaks_ticket_range_ignores_inert_remote_and_branch_fields(tmp_path):
+    """La ventana explícita guía el gate aunque el contexto tenga campos absurdos."""
+    _root, context = _gitleaks_context(tmp_path)
+    context = replace(context, remote="not a remote", branch="[broken branch]")
+    range_spec = "HEAD~1..HEAD"
+    git_calls = []
+    gitleaks_calls = []
+
+    def git_runner(args):
+        git_calls.append(list(args))
+        return 0, "1\n", ""
+
+    def gitleaks_runner(args):
+        gitleaks_calls.append(list(args))
+        if list(args) == ["version"]:
+            return 0, "8.30.1\n", ""
+        return 0, "", ""
+
+    decision = vua.run_gitleaks_gate(
+        context,
+        git_runner=git_runner,
+        gitleaks_runner=gitleaks_runner,
+        range_spec=range_spec,
+    )
+
+    assert decision.allowed is True
+    assert git_calls == [["rev-list", "--count", range_spec]]
+    assert gitleaks_calls[1][-1] == f"--log-opts={range_spec}"
+
+
+def test_gitleaks_detect_args_only_change_range_between_push_and_ticket(tmp_path):
+    """M06: las opciones efectivas son idénticas salvo --log-opts."""
+    _root, context = _gitleaks_context(tmp_path)
+    config_path = context.project_root / ".gitleaks.toml"
+    push_args = vua._gitleaks_detect_args(context, config_path)
+    ticket_args = vua._gitleaks_detect_args(
+        context, config_path, range_spec="HEAD~1..HEAD"
+    )
+
+    assert [arg for arg in push_args if not arg.startswith("--log-opts=")] == [
+        arg for arg in ticket_args if not arg.startswith("--log-opts=")
+    ]
+    assert push_args[-1] == f"--log-opts={context.remote}/{context.branch}..HEAD"
+    assert ticket_args[-1] == "--log-opts=HEAD~1..HEAD"
+
+
 @pytest.mark.parametrize(
     "timeout",
     [float("nan"), float("inf"), float("-inf"), -0.2, -1],

@@ -52,6 +52,10 @@ MOTOR_ROOT = Path(__file__).resolve().parents[2]
 if str(MOTOR_ROOT) not in sys.path:
     sys.path.insert(0, str(MOTOR_ROOT))
 
+from scripts.flight.verify_user_authorization import (  # noqa: E402, I001
+    ticket_window_gitleaks_gate,
+)
+
 RECEIPT_SCHEMA = 1
 RECEIPT_MODES = ("integrate", "attest")
 RECEIPTS_REL = Path(".agent") / "runtime" / "integration_receipts"
@@ -446,6 +450,22 @@ def integrate(  # noqa: C901
     classification = None
     if not attest:
         classification = _run_review_level(ticket, head, tip, project_root, motor_root)
+        gitleaks_decision = ticket_window_gitleaks_gate(motor_root, since)
+        if gitleaks_decision.reason == "gitleaks-findings":
+            detail = gitleaks_decision.detail or "sin detalle reproducible"
+            return 1, [
+                "FAIL hallazgo de gitleaks en la ventana del ticket",
+                f"  {detail}",
+            ]
+        if not (
+            gitleaks_decision.allowed and gitleaks_decision.reason == "gitleaks-clean"
+        ):
+            detail = gitleaks_decision.detail or "sin detalle reproducible"
+            return 2, [
+                f"NO VERIFICABLE gate de gitleaks ({gitleaks_decision.reason})",
+                f"  {detail}",
+            ]
+    # --attest queda fuera del alcance de este ticket: no se escanea (NO VERIFICADO).
     finish_rc, finish_lines = _finish(
         ticket,
         tip,
