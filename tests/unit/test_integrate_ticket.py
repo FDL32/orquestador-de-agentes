@@ -22,7 +22,10 @@ _MOTOR_ROOT = Path(__file__).resolve().parents[2]
 if str(_MOTOR_ROOT) not in sys.path:
     sys.path.insert(0, str(_MOTOR_ROOT))
 
-from scripts import check_loop_execution as cle  # noqa: E402
+from scripts import (  # noqa: E402
+    check_loop_execution as cle,
+    prepush_check as pp,
+)
 from scripts.closeout_steps import gates  # noqa: E402
 from scripts.flight import (  # noqa: E402
     integrate_ticket as it,
@@ -193,6 +196,7 @@ def _world(
     stale_views: bool = False,
     ticket_payload: str | None = None,
     base_secret: str | None = None,
+    source_content: str = "# fuente\n",
 ) -> World:
     """Motor (rama del vuelo) + worktree candidato con 2 commits del ticket + destino."""
     motor = tmp_path / "motor"
@@ -205,7 +209,7 @@ def _world(
         initial += f"\n{base_secret}"
     base = _commit(motor, "README.md", initial, "init")
     (motor / "docs").mkdir(parents=True, exist_ok=True)
-    _commit(motor, "docs/fuente.md", "# fuente\n", "docs fuente")
+    _commit(motor, "docs/fuente.md", source_content, "docs fuente")
     canon_text = (
         "| Pilar | Frase | Estado | messageId | Fuente | Mecanismo | A quien preguntar | Ambito |\n"
         "|---|---|---|---|---|---|---|---|\n"
@@ -306,6 +310,37 @@ def _run(w: World, *extra: str, cwd: Path | None = None):
         capture_output=True,
         text=True,
     )
+
+
+def _non_ff_world(
+    tmp_path: Path,
+    *,
+    evidence: bool = True,
+    candidate_change: tuple[str, str, str] | None = None,
+    flight_change: tuple[str, str, str] | None = None,
+    ticket_payload: str | None = None,
+    source_content: str = "# fuente\n",
+) -> World:
+    """Construye ramas divergentes para ejercitar el modo cherry-pick real."""
+    w = _world(
+        tmp_path,
+        evidence=evidence,
+        ticket_payload=ticket_payload,
+        source_content=source_content,
+    )
+    if candidate_change is not None:
+        rel, content, message = candidate_change
+        w.tip = _commit(w.cand, rel, content, message)
+    if evidence:
+        _write_family_evidence(
+            w.destino,
+            w.tip,
+            [("nan_api", "deepseek-v4-flash"), ("kilo", "nan/glm5.3-flash")],
+        )
+    if flight_change is not None:
+        rel, content, message = flight_change
+        _commit(w.motor, rel, content, message)
+    return w
 
 
 def _write_family_evidence(
@@ -719,6 +754,113 @@ def test_integrate_ff_merges_the_audited_tip_and_writes_the_receipt(tmp_path):
     assert _git(w.motor, "status", "--porcelain") == ""
 
 
+def test_m02_cherry_pick_non_ff_writes_receipt_by_integrated_head(tmp_path):
+    w = _non_ff_world(
+        tmp_path,
+        flight_change=("flight.txt", "vuelo\n", "avance independiente del vuelo"),
+    )
+    head_before = _git(w.motor, "rev-parse", "HEAD")
+
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor, cherry_pick=True)
+
+    assert rc == 0, lines
+    head_after = _git(w.motor, "rev-parse", "HEAD")
+    assert head_after != head_before
+    assert _git(w.motor, "rev-parse", "candidate") == w.tip
+    receipt_path = it.receipt_path(w.destino, head_after)
+    assert receipt_path.is_file()
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    assert receipt["mode"] == "cherry-pick"
+    assert receipt["audited_tip"] == w.tip
+    assert receipt["merge_base"] == w.base
+    expected_paths = set(
+        _git(w.motor, "diff", "--name-only", w.base, w.tip).splitlines()
+    )
+    assert set(receipt["blobs"]) == expected_paths
+    assert it.receipt_problem(w.destino, head_after) is None
+
+
+def test_m03_cherry_pick_conflict_aborts_without_head_or_receipt(tmp_path):
+    w = _non_ff_world(
+        tmp_path,
+        candidate_change=(
+            "docs/fuente.md",
+            "# candidato\n",
+            f"{TICKET}: cambio conflictivo",
+        ),
+        flight_change=(
+            "docs/fuente.md",
+            "# vuelo\n",
+            "cambio conflictivo del vuelo",
+        ),
+    )
+    head_before = _git(w.motor, "rev-parse", "HEAD")
+
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor, cherry_pick=True)
+
+    assert rc == 1, lines
+    assert _git(w.motor, "rev-parse", "HEAD") == head_before
+    assert _git(w.motor, "status", "--porcelain") == ""
+    cherry_pick_head = Path(
+        _git(w.motor, "rev-parse", "--git-path", "CHERRY_PICK_HEAD")
+    )
+    if not cherry_pick_head.is_absolute():
+        cherry_pick_head = w.motor / cherry_pick_head
+    assert not cherry_pick_head.exists()
+    assert not (w.destino / it.RECEIPTS_REL).exists()
+
+
+def test_m04_cherry_pick_rejects_different_blobs_and_restores_head(tmp_path):
+    w = _non_ff_world(
+        tmp_path,
+        source_content=(
+            "linea 1\nlinea 2\nlinea 3\nlinea 4\nlinea 5\n"
+            "linea 6\nlinea 7\nlinea 8\nlinea 9\nlinea 10\n"
+        ),
+        candidate_change=(
+            "docs/fuente.md",
+            (
+                "linea 1\ncandidato\nlinea 3\nlinea 4\nlinea 5\n"
+                "linea 6\nlinea 7\nlinea 8\nlinea 9\nlinea 10\n"
+            ),
+            f"{TICKET}: cambio de candidato",
+        ),
+        flight_change=(
+            "docs/fuente.md",
+            (
+                "linea 1\nlinea 2\nlinea 3\nlinea 4\nlinea 5\n"
+                "linea 6\nlinea 7\nlinea 8\nvuelo\nlinea 10\n"
+            ),
+            "cambio independiente en la misma ruta",
+        ),
+    )
+    head_before = _git(w.motor, "rev-parse", "HEAD")
+
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor, cherry_pick=True)
+
+    assert rc == 1, lines
+    assert "docs/fuente.md" in "\n".join(lines)
+    assert _git(w.motor, "rev-parse", "HEAD") == head_before
+    assert _git(w.motor, "status", "--porcelain") == ""
+    assert not (w.destino / it.RECEIPTS_REL).exists()
+
+
+def test_m05_cherry_pick_audits_before_applying_and_blocks_without_evidence(tmp_path):
+    w = _non_ff_world(
+        tmp_path,
+        evidence=False,
+        flight_change=("flight.txt", "vuelo\n", "avance independiente del vuelo"),
+    )
+    head_before = _git(w.motor, "rev-parse", "HEAD")
+
+    rc, lines = it.integrate(TICKET, "candidate", w.destino, w.motor, cherry_pick=True)
+
+    assert rc == 1, lines
+    assert "audit del bucle en rojo" in lines[0]
+    assert _git(w.motor, "rev-parse", "HEAD") == head_before
+    assert not (w.destino / it.RECEIPTS_REL).exists()
+
+
 @pytest.mark.integration
 def test_m01_real_gitleaks_ticket_finding_blocks_before_merge_and_redacts(
     tmp_path, _real_gitleaks
@@ -975,6 +1117,155 @@ def test_verify_receipts_rejects_a_tip_that_left_the_motor_head(tmp_path):
     assert problems and "ancestro" in problems[0]
     _git(w.motor, "merge", "--ff-only", "candidate")
     assert it.verify_receipts(w.destino, f"{w.tip} code\n", w.motor)[0] == []
+
+
+def test_m06_loop_accreditation_uses_audited_tip_and_fails_closed_mutants(
+    tmp_path, monkeypatch
+):
+    w = _non_ff_world(
+        tmp_path,
+        flight_change=("flight.txt", "vuelo\n", "avance independiente del vuelo"),
+    )
+    _git(w.motor, "cherry-pick", f"{w.base}..{w.tip}")
+    head_after = _git(w.motor, "rev-parse", "HEAD")
+    paths = _git(w.motor, "diff", "--name-only", w.base, w.tip).splitlines()
+    blobs = {path: _git(w.motor, "rev-parse", f"{w.tip}:{path}") for path in paths}
+    it.write_receipt(
+        w.destino,
+        _receipt(
+            head_after,
+            mode="cherry-pick",
+            merged=True,
+            audited_tip=w.tip,
+            merge_base=w.base,
+            blobs=blobs,
+        ),
+    )
+    monkeypatch.chdir(w.motor)
+
+    assert it.audited_sha_for(w.destino, head_after, w.motor) == w.tip
+    assert it.audited_sha_for(w.destino, head_after) == w.tip
+    dtype = {head_after: "code"}
+    phase = {head_after: "MANAGER_REVIEW"}
+    authority = {head_after: "repo_motor"}
+    assert (
+        pp._loop_accreditation_failures(
+            w.destino,
+            [head_after],
+            dtype,
+            per_commit_phase=phase,
+            per_commit_authority=authority,
+        )
+        == []
+    )
+
+    receipt_path = it.receipt_path(w.destino, head_after)
+    receipt_path.unlink()
+    assert pp._loop_accreditation_failures(
+        w.destino,
+        [head_after],
+        dtype,
+        per_commit_phase=phase,
+        per_commit_authority=authority,
+    )
+
+    receipt = _receipt(
+        head_after,
+        mode="cherry-pick",
+        merged=True,
+        audited_tip=w.tip,
+        merge_base=w.base,
+        blobs={paths[0]: "0" * 40, **{path: blobs[path] for path in paths[1:]}},
+    )
+    it.write_receipt(w.destino, receipt)
+    assert pp._loop_accreditation_failures(
+        w.destino,
+        [head_after],
+        dtype,
+        per_commit_phase=phase,
+        per_commit_authority=authority,
+    )
+
+    receipt["blobs"] = blobs
+    it.write_receipt(w.destino, receipt)
+    scorecard = w.destino / ".agent" / "runtime" / "ensemble" / "scorecard.jsonl"
+    scorecard.write_text(
+        scorecard.read_text(encoding="utf-8").replace(w.tip, "0" * 40),
+        encoding="utf-8",
+    )
+    assert pp._loop_accreditation_failures(
+        w.destino,
+        [head_after],
+        dtype,
+        per_commit_phase=phase,
+        per_commit_authority=authority,
+    )
+
+
+def test_m07_verify_receipts_accepts_cherry_pick_and_rejects_missing_fields(tmp_path):
+    w = _world(tmp_path)
+    _git(w.motor, "cherry-pick", f"{w.base}..{w.tip}")
+    head_after = _git(w.motor, "rev-parse", "HEAD")
+    paths = _git(w.motor, "diff", "--name-only", w.base, w.tip).splitlines()
+    blobs = {path: _git(w.motor, "rev-parse", f"{w.tip}:{path}") for path in paths}
+    receipt = _receipt(
+        head_after,
+        mode="cherry-pick",
+        merged=True,
+        audited_tip=w.tip,
+        merge_base=w.base,
+        blobs=blobs,
+    )
+    it.write_receipt(w.destino, receipt)
+
+    assert it.verify_receipts(w.destino, f"{head_after} code\n", w.motor)[0] == []
+
+    receipt.pop("audited_tip")
+    it.write_receipt(w.destino, receipt)
+    problems, _ = it.verify_receipts(w.destino, f"{head_after} code\n", w.motor)
+    assert problems and "audited_tip" in problems[0]
+
+    receipt["audited_tip"] = w.tip
+    receipt.pop("blobs")
+    it.write_receipt(w.destino, receipt)
+    problems, _ = it.verify_receipts(w.destino, f"{head_after} code\n", w.motor)
+    assert problems and "blobs" in problems[0]
+
+
+@pytest.mark.integration
+def test_m10_cherry_pick_gitleaks_blocks_secret_and_clean_control_passes(
+    tmp_path, _real_gitleaks
+):
+    secret_root = tmp_path / "secret"
+    secret_root.mkdir()
+    secret_world = _non_ff_world(
+        secret_root,
+        ticket_payload=_AWS_SYNTHETIC_SECRET,
+        flight_change=("flight.txt", "vuelo\n", "avance independiente del vuelo"),
+    )
+    _write_default_gitleaks_config(secret_world.motor)
+    head_before = _git(secret_world.motor, "rev-parse", "HEAD")
+
+    red = _run(secret_world, "--cherry-pick")
+
+    assert red.returncode == 1, red.stdout + red.stderr
+    assert _git(secret_world.motor, "rev-parse", "HEAD") == head_before
+    assert _AWS_SYNTHETIC_SECRET not in red.stdout + red.stderr
+    assert not (secret_world.destino / it.RECEIPTS_REL).exists()
+
+    clean_root = tmp_path / "clean"
+    clean_root.mkdir()
+    clean_world = _non_ff_world(
+        clean_root,
+        flight_change=("flight.txt", "vuelo\n", "avance independiente del vuelo"),
+    )
+    _write_default_gitleaks_config(clean_world.motor)
+
+    green = _run(clean_world, "--cherry-pick")
+
+    assert green.returncode == 0, green.stdout + green.stderr
+    clean_head = _git(clean_world.motor, "rev-parse", "HEAD")
+    assert it.receipt_path(clean_world.destino, clean_head).is_file()
 
 
 # el paso de cierre - barrera

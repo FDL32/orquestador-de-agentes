@@ -97,6 +97,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import NamedTuple
 
+from scripts.flight import integrate_ticket as it
+
 
 try:  # Python 3.11+
     import tomllib
@@ -2625,9 +2627,10 @@ def _loop_accreditation_failures(
     phase_map = per_commit_phase or {}
     authority_map = per_commit_authority or {}
     for sha in commit_shas:
+        audited_sha = it.audited_sha_for(project_root, sha)
         verdicts = _loop_audit(
             project_root,
-            commit_shas=[sha],
+            commit_shas=[audited_sha],
             deliverable_type=per_commit_dtype.get(sha),
             loop_id=loop_map.get(sha),
             phase=phase_map.get(sha),

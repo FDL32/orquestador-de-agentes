@@ -57,7 +57,7 @@ from scripts.flight.verify_user_authorization import (  # noqa: E402, I001
 )
 
 RECEIPT_SCHEMA = 1
-RECEIPT_MODES = ("integrate", "attest")
+RECEIPT_MODES = ("integrate", "attest", "cherry-pick")
 RECEIPTS_REL = Path(".agent") / "runtime" / "integration_receipts"
 _WRAPPER_AUTHORITY = "repo_motor"
 
@@ -124,6 +124,11 @@ def receipt_problem(project_root: Path, tip: str) -> str | None:
         return "recibo sin audit_ok verdadero o con modo desconocido"
     if not isinstance(data.get("head_after"), str) or not data["head_after"]:
         return "recibo sin head_after"
+    if data.get("mode") == "cherry-pick":
+        if not isinstance(data.get("audited_tip"), str) or not data["audited_tip"]:
+            return "recibo cherry-pick sin audited_tip"
+        if not isinstance(data.get("blobs"), dict):
+            return "recibo cherry-pick sin blobs"
     return None
 
 
@@ -196,6 +201,94 @@ def _git(root: Path, *args: str) -> tuple[int, str]:
 
     rc, out = _git_stdout(root, list(args))
     return rc, out.strip()
+
+
+def _blob_sha(motor_root: Path, ref: str, path: str) -> str | None:
+    """Before: `ref` y `path` identifican una entrada Git del motor.
+
+    During: resuelve el blob con `git rev-parse`; una ruta ausente se representa
+        como `None`, igual que una eliminacion en ambos extremos.
+    After: devuelve el SHA del blob, `None` si la entrada no existe o si Git no
+        pudo resolverla.
+    """
+    rc, blob = _git(motor_root, "rev-parse", "--verify", f"{ref}:{path}")
+    return blob if rc == 0 and blob else None
+
+
+def _changed_paths(motor_root: Path, base: str, tip: str) -> tuple[int, list[str], str]:
+    """Before: `base` y `tip` son commits validos del motor.
+
+    During: obtiene las rutas del diff de la ventana auditada.
+    After: devuelve `(rc, rutas, salida)` y no modifica el repositorio.
+    """
+    rc, output = _git(motor_root, "diff", "--name-only", base, tip)
+    return rc, output.splitlines() if rc == 0 else [], output
+
+
+def _compare_blobs(
+    motor_root: Path, head: str, tip: str, paths: list[str]
+) -> tuple[list[str], dict[str, str | None]]:
+    """Before: `head` es el resultado aplicado y `tip` el tip auditado.
+
+    During: compara cada ruta modificada por ambos commits y conserva el blob
+        esperado del tip, incluyendo `None` para borrados.
+    After: devuelve `(rutas_distintas, blobs_del_tip)` sin escribir en Git.
+    """
+    mismatches: list[str] = []
+    blobs: dict[str, str | None] = {}
+    for path in paths:
+        expected = _blob_sha(motor_root, tip, path)
+        actual = _blob_sha(motor_root, head, path)
+        blobs[path] = expected
+        if expected != actual:
+            mismatches.append(path)
+    return mismatches, blobs
+
+
+def audited_sha_for(
+    project_root: Path, sha: str, motor_root: Path | None = None
+) -> str:
+    """Before: `sha` es el objetivo integrado y el destino contiene sus recibos.
+
+    During: si hay un recibo cherry-pick valido, repite contra Git la prueba de
+        blobs entre `audited_tip` y `sha`, devolviendo el tip auditado solo si
+        todas las rutas y los blobs registrados siguen coincidiendo.
+    After: devuelve el tip auditado en verde; ante cualquier ausencia, entrada
+        invalida, ref ilegible o divergencia devuelve el propio `sha`.
+    """
+    path = receipt_path(project_root, sha)
+    try:
+        if receipt_problem(project_root, sha) is not None:
+            return sha
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return sha
+    if not isinstance(data, dict):
+        return sha
+    audited_tip = data.get("audited_tip")
+    blobs = data.get("blobs")
+    if (
+        data.get("mode") != "cherry-pick"
+        or not isinstance(audited_tip, str)
+        or not audited_tip
+        or not isinstance(blobs, dict)
+    ):
+        return sha
+    root = motor_root or _cwd_toplevel()
+    if _git(root, "rev-parse", "--verify", f"{sha}^{{commit}}")[0] != 0:
+        return sha
+    if _git(root, "rev-parse", "--verify", f"{audited_tip}^{{commit}}")[0] != 0:
+        return sha
+    for raw_path, expected in blobs.items():
+        if not isinstance(raw_path, str) or not (
+            expected is None or isinstance(expected, str)
+        ):
+            return sha
+        audited_blob = _blob_sha(root, audited_tip, raw_path)
+        integrated_blob = _blob_sha(root, sha, raw_path)
+        if audited_blob != integrated_blob or audited_blob != expected:
+            return sha
+    return audited_tip
 
 
 def _preflight(
@@ -303,7 +396,7 @@ def _run_review_level(
     return Classification(level, tuple(reasons), completed.returncode)
 
 
-def _finish(
+def _finish(  # noqa: C901
     ticket: str,
     tip: str,
     mode: str,
@@ -311,17 +404,19 @@ def _finish(
     motor_root: Path,
     base: str,
     classification: Classification | None = None,
+    merge_base: str | None = None,
 ) -> tuple[int, list[str]]:
-    """Apply the review gate, then merge and write the receipt.
+    """Apply the review gate, then integrate and write the receipt.
 
     Before: ``classification`` is the result of the review-level subprocess for
-        an integration, or ``None`` for attest mode.
-    During: blocks fail-closed classifications before any ff; otherwise merges
-        and atomically records the level and reasons. rc 2 covers unreadable
-        ficha/backlog and ``rango-vacio``.
+        an integration, or ``None`` for attest mode. `merge_base` is required
+        only by cherry-pick mode.
+    During: blocks fail-closed classifications before any Git mutation; then
+        applies either ff-only or the audited cherry-pick and atomically records
+        the level, reasons and blob evidence.
     After: returns the wrapper contract without leaving a receipt on a block.
     """
-    if mode == "integrate" and classification is not None:
+    if mode in {"integrate", "cherry-pick"} and classification is not None:
         allowed, review_fields = review_level_gate(classification)
         if not allowed:
             reason = ", ".join(classification.reasons) or "revision-ilegible"
@@ -329,33 +424,76 @@ def _finish(
             return 2, [f"NO VERIFICABLE review_level {reason}"]
     else:
         review_fields = {}
+    blob_paths: list[str] = []
+    blobs: dict[str, str | None] = {}
+    if mode == "cherry-pick":
+        if merge_base is None:
+            return 2, ["NO VERIFICABLE cherry-pick sin merge-base"]
+        paths_rc, blob_paths, paths_output = _changed_paths(motor_root, merge_base, tip)
+        if paths_rc != 0:
+            return 2, [
+                f"NO VERIFICABLE no se pudo listar la ventana {merge_base[:12]}..{tip[:12]}: "
+                f"{paths_output[:200]}"
+            ]
     if mode == "integrate":
         rc, out = _git(motor_root, "merge", "--ff-only", tip)
         if rc != 0:
             return 1, [f"FAIL git merge --ff-only {tip[:12]} rc={rc}: {out[:200]}"]
+    elif mode == "cherry-pick":
+        rc, out = _git(motor_root, "cherry-pick", f"{merge_base}..{tip}")
+        if rc != 0:
+            abort_rc, abort_out = _git(motor_root, "cherry-pick", "--abort")
+            abort_detail = ""
+            if abort_rc != 0:
+                abort_detail = f"; abort rc={abort_rc}: {abort_out[:160]}"
+            return 1, [
+                f"FAIL conflicto en git cherry-pick {merge_base[:12]}..{tip[:12]}"
+                f"{abort_detail}"
+            ]
     head_after = _git(motor_root, "rev-parse", "HEAD")[1]
     if mode == "integrate" and head_after != tip:
         return 1, [
             f"FAIL tras el ff el HEAD ({head_after[:12]}) no es el tip {tip[:12]}"
         ]
+    if mode == "cherry-pick":
+        mismatches, blobs = _compare_blobs(motor_root, head_after, tip, blob_paths)
+        if mismatches:
+            reset_rc, reset_out = _git(motor_root, "reset", "--hard", base)
+            reset_detail = ""
+            if reset_rc != 0:
+                reset_detail = f"; reset rc={reset_rc}: {reset_out[:160]}"
+            return 1, [
+                "FAIL prueba de blobs distinta tras cherry-pick: "
+                + ", ".join(mismatches)
+                + reset_detail
+            ]
+    receipt_tip = head_after if mode == "cherry-pick" else tip
     receipt = {
         "schema": RECEIPT_SCHEMA,
         "ticket": ticket,
-        "tip": tip,
+        "tip": receipt_tip,
         "base_head": base,
         "head_after": head_after,
         "mode": mode,
-        "merged": mode == "integrate",
+        "merged": mode in {"integrate", "cherry-pick"},
         "audit_ok": True,
         "debt": _debt_ficha(tip),
         "ts": datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
         **review_fields,
     }
+    if mode == "cherry-pick":
+        receipt.update(
+            {
+                "audited_tip": tip,
+                "merge_base": merge_base,
+                "blobs": blobs,
+            }
+        )
     try:
         path = write_receipt(project_root, receipt)
     except OSError as exc:
         return 2, [f"NO VERIFICABLE recibo no escrito ({exc}); el HEAD ya avanzo"]
-    return 0, [f"OK {mode} {ticket} tip {tip[:12]} recibo {path}"]
+    return 0, [f"OK {mode} {ticket} tip {receipt_tip[:12]} recibo {path}"]
 
 
 def review_level_gate(classification: Classification) -> tuple[bool, dict[str, object]]:
@@ -399,14 +537,18 @@ def integrate(  # noqa: C901
     project_root: Path | None,
     motor_root: Path,
     attest: bool = False,
+    cherry_pick: bool = False,
 ) -> tuple[int, list[str]]:
     """Audita el ultimo commit de `ticket` y, solo con OK, lo integra y deja el recibo.
 
     Before: ver el docstring del modulo. `candidate` es un ref/SHA que resuelve en `motor_root`.
-    During: preflight -> linea de objetivo (ventana `HEAD..candidato`, o la historia del
-        candidato en `--attest`) -> tip == candidato -> audit -> `git merge --ff-only` -> recibo.
+    During: preflight -> linea de objetivo (ventana `HEAD..candidato`, la ventana
+        `merge-base..candidato` en cherry-pick, o la historia del candidato en
+        `--attest`) -> tip == candidato -> audit -> aplicacion -> recibo.
     After: `(rc, lineas)`; la primera linea es el contrato. rc 0/1/2 como el modulo.
     """
+    if cherry_pick and attest:
+        return 2, ["NO VERIFICABLE --cherry-pick es excluyente con --attest"]
     bad = _preflight(project_root, motor_root, attest)
     if bad is not None or project_root is None:
         return 2, [f"NO VERIFICABLE {bad[1] if bad else 'project-root ausente'}"]
@@ -414,15 +556,26 @@ def integrate(  # noqa: C901
     rc_h, head = _git(motor_root, "rev-parse", "HEAD")
     if rc != 0 or rc_h != 0:
         return 2, [f"NO VERIFICABLE el candidato {candidate!r} o HEAD no resuelven"]
-    anc = (
-        ("merge-base", "--is-ancestor", cand, head)
-        if attest
-        else ("merge-base", "--is-ancestor", head, cand)
-    )
-    if _git(motor_root, *anc)[0] != 0:
-        sentido = "no es ancestro del HEAD" if attest else "no es un ff sobre el HEAD"
-        return 1, [f"FAIL el candidato {cand[:12]} {sentido} {head[:12]}"]
-    since = cand if attest else f"{head}..{cand}"
+    merge_base: str | None = None
+    if cherry_pick:
+        rc_mb, merge_base = _git(motor_root, "merge-base", head, cand)
+        if rc_mb != 0 or not merge_base:
+            return 2, [
+                f"NO VERIFICABLE no hay merge-base entre HEAD {head[:12]} y candidato {cand[:12]}"
+            ]
+        since = f"{merge_base}..{cand}"
+    else:
+        anc = (
+            ("merge-base", "--is-ancestor", cand, head)
+            if attest
+            else ("merge-base", "--is-ancestor", head, cand)
+        )
+        if _git(motor_root, *anc)[0] != 0:
+            sentido = (
+                "no es ancestro del HEAD" if attest else "no es un ff sobre el HEAD"
+            )
+            return 1, [f"FAIL el candidato {cand[:12]} {sentido} {head[:12]}"]
+        since = cand if attest else f"{head}..{cand}"
     line, rc_t, why = _target_line(ticket, project_root, motor_root, since)
     if line is None:
         return rc_t, [f"{'NO VERIFICABLE' if rc_t == 2 else 'FAIL'} {why}"]
@@ -449,7 +602,10 @@ def integrate(  # noqa: C901
             return views_rc, views_lines
     classification = None
     if not attest:
-        classification = _run_review_level(ticket, head, tip, project_root, motor_root)
+        review_base = merge_base if cherry_pick else head
+        classification = _run_review_level(
+            ticket, review_base, tip, project_root, motor_root
+        )
         gitleaks_decision = ticket_window_gitleaks_gate(motor_root, since)
         if gitleaks_decision.reason == "gitleaks-findings":
             detail = gitleaks_decision.detail or "sin detalle reproducible"
@@ -469,11 +625,12 @@ def integrate(  # noqa: C901
     finish_rc, finish_lines = _finish(
         ticket,
         tip,
-        "attest" if attest else "integrate",
+        "attest" if attest else ("cherry-pick" if cherry_pick else "integrate"),
         project_root,
         motor_root,
         head,
         classification,
+        merge_base if cherry_pick else None,
     )
     return finish_rc, [*finish_lines, *family_lines]
 
@@ -666,6 +823,11 @@ def main(argv: list[str] | None = None) -> int:
         "--attest", action="store_true", help="solo audita un tip ya integrado"
     )
     ap.add_argument(
+        "--cherry-pick",
+        action="store_true",
+        help="audita y aplica la ventana del ticket por cherry-pick",
+    )
+    ap.add_argument(
         "--check-family",
         action="store_true",
         help="comprueba c-13 sin fusionar ni escribir recibo",
@@ -674,13 +836,25 @@ def main(argv: list[str] | None = None) -> int:
     project_root = Path(args.project_root).resolve() if args.project_root else None
     motor_root = Path(args.motor_root).resolve() if args.motor_root else _cwd_toplevel()
     try:
-        if args.check_family:
+        if args.cherry_pick and args.attest:
+            rc, lines = 2, ["NO VERIFICABLE --cherry-pick es excluyente con --attest"]
+        elif args.cherry_pick and args.check_family:
+            rc, lines = (
+                2,
+                ["NO VERIFICABLE --cherry-pick es excluyente con --check-family"],
+            )
+        elif args.check_family:
             rc, lines = check_family(
                 args.ticket, args.candidate, project_root, motor_root
             )
         else:
             rc, lines = integrate(
-                args.ticket, args.candidate, project_root, motor_root, args.attest
+                args.ticket,
+                args.candidate,
+                project_root,
+                motor_root,
+                args.attest,
+                args.cherry_pick,
             )
     except Exception as exc:
         rc, lines = 2, [f"NO VERIFICABLE defecto del wrapper: {exc!r}"]
