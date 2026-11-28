@@ -3704,6 +3704,72 @@ def test_dod_m11_cierre_no_canonico_permite_roles_no_im_tr_y_pasado(tmp_path):
         assert result.returncode == 0
 
 
+@pytest.mark.parametrize("apply", [False, True])
+@pytest.mark.parametrize("historical_status", ["SETTLED", "COMPLETED"])
+def test_dod_m11_reporta_a_sobre_cierre_historico_sin_tocar_status(
+    tmp_path, historical_status, apply
+):
+    registry = tmp_path / f"registry-{historical_status}-{apply}.json"
+    ledger = tmp_path / f"registry-{historical_status}-{apply}.jsonl"
+    write_registry(
+        registry,
+        [
+            {
+                **session("IM-HISTORICO"),
+                "role": "implantacion",
+                "started": "2026-11-12T10:00:00+01:00",
+                "status": historical_status,
+            }
+        ],
+    )
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-HISTORICO",
+        "--reporta-a",
+        "CO-1",
+        "--by",
+        "test",
+        "--reason",
+        "historical reporta-a",
+        *(["--apply"] if apply else []),
+        ledger=ledger,
+    )
+    assert result.returncode == 0
+
+
+def test_dod_m11_fallida_post_corte_sin_lentes(tmp_path):
+    registry = tmp_path / "registry-fallida.json"
+    ledger = tmp_path / "registry-fallida.jsonl"
+    write_registry(
+        registry,
+        [
+            {
+                **session("IM-FALLIDA"),
+                "role": "implantacion",
+                "started": "2026-11-12T10:00:00+01:00",
+                "status": "ACTIVE",
+            }
+        ],
+    )
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-FALLIDA",
+        "--status",
+        "FALLIDA",
+        "--by",
+        "test",
+        "--reason",
+        "failed post cutoff",
+        "--apply",
+        ledger=ledger,
+    )
+    assert result.returncode == 0
+
+
 def test_dod_m12_asentada_predicado_sigue_literal_y_prefijos_fuente_unica():
     assert (
         "ASENTADA exige dos veredictos de lentes"
