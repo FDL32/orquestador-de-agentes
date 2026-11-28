@@ -3502,6 +3502,60 @@ def test_alta_implantacion_con_celda_rc0(tmp_path):
     assert result.returncode == 0
 
 
+def test_dod_m02_alta_supervisora_sin_celda_rc0(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry)
+    result = run_cli(
+        registry,
+        "alta",
+        "--code",
+        "SUP-146D",
+        "--role",
+        "supervisora",
+        "--slot",
+        "supervisora-1",
+        "--thread-id",
+        "mcp:sup146d",
+        "--started",
+        "2026-11-12T10:00:00+01:00",
+        "--status",
+        "ACTIVE",
+        "--by",
+        "test",
+        "--reason",
+        "x",
+    )
+    assert result.returncode == 0
+
+
+def test_dod_m02_alta_triaje_sin_celda_rechaza_por_celda(tmp_path):
+    registry = tmp_path / "registry.json"
+    write_registry(registry)
+    result = run_cli(
+        registry,
+        "alta",
+        "--code",
+        "TR-146D",
+        "--role",
+        "triaje",
+        "--slot",
+        "triaje-1",
+        "--thread-id",
+        "mcp:tr146d",
+        "--started",
+        "2026-11-12T10:00:00+01:00",
+        "--status",
+        "ACTIVE",
+        "--by",
+        "test",
+        "--reason",
+        "x",
+    )
+    assert result.returncode == 2
+    assert "celda" in result.stderr.casefold()
+    assert "role invalido" not in result.stderr.casefold()
+
+
 @pytest.mark.parametrize("apply", [False, True])
 @pytest.mark.parametrize("role", ["implantador", "rol-inventado"])
 def test_dod_m01_alta_rechaza_role_no_canonico_sin_escritura(tmp_path, role, apply):
@@ -3577,11 +3631,16 @@ def test_dod_m03_asiento_role_valida_solo_si_se_cambia(tmp_path):
 @pytest.mark.parametrize(
     "field_args", [["--status", "SETTLED"], ["--reporta-a", "CO-1"]]
 )
-def test_dod_m04_asiento_sin_role_no_valida_role_historico(tmp_path, field_args):
+@pytest.mark.parametrize(
+    "historical_role", ["implantador", "cascada de contexto", "medicion"]
+)
+def test_dod_m04_asiento_sin_role_no_valida_role_historico(
+    tmp_path, field_args, historical_role
+):
     registry = tmp_path / "registry.json"
     write_registry(
         registry,
-        [{**session(), "role": "implantador", "status": "SETTLED"}],
+        [{**session(), "role": historical_role, "status": "SETTLED"}],
     )
     result = run_cli(
         registry,
