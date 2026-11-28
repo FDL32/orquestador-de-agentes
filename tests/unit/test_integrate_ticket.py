@@ -773,7 +773,7 @@ def test_m04_ticket_gitleaks_infrastructure_failures_are_rc2(
     _write_default_gitleaks_config(w.motor)
 
     if failure == "config":
-        (w.motor / ".gitleaks.toml").write_text("title = [\n", encoding="utf-8")
+        monkeypatch.setattr(vua, "_gitleaks_config_is_valid", lambda _path: False)
 
     def runner(args):
         if failure == "unavailable":
