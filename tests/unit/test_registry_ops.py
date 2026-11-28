@@ -3641,6 +3641,50 @@ def test_dod_m09_asiento_cierre_no_canonico_rechaza_sin_escritura(
 
 
 @pytest.mark.parametrize("apply", [False, True])
+def test_dod_m09_settled_con_dos_veredictos_rechaza_sin_escritura(tmp_path, apply):
+    registry = tmp_path / "registry.json"
+    ledger = tmp_path / "registry_changes.jsonl"
+    write_registry(
+        registry,
+        [
+            {
+                **session("IM-SETTLED-LENSES"),
+                "role": "implantacion",
+                "started": "2026-11-12T10:00:00+01:00",
+                "status": "ACTIVE",
+            }
+        ],
+    )
+    before = registry.read_bytes()
+    result = run_cli(
+        registry,
+        "asiento",
+        "--code",
+        "IM-SETTLED-LENSES",
+        "--status",
+        "SETTLED",
+        "--lentes",
+        json.dumps(
+            [
+                {"backend": "x", "veredicto": "APPROVE"},
+                {"backend": "y", "veredicto": "APPROVE"},
+            ]
+        ),
+        "--by",
+        "test",
+        "--reason",
+        "settled status contract",
+        *(["--apply"] if apply else []),
+        ledger=ledger,
+    )
+    assert result.returncode == 2
+    assert "SETTLED" in result.stderr
+    assert "ASENTADA" in result.stderr
+    assert registry.read_bytes() == before
+    assert not ledger.exists()
+
+
+@pytest.mark.parametrize("apply", [False, True])
 def test_dod_m10_alta_cierre_no_canonico_rechaza_sin_escritura(tmp_path, apply):
     registry = tmp_path / "registry.json"
     ledger = tmp_path / "registry_changes.jsonl"
